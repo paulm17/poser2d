@@ -1,0 +1,360 @@
+SCENE EDITOR LIGHTING AND SHADOWS — IMPLEMENTATION PLAN
+Date: 13 October 2026
+Status: Proposed implementation; no implementation changes made.
+
+OBJECTIVE
+
+Milestone 1: Make the existing main light movable and aimable in the scene editor,
+with reliable shadows, save/load, undo/redo, and clean image capture.
+
+Milestone 2: Adapt the lighting-generator reference into a complete lighting and
+shadow workflow within this app, including multiple lights, presets, per-object
+shadow settings, advanced controls, persistence, and performance management.
+
+The generator is an implementation reference. Extend the existing scene editor
+in this repository; retain the cloned generator as a reference/demo. Do not embed
+a second editor, renderer, or camera inside the scene editor.
+
+CURRENT STATE AND CONSTRAINTS
+
+1. frontend/package.json pins Three.js 0.163.0 and mannequin-js 5.2.3.
+2. frontend/scene-builder/src/main.js owns editor initialization, selection,
+   transform controls, history, project serialization, and restoration.
+3. mannequin-js/src/scene.js creates stage.light: a white DirectionalLight with
+   intensity 2.75, positioned at (0, 2, 1) normalized to length 15. Its default
+   target is the origin. An AmbientLight supplies white fill at intensity 0.5.
+4. Existing directional shadows use an orthographic camera with near 13,
+   far 18.5, and horizontal/vertical bounds of -5 to 5. This is unsuitable for
+   unrestricted light movement or widely distributed scene objects.
+5. The editor replaces the initial renderer with its own WebGLRenderer and uses
+   PCFSoftShadowMap. Keep that renderer and the existing animation/suspend path.
+6. History currently captures objects and selection, not lighting. Project
+   serialization additionally captures camera, export settings, and IK state.
+7. protocol.js validates projects and snapshots for both editor and React host.
+   StageEditor.tsx embeds the editor in an iframe and manages session snapshots.
+8. exportSystem.js temporarily hides editor overlays and restores visibility.
+   Lighting changes must participate in the existing capture workflow.
+9. threejs-lighting-generator/main.js demonstrates six light types, numeric
+   controls, helpers, draggable lights/targets, and generated Three.js/R3F code.
+   It uses Three.js 0.183.0, a standalone lil-gui panel, and CDN imports.
+10. Its newer TransformControls.getHelper() usage cannot be copied directly into
+    our Three.js 0.163.0 setup, which adds TransformControls itself to the scene.
+11. The reference uses fixed shadow bounds and does not supply scene persistence,
+    undo/redo, automatic shadow fitting, or app capture integration.
+12. No top-level LICENSE file was found in the cloned generator during inspection.
+    Verify reuse terms and attribution before copying its implementation. Its
+    behavior can guide an independently implemented editor module.
+
+DESIGN PRINCIPLES
+
+- Keep Three.js 0.163.0 for both milestones unless a concrete feature requires
+  an upgrade. Treat any upgrade as a separately validated change.
+- Implement editor-owned modules; never patch node_modules.
+- Preserve the current default lighting when loading older projects.
+- Separate serializable lighting data from Three.js objects and editor overlays.
+- Use one selected light/target gizmo at a time, avoiding the reference demo's
+  many simultaneous TransformControls and overlapping pointer handlers.
+- Show useful controls first; keep shadow tuning in an advanced section.
+- Commit one history entry per completed drag or control edit.
+- Keep rendering, session switching, capture, and suspension on existing paths.
+- Maintain physically meaningful controls: directional light distance does not
+  attenuate brightness; point/spot distance and decay do.
+
+MILESTONE 1 — GET MOVABLE LIGHTING RUNNING
+
+Scope
+
+Control the existing directional light and ambient fill. No light creation,
+deletion, additional light types, or standalone code export in this milestone.
+
+1. Introduce a small lighting module
+
+   Suggested files:
+   - src/lighting/state.js: defaults, normalization, validation, serialization.
+   - src/lighting/controller.js: stage integration and Three.js object updates.
+   - src/lighting/shadows.js: directional shadow fitting.
+   - src/lighting/ui.js: panel, selection, helper and gizmo coordination.
+
+   Initialize after stage creation and renderer replacement. Adopt stage.light
+   and locate the initial ambient light explicitly. Keep handles to both rather
+   than searching scene children during every edit. Add the directional target
+   to the scene so moved target matrices update correctly.
+
+2. Define a forward-compatible state format
+
+   Add an optional project.lighting object with its own version, lights array,
+   stable light IDs, and global shadow settings. Milestone 1 contains exactly
+   the existing directional and ambient lights; Milestone 2 extends the array.
+
+   Directional data: enabled, color, intensity, position, target, castShadow,
+   shadow quality and automatic fitting settings.
+   Ambient data: enabled, color, intensity.
+
+   Keep helper visibility and active light selection in editor/session settings,
+   separate from the physical lighting configuration. Missing lighting means
+   original defaults, not whatever lighting was active in the previous session.
+
+3. Add a Lighting panel to the existing editor
+
+   Primary controls:
+   - Select Main light or Ambient fill.
+   - Enable/disable, color, and intensity.
+   - Main light position X/Y/Z and aim target X/Y/Z.
+   - Move light / Move target buttons.
+   - Show light helper and Reset lighting.
+   - Shadows toggle and a small quality selector.
+
+   Use existing HTML/CSS panel conventions rather than adding lil-gui.
+   Provide numeric input beyond slider ranges; reject non-finite values.
+   Explain that the aim target controls directional illumination. Prevent a
+   coincident light and target from producing an undefined direction.
+
+4. Integrate dragging and selection
+
+   Use an editor-owned light gizmo with the installed TransformControls API.
+   Attach it to the selected light or target; detach object gizmos while editing
+   the light, and restore normal object selection when leaving lighting mode.
+   Update panel values while dragging and update the helper after changes.
+
+   Extend updateStageControlsEnabled() to include light dragging. Pointer
+   handling must prioritize active gizmos and avoid selecting a mannequin or
+   starting IK while dragging a light. Keep keyboard shortcuts contextual;
+   Delete must not accidentally delete a model while lighting is selected.
+
+5. Make directional shadows follow the edited light
+
+   Calculate bounds for shadow-casting subjects and relevant receiving ground.
+   Transform those bounds into light-view coordinates; fit orthographic bounds
+   and near/far with padding, minimum dimensions, and finite-value guards.
+   Exclude helpers, grids, gizmos, and the oversized decorative ground geometry
+   from subject bounds. Include only the relevant receiving ground region.
+
+   Refit after light/target changes and object add/remove/move/scale/pose edits.
+   Handle an empty scene, targets above/below the ground, and widely separated
+   subjects. Update projection matrices and invalidate shadows when needed.
+   Do not depend on the inherited near/far settings or light.autoUpdate flag;
+   verify the actual LightShadow and renderer update properties in this version.
+
+   Start with conservative automatic bias/normalBias and limited quality tiers.
+   Establish baseline images before replacing the original shadow settings.
+
+6. Integrate persistence and history
+
+   Include lighting in captureState()/applyState() and project save/restore.
+   Normalize older history entries without lighting to original defaults.
+   Avoid captureState() recursion during restoration and UI synchronization.
+   Coalesce slider edits and record one state when a drag/control edit completes.
+   Reset lighting must itself be undoable.
+
+   Update protocol.js and protocol.d.ts, plus host-side types where required.
+   Validate lighting before mutating the visible scene. Prepare restored assets
+   before committing the combined object/lighting state, retaining the existing
+   failure behavior. Verify tab/session switching and null-snapshot reset.
+
+7. Integrate capture and render lifecycle
+
+   Register light helpers, target markers, and gizmos with export hiding rules.
+   Preserve actual lights during capture; restore overlay visibility in finally.
+   Ensure lighting/shadow updates are flushed before capture, including when the
+   editor was suspended. Reuse the existing animation loop and suspension path.
+
+8. Verification and delivery
+
+   Automated checks:
+   - Defaults and migration of old projects/history.
+   - Lighting serialization round trip and invalid-data rejection.
+   - Directional fitting for empty, moved, scaled, and separated subjects.
+   - Existing frontend tests, typecheck, and production build.
+
+   Manual checks in the browser and the app's embedded runtime:
+   - Move light and target via sliders and dragging; shadows visibly follow.
+   - Camera navigation, mannequin selection, object dragging, and IK still work.
+   - Undo/redo, reset, project save/load, and session switching preserve lighting.
+   - Pose changes and imported GLBs produce correct shadow bounds.
+   - Export and Send to Studio use edited lighting and omit editor overlays.
+   - Suspension/resume and failed capture leave the editor usable.
+
+   Acceptance criteria:
+   A user can reposition and aim the main light without code, adjust fill and
+   brightness, retain settings through save/load and session changes, undo edits,
+   and export an image with correct shadows. Older projects open successfully
+   with their original default light configuration.
+
+MILESTONE 2 — COMPLETE LIGHTING AND SHADOW ADAPTATION
+
+Scope
+
+Build on Milestone 1's state/controller/UI boundaries. Bring the generator's
+full lighting capabilities into the editor and add the persistence, shadow
+management, and production behavior absent from the demo.
+
+1. Multi-light scene management
+
+   Add create, duplicate, rename, select, enable/disable, and delete actions.
+   Use stable IDs and human-readable names. Support multiple lights of each
+   type; do not retain the generator's single hard-coded instance per type.
+   Keep lights in a dedicated list or clearly distinguished Layers section.
+   All operations participate in undo/redo and save/load. Recover sensibly when
+   the selected light is removed, a preset is applied, or a project is restored.
+
+2. Support all six reference light types
+
+   Ambient: color and intensity; no position or translation gizmo.
+   Directional: color, intensity, position, target, and shadows.
+   Hemisphere: sky/ground colors, intensity, and orientation through position.
+   Point: color, intensity, position, range, decay, and shadows.
+   Spot: point-light controls plus target, cone angle, penumbra, and shadows.
+   Rectangular area: color, intensity, width/height, position, and orientation.
+
+   Initialize RectAreaLightUniformsLib using the installed version's API.
+   Confirm material compatibility: mannequin surfaces use MeshStandardMaterial,
+   while the current ground uses MeshLambertMaterial. Adapt the ground receiver
+   to a compatible material when needed and verify its texture/transparency.
+   Imported materials require inspection; avoid silently rewriting appearance.
+   Area lights do not provide native shadow maps in this WebGL renderer; make
+   this limitation clear and disable unsupported shadow controls.
+
+3. Improve aiming and manipulation
+
+   Selected-light helpers and target markers with distinct, consistent colors.
+   Translation gizmo for positional lights and their applicable targets;
+   rotation gizmo for area lights. No spatial controls for ambient lights.
+   Optional Aim at selection and Aim at scene center actions should use current
+   object bounds. Use a documented fixed aim position initially; if live target
+   following is added, store the object reference and define deletion behavior.
+   Keep helper visibility independent of light enabled state and export settings.
+
+4. Full shadow controls
+
+   Global shadows enabled, quality presets, and supported filter selection.
+   Per-light castShadow, resolution, bias, normalBias, near/far, and type-specific
+   settings. Directional: auto-fit or manual orthographic bounds. Spot: automatic
+   range/frustum fitting or manual near/far. Point: cube shadow near/far/range.
+
+   Add an optional shadow-camera/frustum helper for troubleshooting. Advanced
+   overrides must remain valid across light movement and project restoration.
+   Keep map sizes within renderer capabilities; recreate/dispose existing maps
+   when resolution changes if required by the installed renderer.
+
+   Evaluate filter-specific softness controls against Three.js 0.163.0. Expose
+   only controls that actually affect the selected filter, without implying
+   physically accurate soft shadows from standard point/directional maps.
+
+5. Per-object shadow behavior and ground controls
+
+   Add cast/receive shadow switches for mannequins and imported model roots,
+   propagating intentionally to descendant meshes. Persist flags and restore
+   them after GLB reconstruction. Define how original GLB flags are preserved.
+   Add ground visibility, shadow receiving, color, opacity, and useful extent.
+   Keep capture transparency/background behavior compatible with these options.
+   Verify transparent materials and avoid promising perfect transparent shadows.
+
+6. Stable automatic shadow fitting
+
+   Extend bounds calculation to all supported shadow lights. Refit on meaningful
+   changes, not unconditionally every render. During animated pose previews,
+   use appropriate throttling and conservative padding to limit clipping/jitter.
+   For directional lights, evaluate texel-aligned fitting/stable extents to reduce
+   shadow shimmer as objects move. Allow a manual fit refresh and bounds preview.
+   Cover huge imports, distant lights, near-ground lights, and multiple subjects.
+
+7. Lighting presets and reusable setups
+
+   Supply Default, three-point studio, soft portrait approximation, dramatic
+   side lighting, rim lighting, and outdoor daylight presets. Keep naming honest
+   about standard shadow-map limitations. Use the editor's actual scene scale.
+   Apply a preset as one undoable operation with a defined replace behavior.
+   Add lighting-only JSON import/export, separate from full project files.
+   Validate imported setup versions and limits; provide explicit handling for
+   unsupported future versions. Scene assets are not part of lighting exports.
+
+8. Adapt the generator's code export
+
+   Add an optional advanced export panel for enabled lights only, with vanilla
+   Three.js and React Three Fiber output. Export positions, targets, colors,
+   intensities, type-specific properties, and explicit shadow settings.
+   Include initialization notes for area lights, targets, renderer shadows,
+   compatible materials, and the output's assumed library versions.
+   Helpers are optional and off by default. Output must not depend on editor
+   closures or its runtime controller. Use safe identifier generation and
+   escaping for user-provided light names. Validate representative output.
+
+9. Performance and resource lifecycle
+
+   Set explicit, measured limits for light count, shadow-light count, and total
+   shadow-map memory. Point shadows require six faces and higher render cost.
+   Offer lightweight, balanced, and high quality tiers; measure representative
+   mannequin and GLB scenes in the embedded runtime before choosing defaults.
+   Dispose removed light shadow maps, helpers, geometries, and event handlers.
+   Minimize full GUI refreshes and repeated helper reconstruction.
+   Avoid the reference's broad change-event loops when resizing gizmos each frame.
+   Use objectChange for edits and explicit drag boundaries for history commits.
+   Any performance/FPS overlay should be optional developer tooling.
+
+10. Complete state, UI, and app integration
+
+   Version and migrate the Milestone 1 lighting format without losing edits.
+   Keep validation shared by host and editor, with finite numeric ranges,
+   valid enums/colors, unique IDs, bounded counts, and supported schema versions.
+   Validate before committing a restore or preset. Avoid partial scene mutations.
+   Preserve all lighting, shadow, and ground options through project files,
+   history, host session snapshots, editor reset, and suspend/resume.
+   Support keyboard navigation, labels, readable units, and sensible defaults.
+   Light selection and model selection must have predictable contextual actions.
+
+11. Verification and documentation
+
+   Automated tests should cover real risks rather than mirror UI implementation:
+   migration across both milestones; all light-type round trips; invalid imports;
+   ID handling; preset undo; shadow-fitting bounds; resource replacement; and
+   deterministic code export with unusual light names.
+
+   Build a visual regression matrix using fixed cameras and poses:
+   each light type, multiple lights, shadows on/off, quality tiers, auto/manual
+   fitting, receiving ground, imported materials, and clean PNG capture.
+   Include camera/object/IK interactions, project failure recovery, session
+   switching, repeated light deletion, pose previews, and render suspension.
+   Compare captures in browser and embedded runtime; record reference images.
+   Run existing tests, typecheck, and production build before completion.
+
+   Document controls, light semantics, supported shadows/materials, presets,
+   quality tradeoffs, lighting JSON format, and future migration expectations.
+   Update attribution if any licensed reference code is reused.
+
+   Acceptance criteria:
+   Users can compose, manipulate, save, restore, and export arbitrary supported
+   multi-light setups; tune shadows globally and per light/object; use presets;
+   and obtain clean captures with stable shadows at supported scene sizes.
+   Older projects remain compatible, and measured runtime budgets are respected.
+
+IMPLEMENTATION ORDER AND REVIEW POINTS
+
+M1-A: State/defaults/validation and controller adoption of existing lights.
+M1-B: Panel and light/target manipulation; interaction regression review.
+M1-C: Automatic directional shadows and quality controls; visual review.
+M1-D: History, persistence, capture, session lifecycle; milestone acceptance.
+
+M2-A: Generalized light registry, light list, CRUD, and schema migration.
+M2-B: Additional light types and their manipulation/material compatibility.
+M2-C: Global/per-light/per-object shadows, ground controls, stable fitting.
+M2-D: Presets and lighting-only JSON import/export.
+M2-E: Vanilla/R3F code export and advanced diagnostics.
+M2-F: Performance tuning, resource cleanup, visual matrix, documentation.
+
+Each step should leave the editor working and use focused, reviewable changes.
+Milestone 2 begins only after Milestone 1 acceptance checks pass. Do not delay
+the usable movable-light feature for the larger multi-light architecture.
+
+OUT OF SCOPE
+
+Blender rendering integration, path tracing, baked lightmaps, environment/HDRI
+asset management, volumetric lights, physically accurate area-light shadows,
+and lighting animation/keyframes. These need separate designs and budgets.
+No Three.js upgrade is assumed; reassess only with concrete compatibility data.
+
+ESTIMATION APPROACH
+
+This is a source-informed plan, not a timed estimate. First validate Milestone
+1 interaction handling and shadow fitting in the running embedded editor; then
+estimate the remaining steps using those findings and representative scenes.
+The generator was inspected as source, not runtime-tested during planning.

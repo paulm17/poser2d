@@ -1,12 +1,16 @@
+import { defaultLighting } from '../scene-builder/src/lighting/state.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CHANNEL, isMessage, isSnapshot, isProject } from '../scene-builder/protocol.js';
 import { initEditorBridge } from '../scene-builder/src/bridge.js';
-const snapshot = () => ({ project: { mannequins: [], importedModels: [] }, history: ['{}'], historyIndex: 0 });
+const snapshot = () => ({ project: { mannequins: [], importedModels: [], lighting: defaultLighting() }, history: ['{}'], historyIndex: 0 });
 const envelope = message => ({ channel: CHANNEL, token: 'test-token', ...message });
 
 test('bridge validates commands, references, and history bounds', () => {
   assert(isSnapshot(snapshot()));
+  const invalid = snapshot(); invalid.project.lighting.lights[0].position[0] = NaN;
+  assert(!isMessage(envelope({ type: 'restore', requestId: 'r', sessionId: 's', snapshot: invalid }), 'test-token'));
+  const legacy = snapshot(); delete legacy.project.lighting; assert(isSnapshot(legacy));
   assert(isProject({ mannequins: [], camera: { position: [0,1,7], rotation: [0,0,0] } }), 'legacy project without imports/target is accepted');
   assert(!isProject({ mannequins: [{ position: [NaN,0,0], rotation: [0,0,0], scale: [1,1,1] }] }));
   assert(!isSnapshot({ ...snapshot(), historyIndex: 3 }));
@@ -44,7 +48,7 @@ test('session bridge rejects spoofed messages, awaits restore, and binds capture
     deliver({ type: 'connect' }); assert.equal(sent.at(-1).type, 'ready');
     deliver({ type: 'restore', requestId: 'restore-a', sessionId: 'a', snapshot: null });
     await tick(); assert(!sent.some(m => m.requestId === 'restore-a'));
-    finishRestore(); await tick(); assert.equal(restored.length, 1);
+    finishRestore(); await tick(); assert.equal(restored.length, 1); assert.equal(restored[0], null, 'new sessions request a default reset');
     deliver({ type: 'snapshot', requestId: 'wrong-session', sessionId: 'b' }); await tick();
     assert.equal(sent.at(-1).type, 'error');
     deliver({ type: 'suspend', requestId: 'resume', sessionId: 'a', suspended: false }); await tick();
@@ -55,7 +59,7 @@ test('session bridge rejects spoofed messages, awaits restore, and binds capture
     deliver({ type: 'capture-result', requestId: message.requestId, sessionId: 'b' }); await tick();
     assert.equal(restored.length, 1, 'wrong-session acknowledgement is ignored');
     deliver({ type: 'capture-result', requestId: message.requestId, sessionId: 'a' });
-    await capture; await tick(); assert.equal(restored.length, 2);
+    await capture; await tick(); assert.equal(restored.length, 2); assert.deepEqual(restored[1].project.lighting, defaultLighting());
     deliver({ type: 'snapshot', requestId: 'snapshot-b', sessionId: 'b' }); await tick();
     assert.deepEqual(sent.at(-1).snapshot, snapshot());
     const failed = bridge.sendCapture(async () => new Blob(['png'], { type: 'image/png' })); await tick();

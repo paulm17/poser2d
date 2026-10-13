@@ -1,6 +1,17 @@
 export const CHANNEL: 'qwen-stage-v1';
+export interface LightingState {
+  version: 1;
+  shadows: { enabled: boolean };
+  lights: Array<
+    | { id: 'main'; type: 'directional'; enabled: boolean; color: string; intensity: number;
+        position: [number, number, number]; target: [number, number, number]; castShadow: boolean;
+        quality: 'low' | 'balanced' | 'high'; autoFit: true }
+    | { id: 'ambient'; type: 'ambient'; enabled: boolean; color: string; intensity: number }
+  >;
+}
+export interface LightingEditorState { selected: 'main' | 'ambient' | null; mode: 'light' | 'target'; helper: boolean }
 export interface SceneSnapshot {
-  project: { mannequins: unknown[]; importedModels: unknown[]; [key: string]: unknown };
+  project: { mannequins: unknown[]; importedModels: unknown[]; lighting?: LightingState; lightingEditor?: LightingEditorState; [key: string]: unknown };
   history: string[];
   historyIndex: number;
 }

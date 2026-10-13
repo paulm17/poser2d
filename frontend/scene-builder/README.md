@@ -135,3 +135,40 @@ node scripts/validate-animation-assets.mjs
 ```
 
 Generation requires FFmpeg and FFprobe on PATH. Complete clips are validated and skipped on subsequent runs. Preview rendering uses a fixed camera throughout each animation, at the source frame rate; only the thumbnail plays automatically.
+
+## Lighting
+
+Open **Lighting** in the scene toolbar to edit **Main light** or **Ambient fill**.
+Enable each light, pick its color, and change its intensity. The main light has
+position and aim target controls. **Move light** and **Move target** attach the
+translation gizmo to the corresponding handle. Select a model or close the panel
+to return to model manipulation. Camera navigation remains available between drags.
+
+The main light is directional: its aim determines illumination direction, and
+moving it farther away does not reduce brightness. Light and target must remain
+apart. Sliders cover convenient working ranges; numeric fields accept positions
+up to ±1,000,000 and intensity from 0 to 1,000. Invalid edits keep the last valid
+lighting. A completed slider edit, numeric edit, or drag makes one undo step.
+**Reset lighting** is undoable.
+
+Global shadows and the main light's shadow switch are independent. Low, Balanced,
+and High request 1024, 2048, and 4096 pixels, capped by GPU texture limits. High is
+the default. Bounds follow casting models, nested pose changes, and the relevant
+receiving floor region. A fitted shadow viewpoint preserves the chosen light
+direction even when the light handle is inside or behind the scene. Almost
+horizontal light uses a local floor region because its projected floor footprint
+has no useful finite extent. Widely separated subjects spread the available
+shadow resolution over a larger area.
+
+Project JSON and session history include `lighting` with `version: 1`, global
+`shadows.enabled`, and exactly two entries in `lights`: `main` (directional) and
+`ambient`. The directional entry includes position, target, castShadow, quality,
+and autoFit. Both entries include enabled, hex color, and intensity. Missing
+lighting in older projects or history restores the original defaults. Unsupported
+versions and invalid data are rejected before replacing the scene. Helper
+visibility and selection live separately in `lightingEditor` settings.
+
+Lighting helpers and handles are always omitted from Export and Send to Studio,
+including when **Include Gizmo** is checked. Capture uses the current lighting and
+updates shadows synchronously when rendering is suspended. Existing model/grid
+export options retain their behavior.

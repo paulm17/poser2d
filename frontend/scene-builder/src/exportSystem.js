@@ -1,4 +1,4 @@
-export function initExportSystem(stage, THREE, onSend) {
+export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {}) {
   const exportPanel   = document.getElementById('export-panel');
   const exportMask    = document.getElementById('export-mask');
   const exportFrame   = document.getElementById('export-frame');
@@ -387,6 +387,7 @@ export function initExportSystem(stage, THREE, onSend) {
   // One compositor for downloads and Studio references. Copy the WebGL canvas
   // synchronously after rendering; restore scene visibility even if encoding fails.
   async function capture(mime = 'image/png') {
+    beforeCapture();
     const canvasRect = getCanvasRect();
     const bounds = exportFrame.getBoundingClientRect();
     if (!exportActive || !canvasRect.width || !bounds.width) throw Error('Open Export and frame the scene first.');
@@ -399,30 +400,12 @@ export function initExportSystem(stage, THREE, onSend) {
     finalCanvas.height = Math.max(1, Math.round(height * scaleY));
     const ctx = finalCanvas.getContext('2d');
     if (!ctx) throw Error('Could not create the capture canvas.');
-    const oldBg = stage.scene.background;
-    const visibility = [];
-    const includeGizmo = document.getElementById('export-gizmo').checked;
-    const includeCoords = document.getElementById('export-coordinates').checked;
-    const includeBg = document.getElementById('export-background').checked;
-    try {
-      stage.scene.traverse(obj => {
-        if ((!includeGizmo && (obj.userData?.exportHideWhenGizmoDisabled || obj.userData?.ikLimbKey)) ||
-            (!includeCoords && ['GridHelper', 'AxesHelper'].includes(obj.type)) || (!includeBg && obj === stage.ground)) {
-          visibility.push([obj, obj.visible]); obj.visible = false;
-        }
-      });
-      stage.scene.background = includeBg ? new THREE.Color(bgSelect.value) : null;
-      const oldAlpha = stage.renderer.getClearAlpha();
-      try {
-        stage.renderer.setClearAlpha(includeBg ? 1 : 0);
-        stage.renderer.render(stage.scene, stage.camera);
-        ctx.drawImage(source, Math.round(x * scaleX), Math.round(y * scaleY), finalCanvas.width, finalCanvas.height, 0, 0, finalCanvas.width, finalCanvas.height);
-      } finally { stage.renderer.setClearAlpha(oldAlpha); }
-    } finally {
-      stage.scene.background = oldBg;
-      visibility.forEach(([obj, visible]) => { obj.visible = visible; });
-      stage.renderer.render(stage.scene, stage.camera);
-    }
+    renderSceneCapture(stage, THREE, {
+      includeGizmo: document.getElementById('export-gizmo').checked,
+      includeCoords: document.getElementById('export-coordinates').checked,
+      includeBg: document.getElementById('export-background').checked,
+      background: bgSelect.value,
+    }, () => ctx.drawImage(source, Math.round(x * scaleX), Math.round(y * scaleY), finalCanvas.width, finalCanvas.height, 0, 0, finalCanvas.width, finalCanvas.height));
     ctx.save();
     ctx.scale(finalCanvas.width / bounds.width, finalCanvas.height / bounds.height);
         annotations.forEach(ann => {
@@ -511,4 +494,29 @@ export function initExportSystem(stage, THREE, onSend) {
     },
     capture,
   };
+}
+
+// Keep physical lights in the render while temporarily removing editor overlays.
+// Synchronous readback also works when the animation loop is suspended.
+export function renderSceneCapture(stage, THREE, { includeGizmo, includeCoords, includeBg, background }, draw) {
+  const oldBg = stage.scene.background, oldAlpha = stage.renderer.getClearAlpha();
+  const visibility = [];
+  try {
+    stage.scene.traverse(obj => {
+      if (obj.userData?.exportAlwaysHide ||
+          (!includeGizmo && (obj.userData?.exportHideWhenGizmoDisabled || obj.userData?.ikLimbKey)) ||
+          (!includeCoords && ['GridHelper', 'AxesHelper'].includes(obj.type)) || (!includeBg && obj === stage.ground)) {
+        visibility.push([obj, obj.visible]); obj.visible = false;
+      }
+    });
+    stage.scene.background = includeBg ? new THREE.Color(background) : null;
+    stage.renderer.setClearAlpha(includeBg ? 1 : 0);
+    stage.renderer.render(stage.scene, stage.camera);
+    draw();
+  } finally {
+    stage.scene.background = oldBg;
+    stage.renderer.setClearAlpha(oldAlpha);
+    visibility.forEach(([obj, visible]) => { obj.visible = visible; });
+    stage.renderer.render(stage.scene, stage.camera);
+  }
 }

@@ -5,6 +5,9 @@ import * as THREE from 'three';
 import { Male, createStage, getStage } from 'mannequin-js/src/mannequin.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { createLightingController } from './lighting/controller.js';
+import { createLightingUI } from './lighting/ui.js';
+import { normalizeLighting, isLightingEditor } from './lighting/state.js';
 import { initExportSystem } from './exportSystem.js';
 import { initEditorBridge } from './bridge.js';
 import { isProject } from '../protocol.js';
@@ -49,6 +52,7 @@ const poseConfig = {
 // defaultPosture is built dynamically per-mannequin — see createFullMannequin()
 
 // ─── State ────────────────────────────────────────────────────────────────────
+let lightingController, lightingUI;
 let stage, activeMannequin = null, selectedPartGroup = null;
 const mannequins = [];
 const importedModels = []; // GLB imports (tracked separately)
@@ -78,7 +82,7 @@ let historyIndex = -1;
 function updateStageControlsEnabled() {
   if (!stage || !stage.controls) return;
   const isTransformDragging = !!(transformControl && transformControl.dragging);
-  stage.controls.enabled = !isDraggingIK && !isTransformDragging;
+  stage.controls.enabled = !isDraggingIK && !isTransformDragging && !lightingUI?.gizmo.dragging;
 }
 
 // ─── History ──────────────────────────────────────────────────────────────────
@@ -116,6 +120,8 @@ function serializeObjects() {
     activeIndex: mannequins.indexOf(activeMannequin),
     activeImportIndex: importedModels.indexOf(activeMannequin),
     selectedBodyPart,
+    lighting: lightingController.snapshot(),
+    lightingEditor: lightingUI.snapshot(),
   };
 }
 
@@ -131,6 +137,8 @@ function captureState() {
 async function applyState(json) {
   if (!json) return;
   const state = JSON.parse(json);
+  const nextLighting = normalizeLighting(state.lighting);
+  if (state.lightingEditor !== undefined && !isLightingEditor(state.lightingEditor)) throw Error('Invalid lighting editor settings.');
   const nextModels = [];
   const nextMannequins = [];
   try {
@@ -153,6 +161,7 @@ async function applyState(json) {
   } catch (error) {
     [...nextModels, ...nextMannequins].forEach(disposeObject); throw error;
   }
+  lightingUI.exit(false);
   detachGizmo(); clearHighlight(); activeMannequin = null;
   mannequins.forEach(disposeObject); importedModels.forEach(disposeObject);
   mannequins.splice(0, mannequins.length, ...nextMannequins);
@@ -178,6 +187,8 @@ async function applyState(json) {
       clearHighlight();
     }
   }
+  lightingController.apply(nextLighting); lightingUI.restore(state.lightingEditor);
+  lightingController.flush();
   updatePropertiesPanel();
   updateLayerWindow();
 }
@@ -289,7 +300,7 @@ function solveIKChain(mannequin, limbKey, target) {
 }
 
 function tickIKHandles() {
-  if (!activeMannequin) {
+  if (!activeMannequin || lightingUI?.active) {
     IK_LIMBS.forEach(k => ikHandles[k] && (ikHandles[k].visible = false));
     return;
   }
@@ -304,6 +315,7 @@ function tickIKHandles() {
 const GIZMO_OFFSET = new THREE.Vector3(0, 0, -1); // 1 unit behind mannequin
 
 function attachGizmo(mannequin) {
+    lightingUI?.exit(false);
     const isImported = importedModels.includes(mannequin);
     transformProxy.position.copy(mannequin.position);
     if (!isImported) {
@@ -502,6 +514,7 @@ function updateLayerWindow() {
   });
 }
 function deleteSelected() {
+  if (lightingUI?.active) return;
   if (!activeMannequin) return;
   const importIndex = importedModels.indexOf(activeMannequin);
   if (importIndex !== -1) {
@@ -511,6 +524,7 @@ function deleteSelected() {
     activeMannequin = null;
     clearHighlight();
     updatePropertiesPanel();
+    captureState(); lightingController.invalidate();
     console.log('Deleted imported model');
     return;
   }
@@ -816,6 +830,7 @@ function setupSliderListeners() {
   const limbSelect = document.getElementById('ik-limb-select');
   if (masterToggle) {
     masterToggle.addEventListener('change', e => {
+      if (lightingUI?.active) { e.target.checked = !!window.ikToggleActive; return; }
       window.ikToggleActive = e.target.checked;
       if (limbSelect) limbSelect.disabled = !window.ikToggleActive;
       // Disable/enable individual IK limbs based on toggle
@@ -833,6 +848,7 @@ function setupSliderListeners() {
 
   if (limbSelect) {
     limbSelect.addEventListener('change', e => {
+      if (lightingUI?.active) { updatePropertiesPanel(); return; }
       IK_LIMBS.forEach(k => {
         ikEnabled[k] = (e.target.value === k);
       });
@@ -906,10 +922,10 @@ function updatePropertiesPanel() {
 // ─── Keyboard Shortcuts ───────────────────────────────────────────────────────
 function setupKeyboardShortcuts() {
   window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
     if ((e.metaKey || e.ctrlKey) && e.key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     if ((e.metaKey || e.ctrlKey) && e.key === 'y') { e.preventDefault(); redo(); }
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
       e.preventDefault();
       deleteSelected();
     }
@@ -955,7 +971,7 @@ function setupHUDListeners() {
 
 // ─── Mouse Interaction ────────────────────────────────────────────────────────
 function onMouseDown(event) {
-  if (event.target.closest('.glass-panel') || transformControl.dragging || transformControl.axis !== null) return;
+  if (event.target.closest('.glass-panel') || transformControl.dragging || transformControl.axis !== null || lightingUI.gizmo.dragging || lightingUI.gizmo.axis !== null) return;
   if (event.button !== 0) return;
   const rect = stage.renderer.domElement.getBoundingClientRect();
   mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -963,7 +979,7 @@ function onMouseDown(event) {
   raycaster.setFromCamera(mouse, stage.camera);
   
   // Check IK handles first
-  const ikHits = raycaster.intersectObjects(Object.values(ikHandles).filter(h => h.visible));
+  const ikHits = lightingUI.active ? [] : raycaster.intersectObjects(Object.values(ikHandles).filter(h => h.visible));
   if (ikHits.length > 0) {
     activeIKHandle = ikHits[0].object;
     isDraggingIK = true;
@@ -1138,8 +1154,14 @@ function init() {
   });
   stage.scene.add(transformControl);
 
+  lightingController = createLightingController(stage, () => [...mannequins, ...importedModels]);
+  lightingUI = createLightingUI(stage, lightingController, {
+    enter() { detachGizmo(); clearHighlight(); isDraggingIK = false; activeIKHandle = null; tickIKHandles(); },
+    leave() { if (activeMannequin) attachGizmo(activeMannequin); tickIKHandles(); },
+    commit: captureState, dragChanged: updateStageControlsEnabled,
+  });
   initIKHandles();
-  exportController = initExportSystem(stage, THREE, capture => editorBridge.sendCapture(capture));
+  exportController = initExportSystem(stage, THREE, capture => editorBridge.sendCapture(capture), () => lightingController.flush());
   setupHUDListeners();
   setupKeyboardShortcuts();
 
@@ -1284,11 +1306,11 @@ initBlenderGallery({
 
 const defaultProject = serializeProject();
 function animate() {
-  stage.controls.update(); stage.animationLoop?.(); stage.renderer.render(stage.scene, stage.camera);
+  stage.controls.update(); stage.animationLoop?.(); lightingController.flush(); stage.renderer.render(stage.scene, stage.camera);
 }
 editorBridge = initEditorBridge({
   whenIdle,
-  snapshot() { frameController.commit(); return { project: serializeProject(), history: [...historyStack], historyIndex }; },
+  snapshot() { frameController.commit(); lightingUI.commitPending(); return { project: serializeProject(), history: [...historyStack], historyIndex }; },
   async restore(snapshot) {
     frameController.commit();
     await restoreProject(snapshot?.project ?? structuredClone(defaultProject));

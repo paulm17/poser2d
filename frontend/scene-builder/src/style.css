@@ -494,3 +494,14 @@ input:checked + .slider:before {
 #animation-frame-panel input[type=number] { width:65px; background:#141518; color:#eee; border:1px solid var(--glass-border); padding:4px; border-radius:4px; }
 .frame-slider-wrap input { width:100%; }
 .frame-notches { --frame-count:66; height:6px; margin:0 7px; background:repeating-linear-gradient(to right,#9ca3af 0 1px,transparent 1px calc(100% / (var(--frame-count) - 1))); border-right:1px solid #9ca3af; }
+
+#lighting-panel { left: 24px; bottom: 24px; width: 340px; max-height: 65vh; overflow-y: auto; gap: 10px; z-index: 30; font-size: 12px; }
+#lighting-panel header { display: flex; justify-content: space-between; align-items: center; }
+#lighting-panel label { display: flex; align-items: center; gap: 8px; }
+#lighting-panel .lighting-number { margin: 6px 0; }
+#lighting-panel .lighting-number span { width: 65px; flex-shrink: 0; }
+#lighting-panel input[type=range] { min-width: 0; flex: 1; }
+#lighting-panel input[type=number] { width: 75px; padding: 4px; }
+#lighting-panel p { color: var(--text-secondary); line-height: 1.4; }
+#lighting-panel #lighting-error { color: #ff9999; }
+#lighting-panel[hidden], #lighting-panel [hidden] { display: none; }

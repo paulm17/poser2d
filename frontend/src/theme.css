@@ -1,0 +1,95 @@
+:root {
+  color-scheme: dark;
+  --helm-ground-page: #14191c;
+  --helm-ground-panel: #1b2226;
+  --helm-ground-raised: #222b30;
+  --helm-ground-inset: #101517;
+  --helm-border-hairline: #303a40;
+  --helm-border-strong: #46555d;
+  --helm-text-primary: #e4e9eb;
+  --helm-text-secondary: #a4b0b7;
+  --helm-text-muted: #788990;
+  --helm-studio-accent: #59c8bc;
+  --helm-on-studio-accent: #102c29;
+  --helm-status-running: #68c58b;
+  --helm-status-error: #ee8585;
+  --helm-log-text: #bccbd0;
+  --helm-log-accent: #59c8bc;
+  --helm-log-muted: #788990;
+  --helm-log-error: #ee8585;
+  --helm-scrim: #0009;
+  --helm-shadow-dialog: 0 20px 70px #0007;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+button {
+  cursor: pointer;
+}
+.stage-switch {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.demo-note {
+  font-size: 11px;
+  color: var(--faint);
+  margin: 8px 0;
+}
+.ref-insert {
+  border: 0;
+  padding: 0;
+  position: absolute;
+  inset: 0;
+  background: none;
+}
+.stage-placeholder {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+}
+.stage-placeholder section {
+  max-width: 480px;
+  text-align: center;
+}
+.stage-placeholder .glyph {
+  font-size: 44px;
+  line-height: 1;
+  color: var(--accent);
+  margin-bottom: 24px;
+}
+.stage-placeholder p {
+  color: var(--muted);
+}
+.notice {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+}
+.take-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.gallery-grid {
+  padding: 16px;
+}
+.take .thumb {
+  display: block;
+}
+.take .meta {
+  display: block;
+}
+.panel section:first-child {
+  margin-top: 0;
+}
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

@@ -5,12 +5,10 @@ Rust desktop app using the local `../rust-cef` library, with the existing React 
 ## Build and launch on macOS
 
 ```bash
-npm --prefix frontend ci
-cargo bundle
-open target/debug/theapp.app
+cargo run
 ```
 
-`cargo bundle` builds the frontend, builds the Rust host, and bundles CEF and its helper processes. It requires the sibling `rust-cef` checkout. The first Cargo build may download CEF and Rust dependencies.
+`cargo run` installs frontend dependencies when needed, builds the UI and Rust host, bundles CEF and its helper processes, and launches the desktop app. It requires npm and the sibling `rust-cef` checkout. The first Cargo build may download CEF and Rust dependencies. `cargo bundle` prepares the app bundle without launching it.
 
 ## Layout
 
@@ -113,3 +111,7 @@ The rewrite appears beneath the generated image. Explicit dimensions or aspect r
 Downloaded files: `mozophe/Qwen-Image-2.1-PE-MTP-GGUF/qwen3.5_9b_qwen_image_2.1_pe_t2i.mtp.Q4_K_M.gguf` and `Qwen/Qwen-Image-2.1-PE-T2I/system_prompt.txt`, both in the Hugging Face cache. The GGUF weights include an MTP head but work here as ordinary generation weights. A direct real enhancement through mlx-rs returned valid JSON (308 generated tokens) in 26.5 seconds on the Apple M1 Pro.
 
 The desktop end-to-end test also completed: PE-T2I enhanced the mug prompt through mlx-rs GGUF generation, then sd-cli produced a 256×256 image. The rewritten prompt and final image appeared in the Studio interface.
+
+### PoseStudio LoRA
+
+Paths detects the cached MIUProject/VNCCS_PoseStudio_QI2.1 V1.1 LoRA. PoseStudio is enabled for image edits at strength 0.7 by default; disable it or adjust its strength in Paths to compare results. Text-to-image requests omit it. The engine applies it at runtime with the quantized Turbo model. CLI tests applied all 384 tensors at 512×512; strength 1.0 reversed the subject orientation while 0.7 preserved the broad pose. Character identity transfer with a second reference remains unverified. Existing output size settings are preserved.

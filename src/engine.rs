@@ -30,6 +30,12 @@ pub struct Settings {
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Paths {
     #[serde(default)]
+    pub pose_lora: String,
+    #[serde(default)]
+    pub pose_enabled: bool,
+    #[serde(default = "pose_strength")]
+    pub pose_strength: f32,
+    #[serde(default)]
     pub pe_cli: String,
     #[serde(default)]
     pub pe_model: String,
@@ -43,6 +49,10 @@ pub struct Paths {
     pub llm: String,
     pub vision: String,
 }
+fn pose_strength() -> f32 {
+    0.7
+}
+
 #[derive(Deserialize)]
 pub struct Reference {
     pub png: String,
@@ -670,6 +680,25 @@ fn validate(r: &Request) -> Result<(), String> {
             return Err(format!("Select an existing {name} weight file in Paths"));
         }
     }
+    if r.paths.pose_enabled && !r.references.is_empty() {
+        let path = PathBuf::from(&r.paths.pose_lora);
+        if !path.is_file() {
+            return Err("Select an existing PoseStudio LoRA in Paths or disable it".into());
+        }
+        if !r.paths.pose_strength.is_finite() || !(0.0..=2.0).contains(&r.paths.pose_strength) {
+            return Err("PoseStudio LoRA strength must be between 0 and 2".into());
+        }
+        if !path.file_stem().and_then(|s| s.to_str()).is_some_and(|s| {
+            !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        }) {
+            return Err(
+                "PoseStudio LoRA filename must use letters, digits, dots, underscores or hyphens"
+                    .into(),
+            );
+        }
+    }
     if !r.references.is_empty() && !PathBuf::from(&r.paths.vision).is_file() {
         return Err("Editing needs a vision projection weight file in Paths".into());
     }
@@ -677,7 +706,7 @@ fn validate(r: &Request) -> Result<(), String> {
 }
 fn arguments(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Vec<String> {
     let s = &r.settings;
-    let prompt = if s.transparent {
+    let mut prompt = if s.transparent {
         format!(
             "This is an RGBA image with transparency. {} The image has alpha channel and the background is transparent.",
             s.prompt
@@ -685,6 +714,11 @@ fn arguments(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Vec<Str
     } else {
         s.prompt.clone()
     };
+    if r.paths.pose_enabled && !refs.is_empty() {
+        let path = PathBuf::from(&r.paths.pose_lora);
+        let name = path.file_stem().unwrap().to_string_lossy();
+        prompt.push_str(&format!(" <lora:{name}:{}>", r.paths.pose_strength));
+    }
     let mut args = vec![
         "--diffusion-model".into(),
         r.paths.model.clone(),
@@ -713,6 +747,15 @@ fn arguments(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Vec<Str
         "-o".into(),
         output.to_string_lossy().into_owned(),
     ];
+    if r.paths.pose_enabled && !refs.is_empty() {
+        let path = PathBuf::from(&r.paths.pose_lora);
+        args.extend([
+            "--lora-model-dir".into(),
+            path.parent().unwrap().to_string_lossy().into_owned(),
+            "--lora-apply-mode".into(),
+            "at_runtime".into(),
+        ]);
+    }
     if r.paths.turbo {
         args.extend(["--sigmas".into(), "qwen-image-2.1-turbo".into()]);
     }
@@ -789,6 +832,9 @@ mod tests {
                 ratio: None,
             },
             paths: Paths {
+                pose_lora: String::new(),
+                pose_enabled: false,
+                pose_strength: 0.7,
                 pe_cli: String::new(),
                 pe_model: String::new(),
                 pe_system: String::new(),
@@ -885,6 +931,41 @@ mod tests {
                 root.join("ref 1.png").to_string_lossy(),
                 root.join("ref 2.png").to_string_lossy()
             ]
+        );
+
+        let mut pose = request("pose test");
+        pose.references.push(Reference { png: String::new() });
+        pose.paths.pose_enabled = true;
+        pose.paths.pose_lora = root.join("pose.safetensors").to_string_lossy().into_owned();
+        assert!(validate(&pose).is_err());
+        std::fs::write(&pose.paths.pose_lora, "fixture").unwrap();
+        assert!(validate(&pose).is_ok());
+        let pose_args = arguments(&pose, &[root.join("ref.png")], &root.join("pose.png"));
+        assert!(pose_args.contains(&"at_runtime".into()));
+        assert_eq!(
+            pose_args[pose_args.iter().position(|v| v == "-p").unwrap() + 1],
+            "pose test <lora:pose:0.7>"
+        );
+        assert_eq!(
+            pose_args[pose_args
+                .iter()
+                .position(|v| v == "--lora-model-dir")
+                .unwrap()
+                + 1],
+            root.to_string_lossy()
+        );
+        pose.paths.pose_strength = f32::NAN;
+        assert!(validate(&pose).is_err());
+        pose.paths.pose_strength = 0.7;
+        pose.paths.pose_enabled = false;
+        assert!(
+            !arguments(&pose, &[root.join("ref.png")], &root.join("pose.png"))
+                .contains(&"--lora-model-dir".into())
+        );
+        pose.paths.pose_enabled = true;
+        pose.references.clear();
+        assert!(
+            !arguments(&pose, &[], &root.join("pose.png")).contains(&"--lora-model-dir".into())
         );
 
         let mut turbo = request("turbo");
@@ -1051,7 +1132,14 @@ fn cached_paths_in(hub: &std::path::Path, cli: String) -> Paths {
         "models--unsloth--Qwen-Image-2.1-Turbo-GGUF",
         "qwen-image-2.1-turbo-Q8_0.gguf",
     );
+    let pose_lora = find(
+        "models--MIUProject--VNCCS_PoseStudio_QI2.1",
+        "VNCCS_QI2_PoseStudioV1.1.safetensors",
+    );
     Paths {
+        pose_enabled: !pose_lora.is_empty(),
+        pose_lora,
+        pose_strength: 0.7,
         pe_cli: concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../mlx-rs/target/release/generate"

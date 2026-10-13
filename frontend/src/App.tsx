@@ -435,7 +435,8 @@ export function App() {
   const command = [
     "sd-cli", "--diffusion-model", JSON.stringify(paths.model || "…"),
     "--vae", JSON.stringify(paths.vae || "…"), "--llm", JSON.stringify(paths.llm || "…"),
-    "-p", JSON.stringify(resolveMentions(settings.prompt, refs) || "…"),
+    "-p", JSON.stringify((resolveMentions(settings.prompt, refs) || "…") + (paths.pose_enabled && refs.length && paths.pose_lora ? ` <lora:${paths.pose_lora.split("/").pop()?.replace(/\.safetensors$/, "")}:${paths.pose_strength}>` : "")),
+    ...(paths.pose_enabled && refs.length && paths.pose_lora ? ["--lora-model-dir", JSON.stringify(paths.pose_lora.slice(0, paths.pose_lora.lastIndexOf("/"))), "--lora-apply-mode", "at_runtime"] : []),
     "--steps", settings.steps, "--seed", settings.seed,
   ].join(" ");
   const numberField = (
@@ -1103,7 +1104,10 @@ export function App() {
                 Select local weight files. Editing also needs the vision projection. No weights are downloaded automatically.
               </p>
               <label className="toggle"><input type="checkbox" checked={draftPaths.turbo} onChange={e => setDraftPaths(previous => ({ ...previous, turbo: e.target.checked }))} />Turbo model · fixed 8-step schedule</label>
-              {(["cli", "model", "vae", "llm", "vision", "pe_cli", "pe_model", "pe_system"] as const).map((key, i) => (
+              <label className="toggle"><input type="checkbox" checked={draftPaths.pose_enabled} onChange={e => setDraftPaths(previous => ({ ...previous, pose_enabled: e.target.checked }))} />PoseStudio LoRA · apply to image edits</label>
+              <p className="notice">Strength 0.7 passed the Turbo pose test. Strength 1.0 reversed the camera direction. Character identity transfer is still untested.</p>
+              <label><span className="label">PoseStudio strength</span><input type="number" min="0" max="2" step="0.1" value={draftPaths.pose_strength} onChange={e => setDraftPaths(previous => ({ ...previous, pose_strength: Number(e.target.value) }))} /></label>
+              {(["cli", "model", "vae", "llm", "vision", "pe_cli", "pe_model", "pe_system", "pose_lora"] as const).map((key, i) => (
                 <div className="field" key={key}>
                   <label>
                     <span className="label">
@@ -1117,6 +1121,7 @@ export function App() {
                           "mlx-rs GGUF generate executable",
                           "PE-T2I Q4_K_M weights",
                           "Official PE-T2I system prompt",
+                          "PoseStudio LoRA (.safetensors)",
                         ][i]
                       }
                     </span>

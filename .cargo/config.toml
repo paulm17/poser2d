@@ -1,2 +1,5 @@
 [alias]
 bundle = "run -p xtask --"
+
+[target.'cfg(target_os = "macos")']
+runner = ["sh", ".cargo/run-macos.sh"]

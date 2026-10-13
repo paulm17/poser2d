@@ -1,7 +1,7 @@
 import type { Settings, ReferenceImage } from "./models";
 import { invoke, listen } from "./ipc";
-export interface EnginePaths { turbo: boolean; pe_cli: string; pe_model: string; pe_system: string; cli: string; model: string; vae: string; llm: string; vision: string; }
-export const emptyPaths: EnginePaths = { turbo: false, pe_cli: "", pe_model: "", pe_system: "", cli: "", model: "", vae: "", llm: "", vision: "" };
+export interface EnginePaths { pose_lora: string; pose_enabled: boolean; pose_strength: number; turbo: boolean; pe_cli: string; pe_model: string; pe_system: string; cli: string; model: string; vae: string; llm: string; vision: string; }
+export const emptyPaths: EnginePaths = { pose_lora: "", pose_enabled: true, pose_strength: 0.7, turbo: false, pe_cli: "", pe_model: "", pe_system: "", cli: "", model: "", vae: "", llm: "", vision: "" };
 export interface Job {
   id: string; session: string; settings: Settings; revision: number;
   state: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
@@ -36,6 +36,6 @@ export const engine = {
 
 export function mergePaths(previous: EnginePaths, defaults: EnginePaths): EnginePaths {
   return previous.model
-    ? { ...previous, cli: previous.cli || defaults.cli, vision: previous.vision || defaults.vision, pe_cli: previous.pe_cli || defaults.pe_cli, pe_model: previous.pe_model || defaults.pe_model, pe_system: previous.pe_system || defaults.pe_system }
+    ? { ...previous, pose_lora: previous.pose_lora || defaults.pose_lora, cli: previous.cli || defaults.cli, vision: previous.vision || defaults.vision, pe_cli: previous.pe_cli || defaults.pe_cli, pe_model: previous.pe_model || defaults.pe_model, pe_system: previous.pe_system || defaults.pe_system }
     : { ...defaults, ...Object.fromEntries(Object.entries(previous).filter(([key, value]) => key !== "turbo" && value !== "")) };
 }

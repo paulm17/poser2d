@@ -9,10 +9,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .parent()
         .unwrap()
         .to_path_buf();
-    for (program, args, dir) in [
-        ("npm", vec!["run", "build"], root.join("frontend")),
-        ("cargo", vec!["build", "-p", "theapp"], root.clone()),
-    ] {
+    let launch = std::env::args().nth(1).as_deref() == Some("--run");
+    if !launch {
+        let (program, args, dir) = ("cargo", vec!["build", "-p", "theapp"], root.clone());
         if !Command::new(program)
             .args(args)
             .current_dir(dir)
@@ -80,5 +79,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         )?;
     }
     println!("Built {}", bundle.display());
+    let mut args = std::env::args().skip(1);
+    if args.next().as_deref() == Some("--run") {
+        use std::os::unix::process::CommandExt;
+        return Err(Command::new(macos.join("theapp")).args(args).exec().into());
+    }
     Ok(())
 }

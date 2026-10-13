@@ -76,7 +76,7 @@ previews and do not require FFmpeg or Blender.
 
 ## Image engine
 
-Open **Paths** to select prepared vpipe models and their precision. The app detects the prepared Safetensors directories in your Hugging Face cache. Run the preparation script below before generating; the app does not download models automatically.
+Open the **Model** popover at the top left to select Turbo or Non-Turbo and 4-bit or 8-bit precision. The app detects the prepared Safetensors directories in your Hugging Face cache. Run the preparation script below before generating; the app does not download models automatically.
 
 Generate queues an immutable request. A single worker runs native vpipe pipelines, streams logs and denoising progress to the Studio, and registers the output in the submitting session. References are converted to immutable PNGs per job. Cancellation kills the active inference process group and allows the next job to run.
 
@@ -100,15 +100,16 @@ All source and prepared model files live under `/Volumes/Data/Users/paul/.cache/
 python3 scripts/prepare-vpipe-models.py
 ```
 
-The script downloads `Qwen/Qwen-Image-2.1-Turbo` and `Qwen/Qwen-Image-2.1-PE-T2I`, then uses vpipe's `model-quantize` stage to prepare:
+The script downloads `Qwen/Qwen-Image-2.1-Turbo`, `Qwen/Qwen-Image-2.1`, `Qwen/Qwen-Image-2.1-PE-T2I`, and the Lightning adapter, then uses vpipe's `model-quantize` stage to prepare:
 
 - `vpipe-prepared/Qwen-Image-2.1-Turbo-4bit` and `Qwen-Image-2.1-Turbo-8bit`, group size 64.
 - A shared 4-bit Qwen3-VL language encoder, preserving its vision components and the VAE at source precision.
 - `vpipe-prepared/Qwen-Image-2.1-PE-T2I-4bit`, using the official system prompt and tokenizer.
+- `vpipe-prepared/Qwen-Image-2.1-4bit` and `Qwen-Image-2.1-8bit`, with a shared base 4-bit text encoder and a separate compatible Lightning runtime adapter.
 
-Preparation recipes, logs, and source snapshot revisions are retained in `vpipe-prepared`. The first download is approximately 51 GB; prepared weights need additional disk space. Component copies use vpipe's hard-link support. Original source files remain unchanged. Use `--skip-download` to prepare already-cached sources.
+Preparation recipes, logs, and source snapshot revisions are retained in `vpipe-prepared`. Base Qwen components add approximately 33 GB to the Turbo and enhancer downloads; prepared weights need additional disk space. Component copies use vpipe's hard-link support. Original source files remain unchanged. Use `--skip-download` to prepare already-cached sources.
 
-Paths detects these prepared directories and the existing PoseStudio V1.1 Safetensors adapter. Select **4-bit** or **8-bit** in Paths. Saved sd-cli/GGUF paths migrate to vpipe defaults while preserving pose preferences. Explicit custom vpipe paths remain configurable.
+The model catalog detects these prepared directories and the existing PoseStudio V1.1 adapter. Saved precision and pose preferences migrate automatically; generation resolves model paths internally.
 
 ### Generation and enhancement
 
@@ -131,6 +132,12 @@ The validation runner uses the same backend as the desktop app. It generates six
 
 Outputs, final pipelines, enhancer replies, complete render logs, model paths, and timing are saved under `artifacts/vpipe-validation`; `results.json` records the six results. The runner checks output dimensions and reports any failed job. Fixture tests cover pipeline construction, settings migration, enhancement parsing, progress, queue order, cancellation, and failure recovery.
 
-For targeted reruns, set `VPIPE_VALIDATION_FILTER` to comma-separated names such as `4bit-t2i,8bit-i2i`. The results manifest keeps the latest attempt for each workflow.
+For targeted reruns, set `VPIPE_VALIDATION_FILTER` to comma-separated names such as `turbo-4-t2i,base-8-pose`. The results manifest keeps the latest attempt for each workflow.
 
-The six required jobs passed on an M1 Pro with 32 GB RAM. Generation took approximately 4–6 minutes per job, with peak process residency of approximately 9–14 GiB. Both editing runs bound all 192 PoseStudio modules. The reference character's dress, pointed ears, and standing pose influenced the outputs, although facial identity changed. See the generated `artifacts/vpipe-validation/report.md` for images, exact timings, memory measurements, and model identities.
+The earlier six Turbo/enhancer jobs passed on an M1 Pro with 32 GB RAM. Generation took approximately 4–6 minutes per job, with peak process residency of approximately 9–14 GiB. Both editing runs bound all 192 PoseStudio modules. The reference character's dress, pointed ears, and standing pose influenced the outputs, although facial identity changed. See the generated `artifacts/vpipe-validation/report.md` for images, exact timings, memory measurements, and model identities.
+
+## Qwen model selection
+
+Use the Model popover at the top left to select Turbo or Non-Turbo and 4-bit or 8-bit weights. Installed models are discovered automatically in the Hugging Face cache. Add adapters in the left-hand LoRAs section; each row has a model, strength, and remove button. Lightning is available only for Non-Turbo, uses four steps, and can be stacked with Pose. Pose applies only to image edits.
+
+`python3 scripts/prepare-qwen-base.py` downloads the standard Qwen-Image-2.1 components and Lightning adapter, verifies component identities before sharing cached Turbo files, and prepares both transformer precisions. The original Lightning file stays intact; a tensor-name-compatible runtime copy is written under `vpipe-prepared`.

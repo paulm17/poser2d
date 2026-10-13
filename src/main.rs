@@ -38,18 +38,12 @@ fn main() {
             Ok(serde_json::json!(null))
         })
         .register_ipc("get_jobs", move |_| Ok(snapshot.snapshot()))
+        .register_ipc("model_catalog", move |_| {
+            Ok(serde_json::json!(engine::model_catalog()))
+        })
         .register_ipc("engine_defaults", move |_| {
-            let bundled = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|p| p.join("vpipe")));
-            let cli = bundled.filter(|p| p.is_file()).unwrap_or_else(|| {
-                std::path::PathBuf::from(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/vpipe/build/apps/vpipe/vpipe"
-                ))
-            });
             Ok(serde_json::json!(engine::cached_paths(
-                cli.to_string_lossy().into_owned()
+                engine::default_cli()
             )))
         })
         .on_ready(move |handle| ready.set_sender(handle.event_sender()))

@@ -57,3 +57,6 @@ for bits in (4,8):
     # vpipe's component copier hard-links files, so no second tensor copy is needed.
 quant(pe,prepared/'Qwen-Image-2.1-PE-T2I-4bit',4,'all')
 (prepared/'sources.json').write_text(json.dumps({'turbo':str(turbo),'enhancer':str(pe),'group_size':64},indent=2))
+
+# Prepare non-Turbo variants and the runtime Lightning adapter too.
+subprocess.run(["python3", str(ROOT / "scripts/prepare-qwen-base.py"), "--cache", str(cache)] + (["--skip-download"] if a.skip_download else []), check=True)

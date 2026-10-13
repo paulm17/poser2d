@@ -21,9 +21,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default();
     let mut failed = false;
-    for bits in [4, 8] {
-        for mode in ["t2i", "enhanced", "i2i"] {
-            let name = format!("{bits}bit-{mode}");
+    let size: u32 = std::env::var("VPIPE_VALIDATION_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(512);
+    for model in ["turbo-4", "turbo-8", "base-8", "base-4"] {
+        let bits = if model.ends_with("8") { 8 } else { 4 };
+        for mode in ["t2i", "i2i", "pose"] {
+            let name = format!("{model}-{mode}");
             if let Ok(filter) = std::env::var("VPIPE_VALIDATION_FILTER") {
                 if !filter.split(',').any(|f| f == name) {
                     continue;
@@ -31,10 +36,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let mut paths = paths.clone();
             paths.quant_bits = bits;
+            paths.lightning_enabled = model.starts_with("base");
+            paths.pose_enabled = mode == "pose";
             let req = Request {
-                auto_ratio:false,session:name.clone(),paths,
-                references:if mode=="i2i" { vec![Reference{png:png.clone()}] } else {vec![]},
-                settings:Settings { prompt:if mode=="i2i" {"Place this character on a quiet beach at sunset, preserving her face, pointed ears, white dress, and full-body standing pose."} else {"A blue ceramic mug on a wooden table beside a window, soft morning light"}.into(),width:Some(1024),height:Some(1024),steps:8,seed:42,enhance:mode=="enhanced",think:false,transparent:false,device:"mps".into(),ratio:Some("1:1".into()) }
+                loras:None,model_id:Some(model.into()),auto_ratio:false,session:name.clone(),paths,
+                references:if mode!="t2i" { vec![Reference{png:png.clone()}] } else {vec![]},
+                settings:Settings { prompt:if mode!="t2i" {"Place this character on a quiet beach at sunset, preserving her face, pointed ears, white dress, and full-body standing pose."} else {"A blue ceramic mug on a wooden table beside a window, soft morning light"}.into(),width:Some(size),height:Some(size),steps:8,seed:42,enhance:mode=="enhanced",think:false,transparent:false,device:"mps".into(),ratio:Some("1:1".into()) }
             };
             let identity = serde_json::to_value(&req.paths)?;
             let id = engine.submit(req).map_err(std::io::Error::other)?["id"]
@@ -90,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
             if result["job"]["state"] == "completed" {
                 let dims = image::image_dimensions(artifacts.join(&id).join("output.png"))?;
-                if dims != (1024, 1024) {
+                if dims != (size, size) {
                     return Err(format!("{name}: wrong dimensions {dims:?}").into());
                 }
             }

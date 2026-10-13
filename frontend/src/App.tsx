@@ -16,7 +16,7 @@ import {
   type Take,
   type Ratio,
 } from "./models";
-import { engine, emptyPaths, mergePaths, type EnginePaths, type Job } from "./engine";
+import { engine, emptyPaths, mergePaths, initialModelId, selectModelPaths, unavailableCatalog, type EnginePaths, type Job, type AdapterSelection, type CatalogModel } from "./engine";
 import { StageEditor, type StageEditorHandle } from "./StageEditor";
 
 function Dialog({
@@ -105,7 +105,7 @@ function initialSessions(): Session[] {
     )
       return stored.map((s) => ({
         ...s,
-        settings: { ...defaults, ...s.settings, steps: 8, device: "mps" },
+        settings: { ...defaults, ...s.settings, device: "mps" },
       }));
   } catch {
     /* Start fresh if browser storage is unavailable. */
@@ -134,7 +134,7 @@ export function App() {
   const [sessionBusy, setSessionBusy] = useState(false);
   const controlsBusy = stageBusy || sessionBusy;
   const [dialog, setDialog] = useState<
-    "paths" | "gallery" | "new" | "duplicate" | "delete" | null
+    "gallery" | "new" | "duplicate" | "delete" | null
   >(null);
   const [name, setName] = useState("");
   const [error, setError] = useState("");
@@ -177,9 +177,35 @@ export function App() {
     engine.defaults().then(defaults => { if (!disposed) setPaths(previous => mergePaths(previous, defaults)); }).catch(() => {});
     return () => { disposed = true; unsubscribe(); };
   }, []);
-  const [draftPaths, setDraftPaths] = useState(paths);
+  const [catalog, setCatalog] = useState<CatalogModel[]>(unavailableCatalog);
+  const [modelId, setModelId] = useState(() => initialModelId(localStorage.getItem("qwen-model-id"), paths.quant_bits));
+  const [modelOpen, setModelOpen] = useState(false);
+  const modelPopover = useRef<HTMLDivElement>(null);
+  const selectedModel = catalog.find(m => m.id === modelId);
+  const isTurbo = modelId.startsWith("turbo");
+  const [loras, setLoras] = useState<AdapterSelection[]>(() => {
+    try { const saved = JSON.parse(localStorage.getItem("qwen-loras") ?? "null"); if (Array.isArray(saved)) return saved.filter(a => (a.id === "pose" || a.id === "lightning") && Number.isFinite(a.strength)); } catch {}
+    return [...(paths.pose_enabled ? [{id:"pose" as const, strength:paths.pose_strength}] : []), ...(!isTurbo && paths.lightning_enabled ? [{id:"lightning" as const,strength:1}] : [])];
+  });
+  const lightningActive = !isTurbo && loras.some(a => a.id === "lightning");
+  const effectiveSteps = isTurbo ? 8 : lightningActive ? 4 : settings.steps;
+  useEffect(() => { localStorage.setItem("qwen-loras", JSON.stringify(loras)); }, [loras]);
+  useEffect(() => { engine.catalog().then(setCatalog).catch(() => {}); }, []);
+  useEffect(() => { localStorage.setItem("qwen-model-id", modelId); }, [modelId]);
+  useEffect(() => {
+    if (!modelOpen) return;
+    const close = (e: PointerEvent) => { if (!modelPopover.current?.contains(e.target as Node)) setModelOpen(false); };
+    const escape = (e: KeyboardEvent) => { if (e.key === "Escape") { setModelOpen(false); modelPopover.current?.querySelector("button")?.focus(); } };
+    document.addEventListener("pointerdown", close); document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
+  }, [modelOpen]);
+  function selectModel(id: string) {
+    setModelId(id);
+    if (id.startsWith("turbo")) setLoras(a => a.filter(a => a.id !== "lightning"));
+    setPaths(p => selectModelPaths(p, id));
+  }
   const [logs, setLogs] = useState<string[]>([
-    "[studio] Ready. Configure local weight files in Paths to generate.",
+    "[studio] Ready. Select a model to generate.",
   ]);
   const [tab, setTab] = useState<"output" | "render">("output");
   const [expanded, setExpanded] = useState(false);
@@ -279,7 +305,6 @@ export function App() {
   function openDialog(value: typeof dialog) {
     setDialogError("");
     setName(value === "duplicate" ? `${current.name} copy` : "");
-    setDraftPaths(paths);
     setDialog(value);
   }
   async function saveSession() {
@@ -361,11 +386,12 @@ export function App() {
       const result = await engine.generate({
         session: active,
         auto_ratio: !settings.ratio && settings.width === null && settings.height === null,
-        paths,
+        model_id: modelId,
+        loras,
         settings: {
           ...settings,
           enhance: settings.enhance && refs.length === 0, think: settings.think && settings.enhance && refs.length === 0,
-          steps: paths.turbo ? 8 : settings.steps,
+          steps: effectiveSteps,
           width: size.width, height: size.height,
           prompt: resolveMentions(settings.prompt, refs),
         },
@@ -432,7 +458,7 @@ export function App() {
       ],
     }));
   }
-  const command = `vpipe --launch pipeline.json · ${paths.quant_bits ?? 4}-bit · 8 steps · seed ${settings.seed}`;
+  const command = `Qwen-Image-2.1 ${isTurbo ? "Turbo" : "Non-Turbo"} · ${modelId.endsWith("8") ? 8 : 4}-bit · ${effectiveSteps} steps · seed ${settings.seed}`;
   const numberField = (
     key: "width" | "height" | "steps" | "seed",
     label: string,
@@ -444,8 +470,8 @@ export function App() {
       <input
         type="number"
         aria-label={label}
-        value={key === "steps" && paths.turbo ? 8 : settings[key] ?? ""}
-        disabled={key === "steps" && paths.turbo}
+        value={key === "steps" ? effectiveSteps : settings[key] ?? ""}
+        disabled={key === "steps" && (isTurbo || lightningActive)}
         min={min}
         max={max}
         step={key === "width" || key === "height" ? 32 : 1}
@@ -542,9 +568,7 @@ export function App() {
               <button className="btn" onClick={() => openDialog("gallery")}>
                 Gallery
               </button>
-              <button className="btn" onClick={() => openDialog("paths")}>
-                ⚙ Paths
-              </button>
+
             </>
           )}
         </div>
@@ -559,10 +583,18 @@ export function App() {
           <aside className="panel" aria-label="Parameters">
             <section>
               <div className="label">Model</div>
-              <div className="model">
-                <div className="glyph">2.1</div>
-                <b>Qwen-Image-2.1</b>
-                <code>{paths.quant_bits === 8 ? paths.model8 : paths.model}</code>
+              <div className="model-picker" ref={modelPopover}>
+                <button className="model model-trigger" aria-expanded={modelOpen} aria-controls="model-options" onClick={() => { setModelOpen(!modelOpen); if (!modelOpen) engine.catalog().then(setCatalog).catch(() => {}); }}>
+                  <span className="glyph">2.1</span><span><b>Qwen-Image-2.1</b><small>{isTurbo ? "Turbo" : "Non-Turbo"} · {modelId.endsWith("8") ? 8 : 4}-bit{lightningActive ? " · Lightning" : ""}{loras.some(a => a.id === "pose") ? " · Pose" : ""}</small></span><span>▾</span>
+                </button>
+                {modelOpen && <div id="model-options" className="model-popover" role="dialog" aria-label="Model selection">
+                  <label>Model<select value={isTurbo ? "turbo" : "base"} onChange={e => {
+                    const candidates = catalog.filter(m => m.id.startsWith(e.target.value) && m.available);
+                    const candidate = candidates.find(m => m.bits === (modelId.endsWith("8") ? 8 : 4)) ?? candidates[0];
+                    if (candidate) selectModel(candidate.id);
+                  }}>{["base", "turbo"].map(v => <option key={v} value={v} disabled={!catalog.some(m => m.id.startsWith(v) && m.available)}>{v === "base" ? "Non-Turbo" : "Turbo"}{!catalog.some(m => m.id.startsWith(v) && m.available) ? " · Not installed" : ""}</option>)}</select></label>
+                  <label>Precision<select value={modelId} onChange={e => selectModel(e.target.value)}>{catalog.filter(m => m.turbo === isTurbo).map(m => <option key={m.id} value={m.id} disabled={!m.available}>{m.bits}-bit{!m.available ? " · Not installed" : ""}</option>)}</select></label>
+                </div>}
               </div>
               <div className="device-row">
                 <label className="label" htmlFor="device">
@@ -578,6 +610,20 @@ export function App() {
 
                 </select>
               </div>
+            </section>
+            <section>
+              <div className="label">LoRAs</div>
+              {loras.map((adapter, index) => <div className="lora-row" key={adapter.id}>
+                <div className="lora-heading"><label>LoRA model<select value={adapter.id} onChange={e => setLoras(a => a.map((item, i) => i === index ? {id:e.target.value as AdapterSelection["id"], strength:e.target.value === "pose" ? 0.7 : 1} : item))}>
+                  {(["lightning","pose"] as const).filter(id => id !== "lightning" || !isTurbo).map(id => <option key={id} value={id} disabled={(id === "pose" ? !selectedModel?.pose_available : !selectedModel?.lightning_available) || loras.some((a,i) => i !== index && a.id === id)}>{id === "pose" ? "Pose" : "Lightning · 4 steps"}{(id === "pose" ? !selectedModel?.pose_available : !selectedModel?.lightning_available) ? " · Not installed" : ""}</option>)}
+                </select></label><button className="btn" aria-label={`Remove ${adapter.id} LoRA`} onClick={() => setLoras(a => a.filter((_,i) => i !== index))}>×</button></div>
+                <label>LoRA strength<input type="number" min="0" max="2" step="0.1" value={adapter.strength} onChange={e => setLoras(a => a.map((item,i) => i === index ? {...item,strength:Number(e.target.value)} : item))}/></label>
+              </div>)}
+              <button className="btn" disabled={!(["lightning","pose"] as const).some(id => (id !== "lightning" || !isTurbo) && (id === "pose" ? selectedModel?.pose_available : selectedModel?.lightning_available) && !loras.some(a => a.id === id))} onClick={() => {
+                const id = (["lightning","pose"] as const).find(id => (id !== "lightning" || !isTurbo) && (id === "pose" ? selectedModel?.pose_available : selectedModel?.lightning_available) && !loras.some(a => a.id === id));
+                if (id) setLoras(a => [...a,{id,strength:id === "pose" ? 0.7 : 1}]);
+              }}>＋ Add LoRA</button>
+              <p className="hint">Stack adapters here. Pose applies to image edits.</p>
             </section>
             <section>
               <div className="label">
@@ -1070,9 +1116,7 @@ export function App() {
       {dialog && (
         <Dialog
           title={
-            dialog === "paths"
-              ? "Paths"
-              : dialog === "gallery"
+            dialog === "gallery"
                 ? "Gallery"
                 : dialog === "delete"
                   ? `Delete ${current.name}?`
@@ -1090,61 +1134,6 @@ export function App() {
                 Local demo takes for this session. Helmstudio gallery is not
                 connected.
               </p>
-            </>
-          ) : dialog === "paths" ? (
-            <>
-              <p className="notice">
-                Select prepared vpipe model directories. Models are stored in your Hugging Face cache.
-              </p>
-              <label><span className="label">Turbo precision · fixed 8-step schedule</span><select value={draftPaths.quant_bits ?? 4} onChange={e => setDraftPaths(p => ({ ...p, quant_bits: Number(e.target.value) as 4 | 8 }))}><option value={4}>4-bit</option><option value={8}>8-bit</option></select></label>
-              <label className="toggle"><input type="checkbox" checked={draftPaths.pose_enabled} onChange={e => setDraftPaths(previous => ({ ...previous, pose_enabled: e.target.checked }))} />PoseStudio LoRA · apply to image edits</label>
-              <p className="notice">PoseStudio applies at runtime to reference-image edits. Default strength is 0.7.</p>
-              <label><span className="label">PoseStudio strength</span><input type="number" min="0" max="2" step="0.1" value={draftPaths.pose_strength} onChange={e => setDraftPaths(previous => ({ ...previous, pose_strength: Number(e.target.value) }))} /></label>
-              {(["cli", "model", "model8", "vae", "llm", "pe_cli", "pe_model", "pe_system", "pose_lora"] as const).map((key, i) => (
-                <div className="field" key={key}>
-                  <label>
-                    <span className="label">
-                      {
-                        [
-                          "vpipe executable",
-                          "Turbo 4-bit pipeline directory",
-                          "Turbo 8-bit pipeline directory",
-                          "Qwen-Image-2.1 VAE",
-                          "Qwen3-VL text encoder",
-                          "vpipe enhancer executable",
-                          "PE-T2I 4-bit model directory",
-                          "Official PE-T2I system prompt",
-                          "PoseStudio LoRA (.safetensors)",
-                        ][i]
-                      }
-                    </span>
-                    <input
-                      type="text"
-                      value={draftPaths[key]}
-                      onChange={(e) =>
-                        setDraftPaths((prev) => ({
-                          ...prev,
-                          [key]: e.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                </div>
-              ))}
-              <div className="acts">
-                <button className="btn" onClick={() => setDialog(null)}>
-                  Cancel
-                </button>
-                <button
-                  className="primary"
-                  onClick={() => {
-                    setPaths(draftPaths);
-                    setDialog(null);
-                  }}
-                >
-                  Use paths
-                </button>
-              </div>
             </>
           ) : dialog === "delete" ? (
             <>

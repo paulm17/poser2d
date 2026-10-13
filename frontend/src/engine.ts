@@ -1,14 +1,16 @@
 import type { Settings, ReferenceImage } from "./models";
 import { invoke, listen } from "./ipc";
-export interface EnginePaths { pose_lora: string; pose_enabled: boolean; pose_strength: number; turbo: boolean; pe_cli: string; pe_model: string; pe_system: string; cli: string; model: string; model8: string; quant_bits: 4 | 8; vae: string; llm: string; vision: string; }
-export const emptyPaths: EnginePaths = { pose_lora: "", pose_enabled: true, pose_strength: 0.7, turbo: false, pe_cli: "", pe_model: "", pe_system: "", cli: "", model: "", model8: "", quant_bits: 4, vae: "", llm: "", vision: "" };
+export interface EnginePaths { lightning_enabled: boolean; lightning_lora: string; pose_lora: string; pose_enabled: boolean; pose_strength: number; turbo: boolean; pe_cli: string; pe_model: string; pe_system: string; cli: string; model: string; model8: string; quant_bits: 4 | 8; vae: string; llm: string; vision: string; }
+export const emptyPaths: EnginePaths = { lightning_enabled: false, lightning_lora: "", pose_lora: "", pose_enabled: false, pose_strength: 0.7, turbo: false, pe_cli: "", pe_model: "", pe_system: "", cli: "", model: "", model8: "", quant_bits: 4, vae: "", llm: "", vision: "" };
 export interface Job {
   id: string; session: string; settings: Settings; revision: number;
   state: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
   stage: string; step: number; total: number; logs: string[];
   enhanced_prompt: string | null; error: string | null; output: string | null; width: number | null; height: number | null;
 }
-export interface GenerationRequest { auto_ratio: boolean; session: string; settings: Settings; references: ReferenceImage[]; paths: EnginePaths; }
+export interface CatalogModel { id: string; turbo: boolean; bits: 4 | 8; available: boolean; pose_available: boolean; lightning_available: boolean; }
+export interface AdapterSelection { id: "lightning" | "pose"; strength: number; }
+export interface GenerationRequest { loras?: AdapterSelection[]; model_id?: string; auto_ratio: boolean; session: string; settings: Settings; references: ReferenceImage[]; paths?: EnginePaths; }
 // Normalize browser-only blob URLs (including scene captures and SVG demo takes)
 // before crossing into Rust; vpipe receives immutable PNG files per job.
 async function referencePNG(reference: ReferenceImage): Promise<{ png: string }> {
@@ -27,6 +29,7 @@ export const engine = {
     for (const reference of request.references) references.push(await referencePNG(reference));
     return invoke("submit_generation", { ...request, references });
   },
+  catalog: () => invoke<CatalogModel[]>("model_catalog"),
   ready: () => invoke("engine_subscribed"),
   cancel: (id: string) => invoke("cancel_generation", { id }),
   snapshot: () => invoke<{ jobs: Job[] }>("get_jobs"),
@@ -43,3 +46,12 @@ export function mergePaths(previous: EnginePaths, defaults: EnginePaths): Engine
   merged.vision = "";
   return merged;
 }
+
+export function initialModelId(saved: string | null, bits: number): string {
+  return saved && /^(turbo|base)-(4|8)$/.test(saved) ? saved : `turbo-${bits === 8 ? 8 : 4}`;
+}
+export function selectModelPaths(paths: EnginePaths, id: string): EnginePaths {
+  return { ...paths, turbo: id.startsWith("turbo"), quant_bits: id.endsWith("8") ? 8 : 4,
+    lightning_enabled: !id.startsWith("turbo") && paths.lightning_enabled };
+}
+export const unavailableCatalog: CatalogModel[] = [true, false].flatMap(turbo => ([4,8] as const).map(bits => ({id: `${turbo ? "turbo" : "base"}-${bits}`, turbo, bits, available:false, pose_available:false, lightning_available:false})));

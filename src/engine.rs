@@ -30,6 +30,10 @@ pub struct Settings {
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Paths {
     #[serde(default)]
+    pub lightning_lora: String,
+    #[serde(default)]
+    pub lightning_enabled: bool,
+    #[serde(default)]
     pub pose_lora: String,
     #[serde(default)]
     pub pose_enabled: bool,
@@ -64,12 +68,22 @@ fn pose_strength() -> f32 {
 pub struct Reference {
     pub png: String,
 }
+#[derive(Clone, Deserialize, Serialize)]
+pub struct AdapterSelection {
+    pub id: String,
+    pub strength: f32,
+}
 #[derive(Deserialize)]
 pub struct Request {
+    #[serde(default)]
+    pub loras: Option<Vec<AdapterSelection>>,
+    #[serde(default)]
+    pub model_id: Option<String>,
     #[serde(default)]
     pub auto_ratio: bool,
     pub session: String,
     pub settings: Settings,
+    #[serde(default = "default_paths")]
     pub paths: Paths,
     pub references: Vec<Reference>,
 }
@@ -104,6 +118,7 @@ struct Work {
     id: String,
     args: Vec<String>,
     pose_modules: usize,
+    lightning_modules: usize,
     paths: Paths,
     cli: PathBuf,
     dir: PathBuf,
@@ -207,8 +222,41 @@ impl Engine {
         }
     }
     pub fn submit(&self, mut request: Request) -> Result<Value, String> {
-        request.settings.steps = 8;
-        request.paths.turbo = true;
+        if let Some(id) = &request.model_id {
+            let pose = request.paths.pose_enabled;
+            let lightning = request.paths.lightning_enabled;
+            let mut paths = cached_paths(default_cli());
+            let selected = model_catalog()
+                .into_iter()
+                .find(|m| &m.id == id)
+                .ok_or("Unknown model selection")?;
+            if !selected.available {
+                return Err("Selected model is not installed".into());
+            }
+            paths.model = selected.path;
+            paths.model8 = paths.model.clone();
+            paths.quant_bits = selected.bits;
+            paths.turbo = selected.turbo;
+            paths.vae = PathBuf::from(&paths.model)
+                .join("vae")
+                .to_string_lossy()
+                .into_owned();
+            paths.llm = PathBuf::from(&paths.model)
+                .join("text_encoder")
+                .to_string_lossy()
+                .into_owned();
+            paths.pose_enabled = pose;
+            paths.lightning_enabled = lightning && !paths.turbo;
+            request.paths = paths;
+        }
+        if let Some(loras) = &request.loras {
+            apply_adapter_selection(&mut request.paths, loras)?;
+        }
+        if request.paths.turbo {
+            request.settings.steps = 8;
+        } else if request.paths.lightning_enabled {
+            request.settings.steps = 4;
+        }
         if request.paths.quant_bits == 8 {
             request.paths.model = request.paths.model8.clone();
         }
@@ -252,8 +300,17 @@ impl Engine {
         }
         let cli = PathBuf::from(&request.paths.cli);
         if !cli.is_file() {
-            return Err("Select an existing vpipe executable in Paths".into());
+            return Err("Select an existing vpipe executable".into());
         }
+        let lightning_modules = if request.paths.lightning_enabled {
+            request.paths.lightning_lora = std::fs::canonicalize(&request.paths.lightning_lora)
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .into_owned();
+            adapter_modules(&request.paths.lightning_lora)?
+        } else {
+            0
+        };
         let pose_modules = if request.paths.pose_enabled && !request.references.is_empty() {
             adapter_modules(&request.paths.pose_lora)?
         } else {
@@ -321,6 +378,7 @@ impl Engine {
             id: id.clone(),
             args,
             pose_modules,
+            lightning_modules,
             cli,
             dir: dir.clone(),
         }) {
@@ -496,17 +554,31 @@ impl Engine {
         );
         match result.unwrap() {
             Ok(status) if status.success() => {
-                if work.pose_modules > 0 {
+                for (label, path, count) in [
+                    ("Pose", &work.paths.pose_lora, work.pose_modules),
+                    (
+                        "Lightning",
+                        &work.paths.lightning_lora,
+                        work.lightning_modules,
+                    ),
+                ] {
+                    if count == 0 {
+                        continue;
+                    }
                     let log =
                         std::fs::read_to_string(work.dir.join("render.log")).unwrap_or_default();
-                    let expected = format!("-- {} modules at scale", work.pose_modules);
-                    if !log.contains(&expected) || log.contains("SKIPPED (shape mismatch)") {
+                    let expected = format!("-- {count} modules at scale");
+                    if !log.lines().any(|line| {
+                        line.contains("runtime LoRA")
+                            && line.contains(path)
+                            && line.contains(&expected)
+                    }) || log.contains("SKIPPED (shape mismatch)")
+                    {
                         self.finish(
                             &work.id,
                             "failed",
                             Some(format!(
-                                "PoseStudio did not bind all {} adapter modules; see render log",
-                                work.pose_modules
+                                "{label} did not bind all {count} adapter modules; see render log"
                             )),
                         );
                         return;
@@ -666,7 +738,7 @@ impl Engine {
     fn log(&self, id: &str, text: &str) {
         let text = text.replace("\u{1b}[K", "");
         self.update(id, |j| {
-            if let Some((step, total)) = progress(&text) {
+            if let Some((step, total)) = progress(&text, j.total) {
                 if total == j.total {
                     j.stage = "denoise".into();
                     j.step = step;
@@ -733,7 +805,7 @@ fn validate(r: &Request) -> Result<(), String> {
                 .join("config.json")
                 .is_file()
         {
-            return Err("Select a prepared PE-T2I Safetensors model directory in Paths".into());
+            return Err("Select a prepared PE-T2I Safetensors model directory".into());
         }
         if !r.references.is_empty() {
             return Err("Prompt enhancement currently supports text-to-image only".into());
@@ -744,11 +816,11 @@ fn validate(r: &Request) -> Result<(), String> {
             ("PE-T2I system prompt", &r.paths.pe_system),
         ] {
             if !PathBuf::from(path).exists() {
-                return Err(format!("Select existing {label} in Paths"));
+                return Err(format!("Select existing {label}"));
             }
         }
     }
-    if s.steps != 8 {
+    if r.paths.turbo && s.steps != 8 {
         return Err("Turbo generation requires 8 steps".into());
     }
     if !(1..=200).contains(&s.steps) || s.seed > 9_007_199_254_740_991 {
@@ -780,7 +852,7 @@ fn validate(r: &Request) -> Result<(), String> {
                 .is_file()
         {
             return Err(format!(
-                "Select an existing {name} Safetensors model directory in Paths"
+                "Select an existing {name} Safetensors model directory"
             ));
         }
     }
@@ -791,24 +863,27 @@ fn validate(r: &Request) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     let index: Value = serde_json::from_slice(
         &std::fs::read(PathBuf::from(&r.paths.model).join("model_index.json"))
-            .map_err(|e| format!("Turbo sampling configuration is missing: {e}"))?,
+            .map_err(|e| format!("Sampling configuration is missing: {e}"))?,
     )
     .map_err(|e| e.to_string())?;
     if config["_class_name"] != "QwenImage21Transformer2DModel"
-        || index["sample_sigmas"].as_array().map(Vec::len) != Some(8)
+        || (r.paths.turbo && index["sample_sigmas"].as_array().map(Vec::len) != Some(8))
     {
-        return Err("Select a Qwen-Image-2.1-Turbo pipeline with its official eight-step sampling configuration".into());
+        return Err("Selected Qwen model has an invalid sampling configuration".into());
     }
     if config["quantization"]["bits"].as_u64() != Some(r.paths.quant_bits as u64) {
         return Err(format!(
-            "Selected model must be a prepared {}-bit Turbo transformer",
+            "Selected model must be a prepared {}-bit transformer",
             r.paths.quant_bits
         ));
+    }
+    if r.paths.lightning_enabled && !PathBuf::from(&r.paths.lightning_lora).is_file() {
+        return Err("Lightning LoRA is not installed".into());
     }
     if r.paths.pose_enabled && !r.references.is_empty() {
         let path = PathBuf::from(&r.paths.pose_lora);
         if !path.is_file() {
-            return Err("Select an existing PoseStudio LoRA in Paths or disable it".into());
+            return Err("Select an existing PoseStudio LoRA or disable it".into());
         }
         if !r.paths.pose_strength.is_finite() || !(0.0..=2.0).contains(&r.paths.pose_strength) {
             return Err("PoseStudio LoRA strength must be between 0 and 2".into());
@@ -845,10 +920,22 @@ fn image_pipeline(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Va
     } else {
         r.settings.prompt.clone()
     };
-    let mut cfg = json!({"use_kv_cache":true});
+    let mut cfg = json!({"use_kv_cache":!r.paths.lightning_enabled});
+    if r.paths.lightning_enabled {
+        cfg["lora"] = json!(r.paths.lightning_lora);
+        cfg["lora_scale"] = json!(
+            r.loras
+                .as_ref()
+                .and_then(|a| a.iter().find(|a| a.id == "lightning"))
+                .map(|a| a.strength)
+                .unwrap_or(1.0)
+        );
+        cfg["sigmas"] = json!([1.0, 0.75, 0.5, 0.25]);
+        cfg["shift_terminal"] = json!(0.0);
+    }
     if r.paths.pose_enabled && !refs.is_empty() {
-        cfg["lora"] = json!(r.paths.pose_lora);
-        cfg["lora_scale"] = json!(r.paths.pose_strength);
+        cfg["lora2"] = json!(r.paths.pose_lora);
+        cfg["lora2_scale"] = json!(r.paths.pose_strength);
     }
     let mut stages = vec![
         stage(
@@ -889,7 +976,7 @@ fn image_pipeline(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Va
         ],
         json!({"unload_when_idle":"always"}),
     ));
-    stages.push(stage("generate-image", "generate-image", vec![port("diffusion-conditioner"),port(""),port("model-select"),port(""),port(""),port(if refs.is_empty(){""}else{"vae-encode"}),port(""),port("model-config")], json!({"width":r.settings.width,"height":r.settings.height,"seed":r.settings.seed,"unload_when_idle":"always"})));
+    stages.push(stage("generate-image", "generate-image", vec![port("diffusion-conditioner"),port(""),port("model-select"),port(""),port(""),port(if refs.is_empty(){""}else{"vae-encode"}),port(""),port("model-config")], json!({"width":r.settings.width,"height":r.settings.height,"seed":r.settings.seed,"steps":r.settings.steps,"guidance_scale":1.0,"unload_when_idle":"always"})));
     stages.push(stage(
         "vae-decode",
         "vae-decode",
@@ -950,11 +1037,11 @@ fn adapter_modules(path: &str) -> Result<usize, String> {
         })
         .count();
     if count == 0 {
-        return Err("PoseStudio contains no recognized adapter modules".into());
+        return Err("LoRA contains no recognized adapter modules".into());
     }
     Ok(count)
 }
-fn progress(text: &str) -> Option<(u32, u32)> {
+fn progress(text: &str, steps: u32) -> Option<(u32, u32)> {
     if !text.contains("'denoise'") {
         return None;
     }
@@ -965,7 +1052,7 @@ fn progress(text: &str) -> Option<(u32, u32)> {
     if total == 0 || done > total {
         return None;
     }
-    Some(((done * 8 / total) as u32, 8))
+    Some(((done * u64::from(steps) / total) as u32, steps))
 }
 
 pub fn cached_paths(cli: String) -> Paths {
@@ -997,6 +1084,11 @@ fn cached_paths_in(hub: &std::path::Path, cli: String) -> Paths {
         }
     }
     Paths {
+        lightning_lora: prepared
+            .join("Qwen-Image-2.1-Lightning.safetensors")
+            .to_string_lossy()
+            .into_owned(),
+        lightning_enabled: false,
         cli: cli.clone(),
         model: q4.to_string_lossy().into_owned(),
         model8: q8.to_string_lossy().into_owned(),
@@ -1008,7 +1100,7 @@ fn cached_paths_in(hub: &std::path::Path, cli: String) -> Paths {
         pe_cli: cli,
         pe_model: pe.to_string_lossy().into_owned(),
         pe_system: pe.join("system_prompt.txt").to_string_lossy().into_owned(),
-        pose_enabled: !pose.is_empty(),
+        pose_enabled: false,
         pose_lora: pose,
         pose_strength: 0.7,
     }
@@ -1075,6 +1167,8 @@ mod tests {
         paths.vae = root.join("vae").to_string_lossy().into_owned();
         paths.pose_enabled = false;
         Request {
+            loras: None,
+            model_id: None,
             auto_ratio: false,
             session: "test".into(),
             paths,
@@ -1126,7 +1220,7 @@ mod tests {
         r.paths.pose_lora = "/tmp/pose.safetensors".into();
         let graph = image_pipeline(&r, &refs, &root.join("output.png"));
         assert_eq!(graph["stages"][1]["config"]["text"], r.settings.prompt);
-        assert_eq!(graph["stages"][2]["config"]["lora_scale"], json!(0.7f32));
+        assert_eq!(graph["stages"][2]["config"]["lora2_scale"], json!(0.7f32));
         assert_eq!(graph["stages"][3]["config"]["url"], json!(refs));
         assert!(
             image_pipeline(&r, &[], &root.join("out.png"))["stages"][2]["config"]
@@ -1136,17 +1230,118 @@ mod tests {
         assert!(graph.to_string().contains("1024"));
     }
     #[test]
+    fn selection_request_resolves_paths_and_validates_adapter_rows() {
+        let fixture = request(std::path::Path::new("/tmp/fixture"), "vpipe", "test");
+        let mut r: Request = serde_json::from_value(json!({"session":"test", "settings":fixture.settings, "references":[], "model_id":"base-8", "loras":[{"id":"lightning","strength":1.0},{"id":"pose","strength":0.7}]})).unwrap();
+        assert_eq!(r.paths.cli, default_cli());
+        r.paths.turbo = false;
+        let adapters = r.loras.unwrap();
+        apply_adapter_selection(&mut r.paths, &adapters).unwrap();
+        assert!(r.paths.lightning_enabled && r.paths.pose_enabled);
+        apply_adapter_selection(&mut r.paths, &[]).unwrap();
+        assert!(!r.paths.lightning_enabled && !r.paths.pose_enabled);
+        r.paths.turbo = true;
+        assert!(apply_adapter_selection(&mut r.paths, &adapters).is_err());
+        let duplicate = vec![
+            AdapterSelection {
+                id: "pose".into(),
+                strength: 0.7
+            };
+            2
+        ];
+        assert!(apply_adapter_selection(&mut r.paths, &duplicate).is_err());
+        assert!(
+            apply_adapter_selection(
+                &mut r.paths,
+                &[AdapterSelection {
+                    id: "pose".into(),
+                    strength: 2.1
+                }]
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn lightning_and_pose_have_independent_slots_and_four_steps() {
+        let root = PathBuf::from("/tmp/fixture");
+        let mut r = request(&root, "vpipe", "test");
+        r.paths.turbo = false;
+        r.paths.lightning_enabled = true;
+        r.paths.lightning_lora = "/tmp/lightning.safetensors".into();
+        r.paths.pose_enabled = true;
+        r.paths.pose_lora = "/tmp/pose.safetensors".into();
+        r.settings.steps = 4;
+        r.loras = Some(vec![
+            AdapterSelection {
+                id: "lightning".into(),
+                strength: 0.8,
+            },
+            AdapterSelection {
+                id: "pose".into(),
+                strength: 0.7,
+            },
+        ]);
+        let graph = image_pipeline(&r, &[root.join("ref.png")], &root.join("out.png"));
+        let cfg = &graph["stages"][2]["config"];
+        assert_eq!(cfg["lora"], r.paths.lightning_lora);
+        assert_eq!(cfg["lora2"], r.paths.pose_lora);
+        assert_eq!(cfg["lora_scale"], json!(0.8f32));
+        assert_eq!(cfg["sigmas"], json!([1.0, 0.75, 0.5, 0.25]));
+        assert_eq!(cfg["shift_terminal"], 0.0);
+        assert_eq!(cfg["use_kv_cache"], false);
+        assert_eq!(
+            progress("50% of 'denoise' completed (64/128)", 4),
+            Some((2, 4))
+        );
+        let text = image_pipeline(&r, &[], &root.join("out.png"));
+        assert!(text["stages"][2]["config"].get("lora2").is_none());
+        let generate = text["stages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["id"] == "generate-image")
+            .unwrap();
+        assert_eq!(generate["config"]["steps"], 4);
+    }
+    #[test]
+    fn missing_shards_are_not_installed() {
+        let root = std::env::temp_dir().join(format!("catalog-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("config.json"), "{}").unwrap();
+        std::fs::write(
+            root.join("model.safetensors.index.json"),
+            r#"{"weight_map":{"weight":"one.safetensors"}}"#,
+        )
+        .unwrap();
+        assert!(!component_installed(&root));
+        std::fs::write(root.join("one.safetensors"), "fixture").unwrap();
+        assert!(component_installed(&root));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn base_allows_adjustable_steps_and_missing_lightning_is_rejected() {
+        let root = std::env::temp_dir().join(format!("base-{}", Uuid::new_v4()));
+        setup(&root);
+        let mut r = request(&root, "/usr/bin/true", "test");
+        r.paths.turbo = false;
+        r.settings.steps = 40;
+        assert!(validate(&r).is_ok());
+        r.paths.lightning_enabled = true;
+        assert!(validate(&r).unwrap_err().contains("Lightning"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn progress_tracks_vpipe_blocks_without_confusing_weight_loading() {
         assert_eq!(
-            progress("50% of 'denoise' completed at 12:34 (128/256)"),
+            progress("50% of 'denoise' completed at 12:34 (128/256)", 8),
             Some((4, 8))
         );
         assert_eq!(
-            progress("50% of 'load weights' completed at 12:34 (128/256)"),
+            progress("50% of 'load weights' completed at 12:34 (128/256)", 8),
             None
         );
         assert_eq!(
-            progress("'denoise' ended at 12:34, last reported 25% (64/256)"),
+            progress("'denoise' ended at 12:34, last reported 25% (64/256)", 8),
             Some((2, 8))
         );
     }
@@ -1306,4 +1501,113 @@ if prompt!='noout': shutil.copyfile(pathlib.Path(__file__).parent/'source.png',s
         .await
         .unwrap_or_else(|_| panic!("Expected {state}: {}", engine.snapshot()));
     }
+}
+
+#[derive(Serialize)]
+pub struct CatalogModel {
+    pub id: String,
+    pub turbo: bool,
+    pub bits: u8,
+    pub available: bool,
+    pub pose_available: bool,
+    pub lightning_available: bool,
+    #[serde(skip)]
+    pub path: String,
+}
+pub fn model_catalog() -> Vec<CatalogModel> {
+    let defaults = cached_paths(String::new());
+    let prepared = PathBuf::from(&defaults.model)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    [true, false]
+        .into_iter()
+        .flat_map(|turbo| {
+            let defaults = &defaults;
+            let prepared = &prepared;
+            [4, 8].into_iter().map(move |bits| {
+                let path = prepared.join(format!(
+                    "Qwen-Image-2.1{}-{bits}bit",
+                    if turbo { "-Turbo" } else { "" }
+                ));
+                CatalogModel {
+                    id: format!("{}-{bits}", if turbo { "turbo" } else { "base" }),
+                    turbo,
+                    bits,
+                    available: component_installed(&path.join("transformer"))
+                        && component_installed(&path.join("text_encoder"))
+                        && component_installed(&path.join("vae"))
+                        && path.join("model_index.json").is_file(),
+                    pose_available: PathBuf::from(&defaults.pose_lora).is_file(),
+                    lightning_available: PathBuf::from(&defaults.lightning_lora).is_file(),
+                    path: path.to_string_lossy().into_owned(),
+                }
+            })
+        })
+        .collect()
+}
+
+pub fn default_cli() -> String {
+    let bundled = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.join("vpipe")));
+    bundled
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| {
+            PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/vpipe/build/apps/vpipe/vpipe"
+            ))
+        })
+        .to_string_lossy()
+        .into_owned()
+}
+fn component_installed(path: &std::path::Path) -> bool {
+    if !path.join("config.json").is_file() {
+        return false;
+    }
+    for index in [
+        "model.safetensors.index.json",
+        "diffusion_pytorch_model.safetensors.index.json",
+    ] {
+        if let Ok(bytes) = std::fs::read(path.join(index)) {
+            if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+                return value["weight_map"].as_object().is_some_and(|m| {
+                    !m.is_empty()
+                        && m.values()
+                            .all(|v| v.as_str().is_some_and(|name| path.join(name).is_file()))
+                });
+            }
+        }
+    }
+    ["model.safetensors", "diffusion_pytorch_model.safetensors"]
+        .iter()
+        .any(|n| path.join(n).is_file())
+}
+
+fn default_paths() -> Paths {
+    cached_paths(default_cli())
+}
+
+fn apply_adapter_selection(paths: &mut Paths, adapters: &[AdapterSelection]) -> Result<(), String> {
+    paths.lightning_enabled = false;
+    paths.pose_enabled = false;
+    let mut seen = std::collections::HashSet::new();
+    for adapter in adapters {
+        if !seen.insert(&adapter.id) {
+            return Err("Each LoRA may be added once".into());
+        }
+        if !adapter.strength.is_finite() || !(0.0..=2.0).contains(&adapter.strength) {
+            return Err("LoRA strength must be between 0 and 2".into());
+        }
+        match adapter.id.as_str() {
+            "lightning" if !paths.turbo => paths.lightning_enabled = true,
+            "pose" => {
+                paths.pose_enabled = true;
+                paths.pose_strength = adapter.strength;
+            }
+            _ => return Err("LoRA is unavailable for this model".into()),
+        }
+    }
+    Ok(())
 }

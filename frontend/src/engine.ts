@@ -1,7 +1,7 @@
 import type { Settings, ReferenceImage } from "./models";
 import { invoke, listen } from "./ipc";
-export interface EnginePaths { pose_lora: string; pose_enabled: boolean; pose_strength: number; turbo: boolean; pe_cli: string; pe_model: string; pe_system: string; cli: string; model: string; vae: string; llm: string; vision: string; }
-export const emptyPaths: EnginePaths = { pose_lora: "", pose_enabled: true, pose_strength: 0.7, turbo: false, pe_cli: "", pe_model: "", pe_system: "", cli: "", model: "", vae: "", llm: "", vision: "" };
+export interface EnginePaths { pose_lora: string; pose_enabled: boolean; pose_strength: number; turbo: boolean; pe_cli: string; pe_model: string; pe_system: string; cli: string; model: string; model8: string; quant_bits: 4 | 8; vae: string; llm: string; vision: string; }
+export const emptyPaths: EnginePaths = { pose_lora: "", pose_enabled: true, pose_strength: 0.7, turbo: false, pe_cli: "", pe_model: "", pe_system: "", cli: "", model: "", model8: "", quant_bits: 4, vae: "", llm: "", vision: "" };
 export interface Job {
   id: string; session: string; settings: Settings; revision: number;
   state: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
@@ -10,7 +10,7 @@ export interface Job {
 }
 export interface GenerationRequest { auto_ratio: boolean; session: string; settings: Settings; references: ReferenceImage[]; paths: EnginePaths; }
 // Normalize browser-only blob URLs (including scene captures and SVG demo takes)
-// before crossing into Rust; sd-cli receives immutable PNG files per job.
+// before crossing into Rust; vpipe receives immutable PNG files per job.
 async function referencePNG(reference: ReferenceImage): Promise<{ png: string }> {
   const image = new Image(); image.src = reference.url; await image.decode();
   if (image.naturalWidth > 8192 || image.naturalHeight > 8192) throw new Error("References must be at most 8192 pixels per side.");
@@ -35,11 +35,11 @@ export const engine = {
 };
 
 export function mergePaths(previous: EnginePaths, defaults: EnginePaths): EnginePaths {
-  if (previous.model.split(/[\\/]/).pop() === "qwen-image-2.1-turbo-Q8_0.gguf"
-    && defaults.model.split(/[\\/]/).pop() === "qwen-image-2.1-turbo-Q4_K_S.gguf") {
-    previous = { ...previous, model: defaults.model };
+  const legacy = /\.gguf$/i.test(previous.model) || /sd-cli$/.test(previous.cli);
+  const merged: EnginePaths = { ...defaults, ...previous, turbo: true, quant_bits: previous.quant_bits === 8 ? 8 : 4 };
+  for (const key of ["cli", "model", "model8", "vae", "llm", "pe_cli", "pe_model", "pe_system", "pose_lora"] as const) {
+    if (!previous[key] || (legacy && key !== "pose_lora")) merged[key] = defaults[key];
   }
-  return previous.model
-    ? { ...previous, pose_lora: previous.pose_lora || defaults.pose_lora, cli: previous.cli || defaults.cli, vision: previous.vision || defaults.vision, pe_cli: previous.pe_cli || defaults.pe_cli, pe_model: previous.pe_model || defaults.pe_model, pe_system: previous.pe_system || defaults.pe_system }
-    : { ...defaults, ...Object.fromEntries(Object.entries(previous).filter(([key, value]) => key !== "turbo" && value !== "")) };
+  merged.vision = "";
+  return merged;
 }

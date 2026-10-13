@@ -1,0 +1,324 @@
+diff --git a/apple-silicon/metal-compute/CMakeLists.txt b/apple-silicon/metal-compute/CMakeLists.txt
+index 2df4e52..540dab9 100644
+--- a/apple-silicon/metal-compute/CMakeLists.txt
++++ b/apple-silicon/metal-compute/CMakeLists.txt
+@@ -137,7 +137,7 @@ execute_process(
+ if(_VPIPE_SDK_VER VERSION_GREATER_EQUAL 26.2)
+   set(VPIPE_NAX_MIN_OS -mmacosx-version-min=26.2)
+ else()
+-  set(VPIPE_NAX_MIN_OS "")
++  set(VPIPE_NAX_MIN_OS -DVPIPE_DISABLE_NAX=1)
+ endif()
+ message(STATUS
+     "vpipe NAX kernels: deployment-target flag '${VPIPE_NAX_MIN_OS}' "
+diff --git a/apple-silicon/metal-compute/cmake/vpipe-metal-kernel.cmake b/apple-silicon/metal-compute/cmake/vpipe-metal-kernel.cmake
+index 16b5230..49e100e 100644
+--- a/apple-silicon/metal-compute/cmake/vpipe-metal-kernel.cmake
++++ b/apple-silicon/metal-compute/cmake/vpipe-metal-kernel.cmake
+@@ -144,7 +144,7 @@ function(add_vpipe_metal_kernel KERNEL_NAME)
+   # the tensor / MetalPerformancePrimitives (matmul2d) intrinsics and
+   # the __HAVE_TENSOR__ paths are enabled; the default-std kernels omit
+   # both and compile exactly as before.
+-  set(STD_FLAG "")
++  set(STD_FLAG "-std=metal3.1")
+   if(K_STD)
+     set(STD_FLAG "-std=${K_STD}")
+   endif()
+diff --git a/apple-silicon/metal-compute/metal-compute.cc b/apple-silicon/metal-compute/metal-compute.cc
+index 9c842b0..97b7fe4 100644
+--- a/apple-silicon/metal-compute/metal-compute.cc
++++ b/apple-silicon/metal-compute/metal-compute.cc
+@@ -340,6 +340,11 @@ macos_version_() noexcept
+ bool
+ MetalCompute::supports_matrix_cores() const noexcept
+ {
++#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED < 260200
++  // This SDK builds compatibility stubs for tensor APIs it does not have.
++  // A newer OS/GPU cannot make those compiled stubs into real kernels.
++  return false;
++#endif
+   // GPUFamilyApple10 (Apple M5) is the first with hardware matrix units.
+   // Families are cumulative supersets, so supportsFamily(Apple10) is true
+   // on M5 and any newer Apple GPU and false on M4 / M3 / earlier.
+diff --git a/generative-models/krea2/metal-krea2-vae.cc b/generative-models/krea2/metal-krea2-vae.cc
+index d7cf0ec..b82c588 100644
+--- a/generative-models/krea2/metal-krea2-vae.cc
++++ b/generative-models/krea2/metal-krea2-vae.cc
+@@ -1719,6 +1719,7 @@ MetalKrea2Vae::decode(const SharedBuffer& z, int h8, int w8, std::string* err)
+   SharedBuffer carry;
+   const bool vae_split = std::getenv("VPIPE_KREA2_NO_VAE_SPLIT") == nullptr;
+   bool split_ok = true;
++  std::string split_error;
+   // Per-level GPU time -- declared here because the report happens after
+   // the block that fills it. See the note at `dmark`.
+   const bool dprof = std::getenv("VPIPE_VAE_DECODE_PROFILE") != nullptr;
+@@ -1894,7 +1895,7 @@ MetalKrea2Vae::decode(const SharedBuffer& z, int h8, int w8, std::string* err)
+       enc.end();
+       _flops.flush(stream);
+       std::string ge;
+-      if (!stream.commit().wait_ok(&ge)) { split_ok = false; }
++      if (!stream.commit().wait_ok(&ge)) { split_ok = false; split_error = ge; }
+       for (auto& s : pool) {
+         if (&s.buf == xp) { carry = std::move(s.buf); break; }
+       }
+@@ -1963,8 +1964,7 @@ MetalKrea2Vae::decode(const SharedBuffer& z, int h8, int w8, std::string* err)
+     return fail("a decode intermediate allocation failed (out of GPU memory)");
+   }
+   if (!split_ok) {
+-    return fail("GPU decode ran out of memory at a level boundary "
+-                "(lower the resolution)");
++    return fail("GPU decode failed at a level boundary: " + split_error);
+   }
+   std::string gpu_err;
+   _flops.flush(stream);
+diff --git a/generative-models/qwen-image/metal-qwen-image21-transformer.cc b/generative-models/qwen-image/metal-qwen-image21-transformer.cc
+index aed7407..a124584 100644
+--- a/generative-models/qwen-image/metal-qwen-image21-transformer.cc
++++ b/generative-models/qwen-image/metal-qwen-image21-transformer.cc
+@@ -815,7 +815,9 @@ MetalQwenImage21Transformer::load(std::shared_ptr<WeightSet> ws,
+   m->_lib_rms = mc->load_library("rms_norm_bf16");
+   m->_lib_rope = mc->load_library("rope_bf16");
+   m->_lib_attn = mc->load_library("attn_steel");
+-  m->_lib_mma = mc->load_library("dense_gemm_mma_bf16");
++  if (mc->supports_matrix_cores()) {
++    m->_lib_mma = mc->load_library("dense_gemm_mma_bf16");
++  }
+   m->_lib_dequant = mc->load_library("affine_dequant_bf16");
+   m->_lib_qmm = mc->load_library("affine_qmm_steel_bf16");
+   if (mc->supports_matrix_cores()) {
+@@ -2775,8 +2777,16 @@ MetalQwenImage21Transformer::bind_loras_(const std::vector<LoraSpec>& loras)
+       ad->bind(p + "attn.to_k", H, H, &d.k);
+       ad->bind(p + "attn.to_v", H, H, &d.v);
+       ad->bind(p + "attn.to_out.0", H, H, &d.o);
+-      ad->bind(p + "img_mlp.gate_layer", FF, H, &d.gate);
+-      ad->bind(p + "img_mlp.proj", FF, H, &d.proj);
++      // PoseStudio's ComfyUI export fuses [gate; up] output channels.
++      // The native model computes them separately; retain the shared A
++      // and split B at the FF boundary without changing adapter strength.
++      if (ad->has(p + "img_mlp.gate_up")) {
++        if (!ad->bind_split(p + "img_mlp.gate_up", FF, FF, H,
++                            &d.gate, &d.proj)) { return false; }
++      } else {
++        ad->bind(p + "img_mlp.gate_layer", FF, H, &d.gate);
++        ad->bind(p + "img_mlp.proj", FF, H, &d.proj);
++      }
+       ad->bind(p + "img_mlp.out", H, FF, &d.out);
+     }
+     FixedLora& f = _lora_fix[slot];
+diff --git a/generative-models/shared/runtime-lora.cc b/generative-models/shared/runtime-lora.cc
+index 84f3025..8ff4337 100644
+--- a/generative-models/shared/runtime-lora.cc
++++ b/generative-models/shared/runtime-lora.cc
+@@ -642,6 +642,25 @@ Adapter::bind(const std::string& module, int n, int k, Factors* out)
+   return true;
+ }
+ 
++bool
++Adapter::bind_split(const std::string& module, int first_n, int second_n,
++                    int k, Factors* first, Factors* second)
++{
++  if (first == nullptr || second == nullptr || first == second ||
++      first_n <= 0 || second_n <= 0 || k <= 0) { return false; }
++  *first = Factors{}; *second = Factors{};
++  Factors fused;
++  if (!bind(module, first_n + second_n, k, &fused)) { return false; }
++  const std::size_t row_bytes = (std::size_t)fused.rank * 2;
++  first->rank = second->rank = fused.rank;
++  first->a = fused.a.subview(0, fused.a.byte_size());
++  second->a = fused.a.subview(0, fused.a.byte_size());
++  first->b = fused.b.subview(0, (std::size_t)first_n * row_bytes);
++  second->b = fused.b.subview((std::size_t)first_n * row_bytes,
++                            (std::size_t)second_n * row_bytes);
++  return !first->empty() && !second->empty();
++}
++
+ bool
+ Adapter::bind_fused(const std::vector<std::string>& modules, int n, int k,
+                     Factors* out, const RowMap& rows)
+diff --git a/generative-models/shared/runtime-lora.h b/generative-models/shared/runtime-lora.h
+index d27c2cc..1cb558d 100644
+--- a/generative-models/shared/runtime-lora.h
++++ b/generative-models/shared/runtime-lora.h
+@@ -126,6 +126,11 @@ public:
+   // ordinary case rather than an error.
+   bool bind(const std::string& module, int n, int k, Factors* out);
+ 
++  // One fused [first; second] projection, consumed by two separate GEMMs.
++  // Shares A, slices B by output rows, and counts the source module once.
++  bool bind_split(const std::string& module, int first_n, int second_n,
++                  int k, Factors* first, Factors* second);
++
+   // bind(), for a projection the model computes on the HOST: the factors
+   // come back as f32 vectors at the file's own precision instead of
+   // bf16 GPU buffers. Counted as a bound module like any other, but NOT
+diff --git a/gpu-kernels/metal/attention/attn_qk_i8_probe.metal b/gpu-kernels/metal/attention/attn_qk_i8_probe.metal
+index 59b86c7..4f0c9b4 100644
+--- a/gpu-kernels/metal/attention/attn_qk_i8_probe.metal
++++ b/gpu-kernels/metal/attention/attn_qk_i8_probe.metal
+@@ -40,7 +40,7 @@ struct Limits {
+   static constexpr constant U finite_min = metal::numeric_limits<U>::min();
+ };
+ 
+-#if defined(__HAVE_TENSOR__)
++#if defined(__HAVE_TENSOR__) && !defined(VPIPE_DISABLE_NAX)
+ 
+ #include "mlx/backend/metal/kernels/steel/attn/nax.h"
+ 
+diff --git a/gpu-kernels/metal/attention/attn_steel_nax.metal b/gpu-kernels/metal/attention/attn_steel_nax.metal
+index d32b0b9..2c88d3e 100644
+--- a/gpu-kernels/metal/attention/attn_steel_nax.metal
++++ b/gpu-kernels/metal/attention/attn_steel_nax.metal
+@@ -69,7 +69,7 @@ struct Limits<bfloat> {
+       -metal::numeric_limits<bfloat>::max();
+ };
+ 
+-#if defined(__HAVE_TENSOR__)
++#if defined(__HAVE_TENSOR__) && !defined(VPIPE_DISABLE_NAX)
+ 
+ #include "mlx/backend/metal/kernels/steel/attn/kernels/steel_attention_nax.h"
+ 
+diff --git a/gpu-kernels/metal/attention/sdpa_mma.metal b/gpu-kernels/metal/attention/sdpa_mma.metal
+index 52facfb..9bf3d83 100644
+--- a/gpu-kernels/metal/attention/sdpa_mma.metal
++++ b/gpu-kernels/metal/attention/sdpa_mma.metal
+@@ -29,7 +29,7 @@ using namespace mpp::tensor_ops;
+ #define SA_SG 4
+ #define SA_THREADS (SA_SG * 32)
+ 
+-#if defined(__HAVE_TENSOR__)
++#if defined(__HAVE_TENSOR__) && !defined(VPIPE_DISABLE_NAX)
+ 
+ // Head-dim-parameterized (SA_D template arg): instantiated for 256 (Qwen3.5)
+ // and 128 (Llama-3 / the Krea-2 Qwen3-VL text encoder). The body is fully
+diff --git a/gpu-kernels/metal/attention/sol_proxy_mma.metal b/gpu-kernels/metal/attention/sol_proxy_mma.metal
+index 22845f5..75c4dcb 100644
+--- a/gpu-kernels/metal/attention/sol_proxy_mma.metal
++++ b/gpu-kernels/metal/attention/sol_proxy_mma.metal
+@@ -56,7 +56,7 @@ using namespace mpp::tensor_ops;
+ #define SOL_PX_SG 4
+ #endif
+ 
+-#if defined(__HAVE_TENSOR__)
++#if defined(__HAVE_TENSOR__) && !defined(VPIPE_DISABLE_NAX)
+ 
+ kernel void sol_proxy_mma(
+     const device VPIPE_ELT* qc    [[buffer(0)]],
+diff --git a/gpu-kernels/metal/gated-delta/gdn_mma.metal b/gpu-kernels/metal/gated-delta/gdn_mma.metal
+index cc93f55..ce57b50 100644
+--- a/gpu-kernels/metal/gated-delta/gdn_mma.metal
++++ b/gpu-kernels/metal/gated-delta/gdn_mma.metal
+@@ -46,7 +46,7 @@ using namespace mpp::tensor_ops;
+ #define GDN_SG 4
+ #endif
+ 
+-#if defined(__HAVE_TENSOR__)
++#if defined(__HAVE_TENSOR__) && !defined(VPIPE_DISABLE_NAX)
+ 
+ // Batched matmul2d. TL/TR select the stored layout of A/B (see header).
+ template <bool TL, bool TR>
+diff --git a/gpu-kernels/metal/gated-delta/vdn_mma.metal b/gpu-kernels/metal/gated-delta/vdn_mma.metal
+index 68bbc9e..22b84c2 100644
+--- a/gpu-kernels/metal/gated-delta/vdn_mma.metal
++++ b/gpu-kernels/metal/gated-delta/vdn_mma.metal
+@@ -57,7 +57,7 @@ using namespace mpp::tensor_ops;
+ #define VDN_MM_SG 8
+ #endif
+ 
+-#if defined(__HAVE_TENSOR__)
++#if defined(__HAVE_TENSOR__) && !defined(VPIPE_DISABLE_NAX)
+ 
+ kernel void vdn_frame_stats_mma(
+     const device VPIPE_ELT* ks [[buffer(0)]],
+diff --git a/gpu-kernels/metal/gemm/conv2d_mma.metal b/gpu-kernels/metal/gemm/conv2d_mma.metal
+index 74bf7f1..2e7b481 100644
+--- a/gpu-kernels/metal/gemm/conv2d_mma.metal
++++ b/gpu-kernels/metal/gemm/conv2d_mma.metal
+@@ -72,7 +72,7 @@ using namespace mpp::tensor_ops;
+ #endif
+ #define CV_THREADS (CV_SG * 32)
+ 
+-#if defined(__HAVE_TENSOR__)
++#if defined(__HAVE_TENSOR__) && !defined(VPIPE_DISABLE_NAX)
+ 
+ template <int STRIDE>
+ static inline void conv2d_mma_impl(
+diff --git a/gpu-kernels/metal/gemm/dense_gemm_mma.metal b/gpu-kernels/metal/gemm/dense_gemm_mma.metal
+index 3cf25ab..6ede559 100644
+--- a/gpu-kernels/metal/gemm/dense_gemm_mma.metal
++++ b/gpu-kernels/metal/gemm/dense_gemm_mma.metal
+@@ -32,7 +32,7 @@ using namespace mpp::tensor_ops;
+ #define VPIPE_ELT half
+ #endif
+ 
+-#if defined(__HAVE_TENSOR__)
++#if defined(__HAVE_TENSOR__) && !defined(VPIPE_DISABLE_NAX)
+ 
+ // Core: each threadgroup computes a TM*BM (rows) x TN*BN (cols) output
+ // region as a TMxTN grid of BMxBN matmul2d tiles. SG simdgroups cooperate
+diff --git a/gpu-kernels/metal/quant/affine_qmm_mma.metal b/gpu-kernels/metal/quant/affine_qmm_mma.metal
+index 1f66903..fb7ec4a 100644
+--- a/gpu-kernels/metal/quant/affine_qmm_mma.metal
++++ b/gpu-kernels/metal/quant/affine_qmm_mma.metal
+@@ -45,7 +45,7 @@ using namespace mpp::tensor_ops;
+ #define DG_GROUP 64
+ #define DG_THREADS (DG_SG * 32)
+ 
+-#if defined(__HAVE_TENSOR__)
++#if defined(__HAVE_TENSOR__) && !defined(VPIPE_DISABLE_NAX)
+ 
+ kernel void affine_qmm_mma_w4g64(
+     const device uint32_t*  w      [[buffer(0)]],
+diff --git a/gpu-kernels/metal/train/train_gemm_mma.metal b/gpu-kernels/metal/train/train_gemm_mma.metal
+index 19155ec..4b8e6a2 100644
+--- a/gpu-kernels/metal/train/train_gemm_mma.metal
++++ b/gpu-kernels/metal/train/train_gemm_mma.metal
+@@ -44,7 +44,7 @@ struct TrainGemmParams {
+   long  c_bstride;
+ };
+ 
+-#if defined(__HAVE_TENSOR__)
++#if defined(__HAVE_TENSOR__) && !defined(VPIPE_DISABLE_NAX)
+ 
+ // TA: A stored [K][M] (else [M][K]); TB: B stored [N][K] (else [K][N]).
+ // F32: C is the f32 accumulator, and the tile is ADDED to it.
+diff --git a/tests/unit-tests/runtime-lora.cc b/tests/unit-tests/runtime-lora.cc
+index 46849b0..bbfbc60 100644
+--- a/tests/unit-tests/runtime-lora.cc
++++ b/tests/unit-tests/runtime-lora.cc
+@@ -1166,3 +1166,36 @@ TEST(runtime_lora, block_diagonal_tells_a_converted_fusion_from_a_trained_one)
+   EXPECT_TRUE(untouched);
+   fs::remove(pc, ec); fs::remove(pt, ec);
+ }
++
++TEST(runtime_lora, split_fused_gate_up_keeps_shared_a_and_output_row_order)
++{
++  Session sess;
++  auto* mc = sess.metal_compute();
++  ASSERT_TRUE(mc != nullptr);
++  if (mc == nullptr) { return; }
++  std::error_code ec; fs::create_directories(scratch(), ec);
++  const fs::path p = scratch() / "split-gate-up.safetensors";
++  const int R = 2, K = 4, G = 3, U = 2;
++  ASSERT_TRUE(write_st(p, {
++      {"diffusion_model.img_mlp.gate_up.lora_A.weight", {R, K}, ramp(R*K, 1, 1)},
++      {"diffusion_model.img_mlp.gate_up.lora_B.weight", {G+U, R}, ramp((G+U)*R, 10, 1)},
++  }));
++  std::string err; auto ad = genai::lora::Adapter::open(p.string(), mc, &err);
++  ASSERT_TRUE(ad != nullptr); if (!ad) { return; }
++  genai::lora::Factors gate, up;
++  ASSERT_TRUE(ad->bind_split("img_mlp.gate_up", G, U, K, &gate, &up));
++  EXPECT_TRUE(ad->modules() == 1); EXPECT_TRUE(ad->skipped() == 0);
++  EXPECT_TRUE(gate.rank == R); EXPECT_TRUE(up.rank == R);
++  EXPECT_TRUE(gate.a.contents() == up.a.contents());
++  for (int row = 0; row < G+U; ++row) {
++    const auto& f = row < G ? gate : up;
++    const int local = row < G ? row : row-G;
++    for (int r = 0; r < R; ++r) {
++      EXPECT_TRUE(bf16_at(f.b, (std::size_t)local*R+r) == 10.0f+row*R+r);
++    }
++  }
++  // Malformed fused shapes are refused rather than partly applied.
++  genai::lora::Factors bad_g, bad_u;
++  EXPECT_FALSE(ad->bind_split("img_mlp.gate_up", G, U+1, K, &bad_g, &bad_u));
++  EXPECT_TRUE(bad_g.empty()); EXPECT_TRUE(bad_u.empty());
++}

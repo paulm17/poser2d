@@ -105,7 +105,7 @@ function initialSessions(): Session[] {
     )
       return stored.map((s) => ({
         ...s,
-        settings: { ...defaults, ...s.settings },
+        settings: { ...defaults, ...s.settings, steps: 8, device: "mps" },
       }));
   } catch {
     /* Start fresh if browser storage is unavailable. */
@@ -432,13 +432,7 @@ export function App() {
       ],
     }));
   }
-  const command = [
-    "sd-cli", "--diffusion-model", JSON.stringify(paths.model || "…"),
-    "--vae", JSON.stringify(paths.vae || "…"), "--llm", JSON.stringify(paths.llm || "…"),
-    "-p", JSON.stringify((resolveMentions(settings.prompt, refs) || "…") + (paths.pose_enabled && refs.length && paths.pose_lora ? ` <lora:${paths.pose_lora.split("/").pop()?.replace(/\.safetensors$/, "")}:${paths.pose_strength}>` : "")),
-    ...(paths.pose_enabled && refs.length && paths.pose_lora ? ["--lora-model-dir", JSON.stringify(paths.pose_lora.slice(0, paths.pose_lora.lastIndexOf("/"))), "--lora-apply-mode", "at_runtime"] : []),
-    "--steps", settings.steps, "--seed", settings.seed,
-  ].join(" ");
+  const command = `vpipe --launch pipeline.json · ${paths.quant_bits ?? 4}-bit · 8 steps · seed ${settings.seed}`;
   const numberField = (
     key: "width" | "height" | "steps" | "seed",
     label: string,
@@ -568,7 +562,7 @@ export function App() {
               <div className="model">
                 <div className="glyph">2.1</div>
                 <b>Qwen-Image-2.1</b>
-                <code>{paths.model}</code>
+                <code>{paths.quant_bits === 8 ? paths.model8 : paths.model}</code>
               </div>
               <div className="device-row">
                 <label className="label" htmlFor="device">
@@ -579,10 +573,9 @@ export function App() {
                   value={settings.device}
                   onChange={(e) => update("device", e.target.value)}
                 >
-                  <option value="auto">Auto — available engine backend</option>
+                  <option value="auto">Auto — Apple Silicon Metal</option>
                   <option value="mps">Metal (Apple Silicon)</option>
-                  <option value="cuda">CUDA (NVIDIA)</option>
-                  <option value="cpu">CPU (slow)</option>
+
                 </select>
               </div>
             </section>
@@ -1101,25 +1094,25 @@ export function App() {
           ) : dialog === "paths" ? (
             <>
               <p className="notice">
-                Select local weight files. Editing also needs the vision projection. No weights are downloaded automatically.
+                Select prepared vpipe model directories. Models are stored in your Hugging Face cache.
               </p>
-              <label className="toggle"><input type="checkbox" checked={draftPaths.turbo} onChange={e => setDraftPaths(previous => ({ ...previous, turbo: e.target.checked }))} />Turbo model · fixed 8-step schedule</label>
+              <label><span className="label">Turbo precision · fixed 8-step schedule</span><select value={draftPaths.quant_bits ?? 4} onChange={e => setDraftPaths(p => ({ ...p, quant_bits: Number(e.target.value) as 4 | 8 }))}><option value={4}>4-bit</option><option value={8}>8-bit</option></select></label>
               <label className="toggle"><input type="checkbox" checked={draftPaths.pose_enabled} onChange={e => setDraftPaths(previous => ({ ...previous, pose_enabled: e.target.checked }))} />PoseStudio LoRA · apply to image edits</label>
-              <p className="notice">Strength 0.7 passed the Turbo pose test. Strength 1.0 reversed the camera direction. Character identity transfer is still untested.</p>
+              <p className="notice">PoseStudio applies at runtime to reference-image edits. Default strength is 0.7.</p>
               <label><span className="label">PoseStudio strength</span><input type="number" min="0" max="2" step="0.1" value={draftPaths.pose_strength} onChange={e => setDraftPaths(previous => ({ ...previous, pose_strength: Number(e.target.value) }))} /></label>
-              {(["cli", "model", "vae", "llm", "vision", "pe_cli", "pe_model", "pe_system", "pose_lora"] as const).map((key, i) => (
+              {(["cli", "model", "model8", "vae", "llm", "pe_cli", "pe_model", "pe_system", "pose_lora"] as const).map((key, i) => (
                 <div className="field" key={key}>
                   <label>
                     <span className="label">
                       {
                         [
-                          "sd-cli executable",
-                          "Diffusion model (.gguf or .safetensors)",
+                          "vpipe executable",
+                          "Turbo 4-bit pipeline directory",
+                          "Turbo 8-bit pipeline directory",
                           "Qwen-Image-2.1 VAE",
                           "Qwen3-VL text encoder",
-                          "Vision projection (required for editing)",
-                          "mlx-rs GGUF generate executable",
-                          "PE-T2I Q4_K_M weights",
+                          "vpipe enhancer executable",
+                          "PE-T2I 4-bit model directory",
                           "Official PE-T2I system prompt",
                           "PoseStudio LoRA (.safetensors)",
                         ][i]

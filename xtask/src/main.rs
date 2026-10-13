@@ -35,11 +35,32 @@ fn main() -> Result<(), Box<dyn Error>> {
         helper_bundle_id_base: "com.qwenimagestudio.helper".into(),
         framework_name: "Chromium Embedded Framework.framework".into(),
     })?;
-    let cli = root.join("stable-diffusion.cpp/build/bin/sd-cli");
+    let cli = root.join("vpipe/build/apps/vpipe/vpipe");
     if !cli.is_file() {
-        return Err("Build stable-diffusion.cpp/build/bin/sd-cli before bundling".into());
+        return Err("Build vpipe/build/apps/vpipe/vpipe before bundling".into());
     }
-    std::fs::copy(cli, bundle.join("Contents/MacOS/sd-cli"))?;
+    std::fs::copy(cli, bundle.join("Contents/MacOS/vpipe"))?;
+    // The CLI links libvpipe by @rpath. Copy its versioned names too.
+    let libs = bundle.join("Contents/lib");
+    std::fs::create_dir_all(&libs)?;
+    for entry in std::fs::read_dir(root.join("vpipe/build"))? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with("libvpipe") && name_str.ends_with(".dylib") {
+            std::fs::copy(entry.path(), libs.join(name))?;
+        }
+    }
+    if !Command::new("install_name_tool")
+        .arg("-delete_rpath")
+        .arg(root.join("vpipe/build"))
+        .args(["-add_rpath", "@loader_path/../lib"])
+        .arg(bundle.join("Contents/MacOS/vpipe"))
+        .status()?
+        .success()
+    {
+        return Err("Could not set bundled vpipe library path".into());
+    }
     // rust-cef currently looks for this fixed helper name inside macOS bundles.
     let framework = bundle.join("Contents/Frameworks/Chromium Embedded Framework.framework");
     let macos = bundle.join("Contents/MacOS");

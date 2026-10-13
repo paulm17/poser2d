@@ -41,11 +41,11 @@ fn main() {
         .register_ipc("engine_defaults", move |_| {
             let bundled = std::env::current_exe()
                 .ok()
-                .and_then(|p| p.parent().map(|p| p.join("sd-cli")));
+                .and_then(|p| p.parent().map(|p| p.join("vpipe")));
             let cli = bundled.filter(|p| p.is_file()).unwrap_or_else(|| {
                 std::path::PathBuf::from(concat!(
                     env!("CARGO_MANIFEST_DIR"),
-                    "/stable-diffusion.cpp/build/bin/sd-cli"
+                    "/vpipe/build/apps/vpipe/vpipe"
                 ))
             });
             Ok(serde_json::json!(engine::cached_paths(

@@ -45,9 +45,16 @@ pub struct Paths {
     pub turbo: bool,
     pub cli: String,
     pub model: String,
+    #[serde(default)]
+    pub model8: String,
+    #[serde(default = "default_bits")]
+    pub quant_bits: u8,
     pub vae: String,
     pub llm: String,
     pub vision: String,
+}
+fn default_bits() -> u8 {
+    4
 }
 fn pose_strength() -> f32 {
     0.7
@@ -96,6 +103,8 @@ struct Work {
     references: Vec<Reference>,
     id: String,
     args: Vec<String>,
+    pose_modules: usize,
+    paths: Paths,
     cli: PathBuf,
     dir: PathBuf,
 }
@@ -198,6 +207,11 @@ impl Engine {
         }
     }
     pub fn submit(&self, mut request: Request) -> Result<Value, String> {
+        request.settings.steps = 8;
+        request.paths.turbo = true;
+        if request.paths.quant_bits == 8 {
+            request.paths.model = request.paths.model8.clone();
+        }
         validate(&request)?;
         for path in [
             &mut request.paths.cli,
@@ -206,12 +220,6 @@ impl Engine {
             &mut request.paths.llm,
         ] {
             *path = std::fs::canonicalize(&*path)
-                .map_err(|e| e.to_string())?
-                .to_string_lossy()
-                .into_owned();
-        }
-        if !request.references.is_empty() {
-            request.paths.vision = std::fs::canonicalize(&request.paths.vision)
                 .map_err(|e| e.to_string())?
                 .to_string_lossy()
                 .into_owned();
@@ -225,17 +233,32 @@ impl Engine {
                     .to_string_lossy()
                     .into_owned();
             }
-            for path in [&mut request.paths.pe_cli, &mut request.paths.pe_system] {
+            for path in [
+                &mut request.paths.pe_cli,
+                &mut request.paths.pe_system,
+                &mut request.paths.pe_model,
+            ] {
                 *path = std::fs::canonicalize(&*path)
                     .map_err(|e| e.to_string())?
                     .to_string_lossy()
                     .into_owned();
             }
         }
+        if request.paths.pose_enabled && !request.references.is_empty() {
+            request.paths.pose_lora = std::fs::canonicalize(&request.paths.pose_lora)
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .into_owned();
+        }
         let cli = PathBuf::from(&request.paths.cli);
         if !cli.is_file() {
-            return Err("Select an existing sd-cli executable in Paths".into());
+            return Err("Select an existing vpipe executable in Paths".into());
         }
+        let pose_modules = if request.paths.pose_enabled && !request.references.is_empty() {
+            adapter_modules(&request.paths.pose_lora)?
+        } else {
+            0
+        };
         let id = Uuid::new_v4().to_string();
         let dir = self.root.join(&id);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -251,13 +274,14 @@ impl Engine {
             .map(|i| dir.join(format!("reference-{i}.png")))
             .collect();
         let args = arguments(&request, &refs, &dir.join("output.png"));
+
         let enhancement = request.settings.enhance.then(|| Enhancement {
             cli: request.paths.pe_cli.clone(),
             model: request.paths.pe_model.clone(),
             system: request.paths.pe_system.clone(),
             prompt: request.settings.prompt.clone(),
             think: request.settings.think,
-            auto_ratio: request.auto_ratio,
+            auto_ratio: request.auto_ratio && request.settings.ratio.is_none(),
         });
         let (cancel, _) = watch::channel(false);
         {
@@ -292,9 +316,11 @@ impl Engine {
         }
         if let Err(e) = self.queue.try_send(Work {
             enhancement,
+            paths: request.paths.clone(),
             references: request.references,
             id: id.clone(),
             args,
+            pose_modules,
             cli,
             dir: dir.clone(),
         }) {
@@ -333,7 +359,6 @@ impl Engine {
         }
         if let Err(error) = prepared.map_err(|e| e.to_string()).and_then(|r| r) {
             self.finish(&work.id, "failed", Some(error));
-            let _ = std::fs::remove_dir_all(&work.dir);
             return;
         }
 
@@ -341,9 +366,10 @@ impl Engine {
             self.update(&work.id, |j| j.stage = "enhance".into());
             match self.enhance(enhancement, &work.id, &mut cancel).await {
                 Ok(Some((prompt, ratio))) => {
-                    let p = work.args.iter().position(|a| a == "-p").unwrap();
+                    let mut graph: Value =
+                        serde_json::from_str(&work.args[1]).expect("generated graph");
                     // Preserve the transparency instructions applied by arguments().
-                    work.args[p + 1] = if self
+                    graph["stages"][1]["config"]["text"] = json!(if self
                         .state
                         .lock()
                         .unwrap()
@@ -359,15 +385,18 @@ impl Engine {
                         )
                     } else {
                         prompt.clone()
-                    };
+                    });
                     if enhancement.auto_ratio {
                         if let Some((w, h)) = ratio_size(&ratio) {
-                            for (flag, value) in [("--width", w), ("--height", h)] {
-                                let i = work.args.iter().position(|a| a == flag).unwrap();
-                                work.args[i + 1] = value.to_string();
+                            for stage in graph["stages"].as_array_mut().unwrap() {
+                                if stage["id"] == "generate-image" {
+                                    stage["config"]["width"] = json!(w);
+                                    stage["config"]["height"] = json!(h);
+                                }
                             }
                         }
                     }
+                    work.args[1] = graph.to_string();
                     self.update(&work.id, |j| {
                         j.enhanced_prompt = Some(prompt);
                         j.stage = "load".into();
@@ -380,7 +409,6 @@ impl Engine {
                 }
                 Err(error) => {
                     self.finish(&work.id, "failed", Some(error));
-                    let _ = std::fs::remove_dir_all(&work.dir);
                     return;
                 }
             }
@@ -390,13 +418,49 @@ impl Engine {
             return;
         }
 
-        let mut command = Command::new(&work.cli);
+        let pack = work.dir.join("model");
+        if let Err(e) = assemble_model(&work.paths, &pack) {
+            self.finish(&work.id, "failed", Some(e));
+            return;
+        }
+        let mut graph: Value = serde_json::from_str(&work.args[1]).expect("generated graph");
+        graph["stages"][0]["config"]["hf_dir"] = json!(pack);
+        work.args[1] = graph.to_string();
+        self.log(
+            &work.id,
+            &format!(
+                "[vpipe] {}-bit model {}",
+                work.paths.quant_bits, work.paths.model
+            ),
+        );
+        let pipeline = work.dir.join("pipeline.json");
+        if let Err(e) = std::fs::write(&pipeline, &work.args[1]) {
+            self.finish(&work.id, "failed", Some(e.to_string()));
+            return;
+        }
+        work.args[1] = pipeline.to_string_lossy().into_owned();
+        self.log(
+            &work.id,
+            &format!("[vpipe] pipeline {}", pipeline.display()),
+        );
+        let started = std::time::Instant::now();
+        let mut command = Command::new("/usr/bin/time");
+        command.args(["-l", &work.cli.to_string_lossy()]);
+
         command
             .args(&work.args)
+            .stdin(Stdio::null())
+            // Bound VAE working sets on the M1/macOS 15 validation host.
+            // 32 latent cells = 512 output pixels with Qwen 2.1's /16 VAE.
+            .env(
+                "VPIPE_VAE_TILE",
+                std::env::var("VPIPE_VAE_TILE").unwrap_or_else(|_| "32".into()),
+            )
             .current_dir(&work.dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true);
+            .kill_on_drop(true)
+            .process_group(0);
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(e) => {
@@ -413,7 +477,7 @@ impl Engine {
         let id_b = work.id.clone();
         let err = tokio::spawn(async move { b.read(stderr, &id_b).await });
         let result = tokio::select! { biased;
-            _ = async { if !*cancel.borrow() { let _ = cancel.changed().await; } } => { let _ = child.kill().await; let _ = child.wait().await; None },
+            _ = async { if !*cancel.borrow() { let _ = cancel.changed().await; } } => { if let Some(pid) = child.id() { unsafe { libc::kill(-(pid as i32), libc::SIGKILL); } } let _ = child.wait().await; None },
             result = child.wait() => Some(result),
         };
         let _ = out.await;
@@ -423,8 +487,31 @@ impl Engine {
             let _ = std::fs::remove_dir_all(&work.dir);
             return;
         }
+        self.log(
+            &work.id,
+            &format!(
+                "[vpipe] elapsed {:.3} seconds",
+                started.elapsed().as_secs_f64()
+            ),
+        );
         match result.unwrap() {
             Ok(status) if status.success() => {
+                if work.pose_modules > 0 {
+                    let log =
+                        std::fs::read_to_string(work.dir.join("render.log")).unwrap_or_default();
+                    let expected = format!("-- {} modules at scale", work.pose_modules);
+                    if !log.contains(&expected) || log.contains("SKIPPED (shape mismatch)") {
+                        self.finish(
+                            &work.id,
+                            "failed",
+                            Some(format!(
+                                "PoseStudio did not bind all {} adapter modules; see render log",
+                                work.pose_modules
+                            )),
+                        );
+                        return;
+                    }
+                }
                 let path = work.dir.join("output.png");
                 let output = image::image_dimensions(&path)
                     .map_err(|e| e.to_string())
@@ -457,7 +544,7 @@ impl Engine {
             Ok(status) => self.finish(
                 &work.id,
                 "failed",
-                Some(format!("sd-cli exited with {status}; see render log")),
+                Some(format!("vpipe exited with {status}; see render log")),
             ),
             Err(e) => self.finish(&work.id, "failed", Some(e.to_string())),
         }
@@ -476,36 +563,21 @@ impl Engine {
             "[enhance] Loading PE-T2I. Image generation waits until this process exits.",
         );
         let system = std::fs::read_to_string(&pe.system).map_err(|e| e.to_string())?;
-        let config = self.root.join(id).join("pe-config.toml");
-        std::fs::write(
-            &config,
-            "[server]\nn_ctx = 32768\nn_gpu_layers = 99\nuse_mmap = true\nuse_mlock = false\n",
-        )
-        .map_err(|e| e.to_string())?;
-        let mut command = Command::new(&pe.cli);
-        command.args([
-            "--model",
-            &pe.model,
-            "--config",
-            &config.to_string_lossy(),
-            "--system-prompt",
-            &system,
-            "--prompt",
-            &pe.prompt,
-            "--chat",
-            "--stream",
-            "--max-tokens",
-            "16256",
-            "--temperature",
-            "1.0",
-            "--top-p",
-            "0.95",
-            "--top-k",
-            "20",
-        ]);
-        if pe.think {
-            command.arg("--think");
-        }
+        let dir = self.root.join(id);
+        let config = dir.join("enhancer.vpipeline");
+        let graph = enhancement_pipeline(pe, &system, &dir.join("enhanced.txt"));
+        std::fs::write(&config, graph.to_string()).map_err(|e| e.to_string())?;
+        let mut command = Command::new("/usr/bin/time");
+        command.args(["-l", &pe.cli]);
+        command
+            .args([
+                "--launch",
+                &config.to_string_lossy(),
+                "--config",
+                VPIPE_CONFIG,
+            ])
+            .current_dir(&dir)
+            .process_group(0);
         let mut child = command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -522,10 +594,10 @@ impl Engine {
         let job = id.to_string();
         let logs = tokio::spawn(async move { b.read(stderr, &job).await });
         let status = tokio::select! { biased;
-            _ = async { if !*cancel.borrow() { let _ = cancel.changed().await; } } => { let _ = child.kill().await; let _ = child.wait().await; None },
+            _ = async { if !*cancel.borrow() { let _ = cancel.changed().await; } } => { if let Some(pid) = child.id() { unsafe { libc::kill(-(pid as i32), libc::SIGKILL); } } let _ = child.wait().await; None },
             status = child.wait() => Some(status.map_err(|e| e.to_string())?),
         };
-        let text = output.await.map_err(|e| e.to_string())?;
+        let _stdout = output.await.map_err(|e| e.to_string())?;
         let _ = logs.await;
         if status.is_none() || *cancel.borrow() {
             return Ok(None);
@@ -533,6 +605,8 @@ impl Engine {
         if !status.unwrap().success() {
             return Err("Prompt enhancer failed; see render log".into());
         }
+        let text = std::fs::read_to_string(dir.join("enhanced.txt"))
+            .map_err(|e| format!("Enhancer produced no reply: {e}"))?;
         let parsed = parse_enhancement(&text)?;
         self.log(
             id,
@@ -599,11 +673,27 @@ impl Engine {
                 }
             }
             let lower = text.to_lowercase();
-            if j.stage != "enhance" && lower.contains("decoding") {
+            if j.stage != "enhance"
+                && (lower.contains("decoding")
+                    || lower.contains("'vae decode'")
+                    || lower.contains("vaedecodestage") && lower.contains("loading"))
+            {
                 j.stage = "decode".into();
+                j.step = j.total;
             }
-            if j.stage != "enhance" && lower.contains("save result") {
+            if j.stage != "enhance"
+                && (lower.contains("save result")
+                    || lower.contains("saveimagestage") && lower.contains("wrote"))
+            {
                 j.stage = "save".into();
+            }
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(self.root.join(id).join("render.log"))
+            {
+                use std::io::Write;
+                let _ = writeln!(f, "{text}");
             }
             j.logs.push(text);
             if j.logs.len() > 500 {
@@ -638,23 +728,27 @@ fn validate(r: &Request) -> Result<(), String> {
         return Err("Session and prompt are required".into());
     }
     if s.enhance {
-        if !r.paths.pe_model.to_ascii_lowercase().ends_with(".gguf") {
-            return Err("Text enhancement requires GGUF weights, not an MLX model".into());
+        if !PathBuf::from(&r.paths.pe_model).is_dir()
+            || !PathBuf::from(&r.paths.pe_model)
+                .join("config.json")
+                .is_file()
+        {
+            return Err("Select a prepared PE-T2I Safetensors model directory in Paths".into());
         }
         if !r.references.is_empty() {
             return Err("Prompt enhancement currently supports text-to-image only".into());
         }
         for (label, path) in [
-            ("mlx-rs GGUF generate executable", &r.paths.pe_cli),
+            ("vpipe enhancer executable", &r.paths.pe_cli),
             ("PE-T2I weights", &r.paths.pe_model),
             ("PE-T2I system prompt", &r.paths.pe_system),
         ] {
-            if !PathBuf::from(path).is_file() {
+            if !PathBuf::from(path).exists() {
                 return Err(format!("Select existing {label} in Paths"));
             }
         }
     }
-    if r.paths.turbo && s.steps != 8 {
+    if s.steps != 8 {
         return Err("Turbo generation requires 8 steps".into());
     }
     if !(1..=200).contains(&s.steps) || s.seed > 9_007_199_254_740_991 {
@@ -665,8 +759,8 @@ fn validate(r: &Request) -> Result<(), String> {
             return Err("Dimensions must be multiples of 32 between 256 and 4096".into());
         }
     }
-    if !matches!(s.device.as_str(), "auto" | "cpu" | "mps" | "cuda") {
-        return Err("Unknown device".into());
+    if !matches!(s.device.as_str(), "auto" | "mps") {
+        return Err("vpipe requires Apple Silicon Metal".into());
     }
     if r.references.len() > 10 {
         return Err("At most 10 references are supported".into());
@@ -676,9 +770,40 @@ fn validate(r: &Request) -> Result<(), String> {
         ("VAE", &r.paths.vae),
         ("text encoder", &r.paths.llm),
     ] {
-        if !PathBuf::from(path).is_file() {
-            return Err(format!("Select an existing {name} weight file in Paths"));
+        if !PathBuf::from(path).is_dir()
+            || !PathBuf::from(path)
+                .join(if name == "diffusion model" {
+                    "transformer/config.json"
+                } else {
+                    "config.json"
+                })
+                .is_file()
+        {
+            return Err(format!(
+                "Select an existing {name} Safetensors model directory in Paths"
+            ));
         }
+    }
+    let config: Value = serde_json::from_slice(
+        &std::fs::read(PathBuf::from(&r.paths.model).join("transformer/config.json"))
+            .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let index: Value = serde_json::from_slice(
+        &std::fs::read(PathBuf::from(&r.paths.model).join("model_index.json"))
+            .map_err(|e| format!("Turbo sampling configuration is missing: {e}"))?,
+    )
+    .map_err(|e| e.to_string())?;
+    if config["_class_name"] != "QwenImage21Transformer2DModel"
+        || index["sample_sigmas"].as_array().map(Vec::len) != Some(8)
+    {
+        return Err("Select a Qwen-Image-2.1-Turbo pipeline with its official eight-step sampling configuration".into());
+    }
+    if config["quantization"]["bits"].as_u64() != Some(r.paths.quant_bits as u64) {
+        return Err(format!(
+            "Selected model must be a prepared {}-bit Turbo transformer",
+            r.paths.quant_bits
+        ));
     }
     if r.paths.pose_enabled && !r.references.is_empty() {
         let path = PathBuf::from(&r.paths.pose_lora);
@@ -688,499 +813,204 @@ fn validate(r: &Request) -> Result<(), String> {
         if !r.paths.pose_strength.is_finite() || !(0.0..=2.0).contains(&r.paths.pose_strength) {
             return Err("PoseStudio LoRA strength must be between 0 and 2".into());
         }
-        if !path.file_stem().and_then(|s| s.to_str()).is_some_and(|s| {
-            !s.is_empty()
-                && s.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
-        }) {
-            return Err(
-                "PoseStudio LoRA filename must use letters, digits, dots, underscores or hyphens"
-                    .into(),
-            );
-        }
     }
-    if !r.references.is_empty() && !PathBuf::from(&r.paths.vision).is_file() {
-        return Err("Editing needs a vision projection weight file in Paths".into());
+    if !matches!(r.paths.quant_bits, 4 | 8) {
+        return Err("Choose 4-bit or 8-bit weights".into());
+    }
+
+    Ok(())
+}
+const VPIPE_CONFIG: &str = r#"{"log":{"level":"normal","delegate":"stdout"},"db":{"path":"."}}"#;
+
+fn port(src: &str) -> Value {
+    json!({"src":src,"oport":0})
+}
+fn stage(id: &str, kind: &str, inputs: Vec<Value>, config: Value) -> Value {
+    json!({"id":id,"type":kind,"iports":inputs,"config":config})
+}
+fn arguments(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Vec<String> {
+    vec![
+        "--launch".into(),
+        image_pipeline(r, refs, output).to_string(),
+        "--config".into(),
+        VPIPE_CONFIG.into(),
+    ]
+}
+fn image_pipeline(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Value {
+    let prompt = if r.settings.transparent {
+        format!(
+            "This is an RGBA image with transparency. {} The image has alpha channel and the background is transparent.",
+            r.settings.prompt
+        )
+    } else {
+        r.settings.prompt.clone()
+    };
+    let mut cfg = json!({"use_kv_cache":true});
+    if r.paths.pose_enabled && !refs.is_empty() {
+        cfg["lora"] = json!(r.paths.pose_lora);
+        cfg["lora_scale"] = json!(r.paths.pose_strength);
+    }
+    let mut stages = vec![
+        stage(
+            "model-select",
+            "model-select",
+            vec![],
+            json!({"hf_dir":r.paths.model}),
+        ),
+        stage("text-prompt", "text-prompt", vec![], json!({"text":prompt})),
+        stage("model-config", "qwen-image-21-model-config", vec![], cfg),
+    ];
+    if !refs.is_empty() {
+        stages.push(stage("load-ref", "load-image", vec![], json!({"url":refs})));
+        stages.push(stage(
+            "ref-resample",
+            "image-resample",
+            vec![port("load-ref")],
+            json!({"width":1024,"height":1024,"fit":"pad","algorithm":"lanczos"}),
+        ));
+        stages.push(stage(
+            "vae-encode",
+            "vae-encode",
+            vec![port("ref-resample"), port("model-select")],
+            json!({"unload_when_idle":"always"}),
+        ));
+    }
+    let ref_port = if refs.is_empty() { "" } else { "ref-resample" };
+    stages.push(stage(
+        "diffusion-conditioner",
+        "diffusion-conditioner",
+        vec![
+            port("text-prompt"),
+            port(""),
+            port("model-select"),
+            port(ref_port),
+            port(""),
+            port("model-config"),
+        ],
+        json!({"unload_when_idle":"always"}),
+    ));
+    stages.push(stage("generate-image", "generate-image", vec![port("diffusion-conditioner"),port(""),port("model-select"),port(""),port(""),port(if refs.is_empty(){""}else{"vae-encode"}),port(""),port("model-config")], json!({"width":r.settings.width,"height":r.settings.height,"seed":r.settings.seed,"unload_when_idle":"always"})));
+    stages.push(stage(
+        "vae-decode",
+        "vae-decode",
+        vec![port("generate-image"), port("model-select")],
+        json!({"unload_when_idle":"always"}),
+    ));
+    stages.push(stage(
+        "save-image",
+        "save-image",
+        vec![port("vae-decode")],
+        json!({"path":output,"format":"png","compression":6}),
+    ));
+    json!({"id":"studio-image","stages":stages,"subpipelines":[]})
+}
+fn enhancement_pipeline(pe: &Enhancement, system: &str, output: &std::path::Path) -> Value {
+    json!({"id":"studio-enhance","subpipelines":[],"stages":[
+        stage("input","text-prompt",vec![],json!({"value":{"messages":[{"role":"system","content":system},{"role":"user","content":pe.prompt}]}})),
+        stage("sampler","sampler-select",vec![],json!({"temperature":1.0,"top_p":0.95,"top_k":20,"seed":42})),
+        stage("chat","text-chat",vec![port("input"),port("sampler")],json!({"hf_dir":pe.model,"compute_dtype":"bf16","max_new_tokens":16256,"page_tokens":1024,"max_pages":32,"disable_thinking":!pe.think,"enable_tools":false,"mtp":false})),
+        stage("save","save-text",vec![port("chat")],json!({"path":output,"key":"text","append":false}))
+    ]})
+}
+fn assemble_model(paths: &Paths, dest: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(&paths.model).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        if name == "text_encoder" || name == "vae" {
+            continue;
+        }
+        std::os::unix::fs::symlink(entry.path(), dest.join(name)).map_err(|e| e.to_string())?;
+    }
+    for (name, source) in [("text_encoder", &paths.llm), ("vae", &paths.vae)] {
+        std::os::unix::fs::symlink(source, dest.join(name)).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
-fn arguments(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Vec<String> {
-    let s = &r.settings;
-    let mut prompt = if s.transparent {
-        format!(
-            "This is an RGBA image with transparency. {} The image has alpha channel and the background is transparent.",
-            s.prompt
-        )
-    } else {
-        s.prompt.clone()
-    };
-    if r.paths.pose_enabled && !refs.is_empty() {
-        let path = PathBuf::from(&r.paths.pose_lora);
-        let name = path.file_stem().unwrap().to_string_lossy();
-        prompt.push_str(&format!(" <lora:{name}:{}>", r.paths.pose_strength));
+fn adapter_modules(path: &str) -> Result<usize, String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut bytes = [0u8; 8];
+    f.read_exact(&mut bytes).map_err(|e| e.to_string())?;
+    let size = u64::from_le_bytes(bytes);
+    if size > 16 * 1024 * 1024 {
+        return Err("Invalid LoRA Safetensors header".into());
     }
-    let mut args = vec![
-        "--diffusion-model".into(),
-        r.paths.model.clone(),
-        "--vae".into(),
-        r.paths.vae.clone(),
-        "--llm".into(),
-        r.paths.llm.clone(),
-        "-p".into(),
-        prompt,
-        "--width".into(),
-        s.width.unwrap().to_string(),
-        "--height".into(),
-        s.height.unwrap().to_string(),
-        "--steps".into(),
-        s.steps.to_string(),
-        "--seed".into(),
-        s.seed.to_string(),
-        "--cfg-scale".into(),
-        if r.paths.turbo { "1.0" } else { "6.0" }.into(),
-        "--sampling-method".into(),
-        "euler".into(),
-        "--rng".into(),
-        "cpu".into(),
-        "--params-backend".into(),
-        "disk".into(),
-        "-o".into(),
-        output.to_string_lossy().into_owned(),
-    ];
-    if r.paths.pose_enabled && !refs.is_empty() {
-        let path = PathBuf::from(&r.paths.pose_lora);
-        args.extend([
-            "--lora-model-dir".into(),
-            path.parent().unwrap().to_string_lossy().into_owned(),
-            "--lora-apply-mode".into(),
-            "at_runtime".into(),
-        ]);
+    let mut header = vec![0; size as usize];
+    f.read_exact(&mut header).map_err(|e| e.to_string())?;
+    let data: Value = serde_json::from_slice(&header).map_err(|e| e.to_string())?;
+    let count = data
+        .as_object()
+        .ok_or("Invalid LoRA header")?
+        .keys()
+        .filter(|key| {
+            key.ends_with(".lora_A.weight")
+                || key.ends_with(".lora_A.default.weight")
+                || key.ends_with(".lora_down.weight")
+        })
+        .count();
+    if count == 0 {
+        return Err("PoseStudio contains no recognized adapter modules".into());
     }
-    if r.paths.turbo {
-        args.extend(["--sigmas".into(), "qwen-image-2.1-turbo".into()]);
-    }
-    if s.device != "auto" {
-        args.extend([
-            "--backend".into(),
-            match s.device.as_str() {
-                "mps" => "MTL0",
-                "cuda" => "CUDA0",
-                _ => "CPU",
-            }
-            .into(),
-        ]);
-    }
-    if !refs.is_empty() {
-        args.extend(["--llm_vision".into(), r.paths.vision.clone()]);
-        for path in refs {
-            args.extend(["-r".into(), path.to_string_lossy().into_owned()]);
-        }
-    }
-    args
+    Ok(count)
 }
 fn progress(text: &str) -> Option<(u32, u32)> {
-    if !text.contains('|') || !(text.contains("s/it") || text.contains("it/s")) {
+    if !text.contains("'denoise'") {
         return None;
-    };
-    text.split_whitespace().find_map(|word| {
-        let (a, b) = word.split_once('/')?;
-        let a = a.parse().ok()?;
-        let b = b.parse().ok()?;
-        if a <= b && b > 0 { Some((a, b)) } else { None }
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn parses_only_denoising_progress() {
-        assert_eq!(
-            progress("  |====> | 2/40 - 0.75it/s\u{1b}[K"),
-            Some((2, 40))
-        );
-        assert_eq!(progress("weights 2/40 - 3 MB/s"), None);
-        assert_eq!(progress(" |===| 41/40 - 1.0s/it"), None);
     }
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn worker_runs_fifo_cancels_waiting_and_active_and_recovers_from_failure() {
-        use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("theapp-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
-        let weights = root.join("weights");
-        std::fs::write(&weights, "fixture").unwrap();
-        let source = root.join("source.png");
-        image::RgbaImage::new(32, 32).save(&source).unwrap();
-        let cli = root.join("fixture-cli");
-        std::fs::write(&cli, format!("#!/bin/sh\nprompt=''\nwhile [ $# -gt 0 ]; do\n case \"$1\" in -p) prompt=\"$2\";; esac\n shift\ndone\ncase \"$prompt\" in noout) exit 0;; fail) echo 'fixture failure' >&2; exit 7;; slow) while true; do printf '\\r|=>| 1/2 - 0.50it/s'; /bin/sleep 0.05; done;; esac\nprintf '\\r|=>| 1/2 - 0.50it/s\\r|==| 2/2 - 0.50it/s\\n'\n/bin/cp '{}' output.png\n", source.display())).unwrap();
-        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let engine = Engine::new(root.join("renders"), &tokio::runtime::Handle::current());
-        let request = |prompt: &str| Request {
-            auto_ratio: false,
-            session: "session-a".into(),
-            settings: Settings {
-                prompt: prompt.into(),
-                width: Some(256),
-                height: Some(256),
-                steps: 2,
-                seed: 42,
-                enhance: false,
-                think: false,
-                transparent: false,
-                device: "cpu".into(),
-                ratio: None,
-            },
-            paths: Paths {
-                pose_lora: String::new(),
-                pose_enabled: false,
-                pose_strength: 0.7,
-                pe_cli: String::new(),
-                pe_model: String::new(),
-                pe_system: String::new(),
-                turbo: false,
-                cli: cli.to_string_lossy().into(),
-                model: weights.to_string_lossy().into(),
-                vae: weights.to_string_lossy().into(),
-                llm: weights.to_string_lossy().into(),
-                vision: weights.to_string_lossy().into(),
-            },
-            references: vec![],
-        };
-        let submit = |r| engine.submit(r).unwrap()["id"].as_str().unwrap().to_owned();
-        let first = submit(request("slow"));
-        wait_for(&engine, &first, "running").await;
-        let queued = submit(request("queued-cancel"));
-        let failed = submit(request("fail"));
-        let mut edit = request("success");
-        edit.references.push(Reference {
-            png: STANDARD.encode(std::fs::read(&source).unwrap()),
-        });
-        let last = submit(edit);
-        assert_eq!(engine.snapshot()["jobs"][3]["state"], "queued");
-        engine.cancel(&queued).unwrap();
-        engine.cancel(&first).unwrap();
-        wait_for(&engine, &first, "cancelled").await;
-        wait_for(&engine, &failed, "failed").await;
-        wait_for(&engine, &last, "completed").await;
-        let jobs = engine.snapshot();
-        assert_eq!(jobs["jobs"][1]["state"], "cancelled");
-        assert!(jobs["jobs"][2]["error"].as_str().unwrap().contains("7"));
-        assert_eq!(jobs["jobs"][3]["step"], 2);
-        assert_eq!(jobs["jobs"][3]["width"], 32);
-        assert!(
-            jobs["jobs"][3]["output"]
-                .as_str()
-                .unwrap()
-                .starts_with("app://localhost/__stream__/")
-        );
-        let mut invalid = request("edit");
-        invalid.references.push(Reference {
-            png: "not base64".into(),
-        });
-        let invalid_id = submit(invalid);
-        wait_for(&engine, &invalid_id, "failed").await;
-        let missing = submit(request("noout"));
-        wait_for(&engine, &missing, "failed").await;
-        assert!(
-            engine.snapshot()["jobs"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|j| j["id"] == missing)
-                .unwrap()["error"]
-                .as_str()
-                .unwrap()
-                .contains("No valid output")
-        );
-        let mut invalid = request("dimensions");
-        invalid.settings.width = Some(257);
-        assert!(validate(&invalid).is_err());
-        let r = request("quote ' $(touch injected) <image1>");
-        let args = arguments(
-            &r,
-            &[root.join("ref 1.png"), root.join("ref 2.png")],
-            &root.join("output.png"),
-        );
-        assert_eq!(
-            args[args.iter().position(|v| v == "-p").unwrap() + 1],
-            r.settings.prompt
-        );
-        assert_eq!(args.iter().filter(|v| *v == "-r").count(), 2);
-        assert_eq!(
-            args[args.iter().position(|v| v == "--params-backend").unwrap() + 1],
-            "disk"
-        );
-        assert!(
-            !args
-                .iter()
-                .any(|v| v == "--offload-to-cpu" || v == "--eager-load")
-        );
-        assert_eq!(
-            args[args.iter().position(|v| v == "--llm_vision").unwrap() + 1],
-            r.paths.vision
-        );
-        let references: Vec<_> = args
-            .windows(2)
-            .filter(|pair| pair[0] == "-r")
-            .map(|pair| pair[1].clone())
-            .collect();
-        assert_eq!(
-            references,
-            vec![
-                root.join("ref 1.png").to_string_lossy(),
-                root.join("ref 2.png").to_string_lossy()
-            ]
-        );
-
-        let mut pose = request("pose test");
-        pose.references.push(Reference { png: String::new() });
-        pose.paths.pose_enabled = true;
-        pose.paths.pose_lora = root.join("pose.safetensors").to_string_lossy().into_owned();
-        assert!(validate(&pose).is_err());
-        std::fs::write(&pose.paths.pose_lora, "fixture").unwrap();
-        assert!(validate(&pose).is_ok());
-        let pose_args = arguments(&pose, &[root.join("ref.png")], &root.join("pose.png"));
-        assert!(pose_args.contains(&"at_runtime".into()));
-        assert_eq!(
-            pose_args[pose_args.iter().position(|v| v == "-p").unwrap() + 1],
-            "pose test <lora:pose:0.7>"
-        );
-        assert_eq!(
-            pose_args[pose_args
-                .iter()
-                .position(|v| v == "--lora-model-dir")
-                .unwrap()
-                + 1],
-            root.to_string_lossy()
-        );
-        pose.paths.pose_strength = f32::NAN;
-        assert!(validate(&pose).is_err());
-        pose.paths.pose_strength = 0.7;
-        pose.paths.pose_enabled = false;
-        assert!(
-            !arguments(&pose, &[root.join("ref.png")], &root.join("pose.png"))
-                .contains(&"--lora-model-dir".into())
-        );
-        pose.paths.pose_enabled = true;
-        pose.references.clear();
-        assert!(
-            !arguments(&pose, &[], &root.join("pose.png")).contains(&"--lora-model-dir".into())
-        );
-
-        let mut turbo = request("turbo");
-        turbo.paths.turbo = true;
-        assert!(validate(&turbo).is_err());
-        turbo.settings.steps = 8;
-        assert!(validate(&turbo).is_ok());
-        let args = arguments(&turbo, &[], &root.join("turbo.png"));
-        assert_eq!(
-            args[args.iter().position(|v| v == "--params-backend").unwrap() + 1],
-            "disk"
-        );
-        assert!(
-            !args
-                .iter()
-                .any(|v| v == "--llm_vision" || v == "--offload-to-cpu" || v == "--eager-load")
-        );
-
-        assert_eq!(
-            args[args.iter().position(|v| v == "--sigmas").unwrap() + 1],
-            "qwen-image-2.1-turbo"
-        );
-        assert_eq!(
-            args[args.iter().position(|v| v == "--cfg-scale").unwrap() + 1],
-            "1.0"
-        );
-
-        let pe = root.join("fixture-generate");
-        std::fs::write(&pe, "#!/bin/sh\nprompt=''\nwhile [ $# -gt 0 ]; do case \"$1\" in --prompt) prompt=\"$2\";; esac; shift; done\ncase \"$prompt\" in slow-pe) while true; do /bin/sleep 0.05; done;; bad-pe) echo malformed; exit 0;; esac\necho '{\"rewritten_prompt\":\"Enhanced mug photograph\",\"wh_ratio\":\"1:1\"}'\n").unwrap();
-        std::fs::set_permissions(&pe, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let pe_model = root.join("pe.gguf");
-        std::fs::write(&pe_model, "fixture").unwrap();
-        let enhanced = |prompt: &str| {
-            let mut r = request(prompt);
-            r.settings.enhance = true;
-            r.paths.pe_cli = pe.to_string_lossy().into_owned();
-            r.paths.pe_model = pe_model.to_string_lossy().into_owned();
-            r.paths.pe_system = weights.to_string_lossy().into_owned();
-            r
-        };
-        let enhanced_id = submit(enhanced("enhance"));
-        wait_for(&engine, &enhanced_id, "completed").await;
-        assert_eq!(
-            engine.snapshot()["jobs"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|j| j["id"] == enhanced_id)
-                .unwrap()["enhanced_prompt"],
-            "Enhanced mug photograph"
-        );
-        let malformed = submit(enhanced("bad-pe"));
-        wait_for(&engine, &malformed, "failed").await;
-        assert!(
-            !root
-                .join("renders")
-                .join(&malformed)
-                .join("output.png")
-                .exists()
-        );
-        let slow = submit(enhanced("slow-pe"));
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            loop {
-                if engine.snapshot()["jobs"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|j| j["id"] == slow && j["stage"] == "enhance")
-                {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
-        engine.cancel(&slow).unwrap();
-        wait_for(&engine, &slow, "cancelled").await;
-        let recovery = submit(request("success"));
-        wait_for(&engine, &recovery, "completed").await;
-        engine.shutdown();
-        std::fs::remove_dir_all(root).unwrap();
+    let counts = text.rsplit_once('(')?.1.trim_end_matches(')');
+    let (done, total) = counts.split_once('/')?;
+    let done: u64 = done.parse().ok()?;
+    let total: u64 = total.parse().ok()?;
+    if total == 0 || done > total {
+        return None;
     }
-    #[test]
-    fn parses_enhancer_json_after_thinking_and_keeps_braces_in_strings() {
-        assert_eq!(parse_enhancement("<think>example {\"rewritten_prompt\":\"wrong\"}</think>\n```json\n{\"rewritten_prompt\":\"A sign reading {HELLO}\",\"wh_ratio\":\"16:9\"}\n```\n[done]").unwrap(), ("A sign reading {HELLO}".into(), "16:9".into()));
-        assert!(parse_enhancement("thinking only").is_err());
-        assert_eq!(ratio_size("16:9"), Some((2752, 1536)));
-        assert_eq!(ratio_size("1:0"), None);
-    }
-    #[test]
-    fn finds_vision_in_cache_without_loading_weights() {
-        let hub = std::env::temp_dir().join(format!("theapp-cache-test-{}", Uuid::new_v4()));
-        let snapshot = hub.join("models--unsloth--Qwen3-VL-8B-Instruct-GGUF/snapshots/test");
-        std::fs::create_dir_all(&snapshot).unwrap();
-        let vision = snapshot.join("mmproj-F16.gguf");
-        std::fs::write(&vision, "fixture").unwrap();
-        assert_eq!(
-            cached_paths_in(&hub, "sd-cli".into()).vision,
-            vision.to_string_lossy()
-        );
-        std::fs::remove_dir_all(hub).unwrap();
-    }
-    #[test]
-    fn selects_q4_diffusion_when_both_quantizations_are_cached() {
-        let hub = std::env::temp_dir().join(format!("theapp-cache-test-{}", Uuid::new_v4()));
-        let snapshot = hub.join("models--unsloth--Qwen-Image-2.1-Turbo-GGUF/snapshots/test");
-        std::fs::create_dir_all(&snapshot).unwrap();
-        let q4 = snapshot.join("qwen-image-2.1-turbo-Q4_K_S.gguf");
-        let q8 = snapshot.join("qwen-image-2.1-turbo-Q8_0.gguf");
-        std::fs::write(&q4, "fixture").unwrap();
-        std::fs::write(&q8, "fixture").unwrap();
-        let paths = cached_paths_in(&hub, "sd-cli".into());
-        assert_eq!(paths.model, q4.to_string_lossy());
-        assert!(paths.turbo);
-        assert!(q8.is_file());
-        std::fs::remove_dir_all(hub).unwrap();
-    }
-
-    async fn wait_for(engine: &Engine, id: &str, state: &str) {
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            loop {
-                if engine.snapshot()["jobs"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|j| j["id"] == id && j["state"] == state)
-                {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap_or_else(|_| panic!("Job did not reach {state}: {}", engine.snapshot()));
-    }
+    Some(((done * 8 / total) as u32, 8))
 }
 
 pub fn cached_paths(cli: String) -> Paths {
     let hub = std::env::var_os("HF_HUB_CACHE")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HF_HOME").map(|p| PathBuf::from(p).join("hub")))
         .unwrap_or_else(|| {
             dirs::home_dir()
                 .unwrap_or_default()
                 .join(".cache/huggingface/hub")
         });
+    let hub = std::fs::canonicalize(&hub).unwrap_or(hub);
     cached_paths_in(&hub, cli)
 }
-
 fn cached_paths_in(hub: &std::path::Path, cli: String) -> Paths {
-    let find = |repo: &str, suffix: &str| -> String {
-        fn visit(dir: &std::path::Path, suffix: &str, depth: u32) -> Option<PathBuf> {
-            if depth == 0 {
-                return None;
+    let prepared = hub.join("vpipe-prepared");
+    let q4 = prepared.join("Qwen-Image-2.1-Turbo-4bit");
+    let q8 = prepared.join("Qwen-Image-2.1-Turbo-8bit");
+    let pe = prepared.join("Qwen-Image-2.1-PE-T2I-4bit");
+    let mut pose = String::new();
+    let snapshots = hub.join("models--MIUProject--VNCCS_PoseStudio_QI2.1/snapshots");
+    if let Ok(entries) = std::fs::read_dir(snapshots) {
+        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+        entries.sort_by_key(|e| e.path());
+        for entry in entries {
+            let path = entry.path().join("VNCCS_QI2_PoseStudioV1.1.safetensors");
+            if path.is_file() {
+                pose = path.to_string_lossy().into_owned();
             }
-            let mut entries: Vec<_> = std::fs::read_dir(dir)
-                .ok()?
-                .filter_map(Result::ok)
-                .map(|e| e.path())
-                .collect();
-            entries.sort();
-            for path in entries {
-                if path.is_file() && path.file_name()?.to_string_lossy().ends_with(suffix) {
-                    return Some(path);
-                }
-                if path.is_dir() {
-                    if let Some(found) = visit(&path, suffix, depth - 1) {
-                        return Some(found);
-                    }
-                }
-            }
-            None
         }
-        visit(&hub.join(repo).join("snapshots"), suffix, 4)
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    };
-    let model = find(
-        "models--unsloth--Qwen-Image-2.1-Turbo-GGUF",
-        "qwen-image-2.1-turbo-Q4_K_S.gguf",
-    );
-    let pose_lora = find(
-        "models--MIUProject--VNCCS_PoseStudio_QI2.1",
-        "VNCCS_QI2_PoseStudioV1.1.safetensors",
-    );
+    }
     Paths {
-        pose_enabled: !pose_lora.is_empty(),
-        pose_lora,
+        cli: cli.clone(),
+        model: q4.to_string_lossy().into_owned(),
+        model8: q8.to_string_lossy().into_owned(),
+        quant_bits: 4,
+        vae: q4.join("vae").to_string_lossy().into_owned(),
+        llm: q4.join("text_encoder").to_string_lossy().into_owned(),
+        vision: String::new(),
+        turbo: true,
+        pe_cli: cli,
+        pe_model: pe.to_string_lossy().into_owned(),
+        pe_system: pe.join("system_prompt.txt").to_string_lossy().into_owned(),
+        pose_enabled: !pose.is_empty(),
+        pose_lora: pose,
         pose_strength: 0.7,
-        pe_cli: concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../mlx-rs/target/release/generate"
-        )
-        .into(),
-        pe_model: find(
-            "models--mozophe--Qwen-Image-2.1-PE-MTP-GGUF",
-            "qwen3.5_9b_qwen_image_2.1_pe_t2i.mtp.Q4_K_M.gguf",
-        ),
-        pe_system: find("models--Qwen--Qwen-Image-2.1-PE-T2I", "system_prompt.txt"),
-        cli,
-        turbo: !model.is_empty(),
-        model,
-        vae: find(
-            "models--Comfy-Org--Qwen-Image-2.1",
-            "qwen_image_2.1_vae_bf16.safetensors",
-        ),
-        llm: find(
-            "models--unsloth--Qwen3-VL-8B-Instruct-GGUF",
-            "Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
-        ),
-        vision: find(
-            "models--unsloth--Qwen3-VL-8B-Instruct-GGUF",
-            "mmproj-F16.gguf",
-        ),
     }
 }
 
@@ -1232,4 +1062,248 @@ fn ratio_size(ratio: &str) -> Option<(u32, u32)> {
         ((f64::from(*aw) / f64::from(*ah) / ratio).ln().abs())
             .total_cmp(&((f64::from(*bw) / f64::from(*bh) / ratio).ln().abs()))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn request(root: &std::path::Path, cli: &str, prompt: &str) -> Request {
+        let mut paths = cached_paths_in(root, cli.into());
+        paths.model = root.join("model").to_string_lossy().into_owned();
+        paths.model8 = root.join("model8").to_string_lossy().into_owned();
+        paths.llm = root.join("encoder").to_string_lossy().into_owned();
+        paths.vae = root.join("vae").to_string_lossy().into_owned();
+        paths.pose_enabled = false;
+        Request {
+            auto_ratio: false,
+            session: "test".into(),
+            paths,
+            references: vec![],
+            settings: Settings {
+                prompt: prompt.into(),
+                width: Some(1024),
+                height: Some(1024),
+                steps: 8,
+                seed: 42,
+                enhance: false,
+                think: false,
+                transparent: false,
+                device: "auto".into(),
+                ratio: None,
+            },
+        }
+    }
+    fn setup(root: &std::path::Path) {
+        for name in ["model/transformer", "model8/transformer", "encoder", "vae"] {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("config.json"),
+                if name.starts_with("model8") {
+                    r#"{"_class_name":"QwenImage21Transformer2DModel","quantization":{"bits":8}}"#
+                } else if name.starts_with("model/") {
+                    r#"{"_class_name":"QwenImage21Transformer2DModel","quantization":{"bits":4}}"#
+                } else {
+                    "{}"
+                },
+            )
+            .unwrap();
+        }
+        for name in ["model", "model8"] {
+            std::fs::write(
+                root.join(name).join("model_index.json"),
+                r#"{"sample_sigmas":[1.0,0.9,0.8,0.7,0.6,0.5,0.4,0.3]}"#,
+            )
+            .unwrap();
+        }
+    }
+    #[test]
+    fn graph_preserves_text_and_reference_order_and_uses_runtime_lora() {
+        let root = PathBuf::from("/tmp/fixture");
+        let mut r = request(&root, "vpipe", "quote ' $(touch injected) <image1>");
+        let refs = vec![root.join("one.png"), root.join("two.png")];
+        r.paths.pose_enabled = true;
+        r.paths.pose_lora = "/tmp/pose.safetensors".into();
+        let graph = image_pipeline(&r, &refs, &root.join("output.png"));
+        assert_eq!(graph["stages"][1]["config"]["text"], r.settings.prompt);
+        assert_eq!(graph["stages"][2]["config"]["lora_scale"], json!(0.7f32));
+        assert_eq!(graph["stages"][3]["config"]["url"], json!(refs));
+        assert!(
+            image_pipeline(&r, &[], &root.join("out.png"))["stages"][2]["config"]
+                .get("lora")
+                .is_none()
+        );
+        assert!(graph.to_string().contains("1024"));
+    }
+    #[test]
+    fn progress_tracks_vpipe_blocks_without_confusing_weight_loading() {
+        assert_eq!(
+            progress("50% of 'denoise' completed at 12:34 (128/256)"),
+            Some((4, 8))
+        );
+        assert_eq!(
+            progress("50% of 'load weights' completed at 12:34 (128/256)"),
+            None
+        );
+        assert_eq!(
+            progress("'denoise' ended at 12:34, last reported 25% (64/256)"),
+            Some((2, 8))
+        );
+    }
+    #[test]
+    fn enhancement_keeps_official_system_and_thinking_control() {
+        let pe = Enhancement {
+            cli: "vpipe".into(),
+            model: "/pe".into(),
+            system: "/system".into(),
+            prompt: "mug".into(),
+            think: true,
+            auto_ratio: false,
+        };
+        let p = enhancement_pipeline(&pe, "official instructions", std::path::Path::new("/out"));
+        assert_eq!(
+            p["stages"][0]["config"]["value"]["messages"][0]["content"],
+            "official instructions"
+        );
+        assert_eq!(p["stages"][2]["config"]["disable_thinking"], false);
+        assert_eq!(p["stages"][2]["config"]["mtp"], false);
+        assert_eq!(
+            parse_enhancement(
+                "<think>example</think>{\"rewritten_prompt\":\"A {SIGN}\",\"wh_ratio\":\"1:1\"}"
+            )
+            .unwrap()
+            .0,
+            "A {SIGN}"
+        );
+        assert!(parse_enhancement("malformed").is_err());
+    }
+    #[test]
+    fn defaults_choose_four_bit_and_keep_both_models() {
+        let paths = cached_paths_in(std::path::Path::new("/cache"), "vpipe".into());
+        assert_eq!(paths.quant_bits, 4);
+        assert!(paths.model.ends_with("Turbo-4bit"));
+        assert!(paths.model8.ends_with("Turbo-8bit"));
+        assert!(!serde_json::to_string(&paths).unwrap().contains("gguf"));
+    }
+    #[tokio::test]
+    async fn queue_cancellation_failure_and_enhancement_recovery() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("vpipe-engine-{}", Uuid::new_v4()));
+        setup(&root);
+        image::RgbaImage::new(1024, 1024)
+            .save(root.join("source.png"))
+            .unwrap();
+        let cli = root.join("fixture-vpipe");
+        let script = r#"#!/usr/bin/env python3
+import json,sys,time,shutil,pathlib
+p=json.load(open(sys.argv[sys.argv.index('--launch')+1])); stages=p['stages']; prompt=stages[1]['config'].get('text','')
+if p['id']=='studio-enhance':
+ prompt=stages[0]['config']['value']['messages'][-1]['content']
+ if prompt=='slow': time.sleep(60)
+ pathlib.Path(stages[-1]['config']['path']).write_text('malformed' if prompt=='bad' else json.dumps({'rewritten_prompt':'Enhanced mug','wh_ratio':'1:1'}))
+ sys.exit(0)
+if prompt=='slow': time.sleep(60)
+if prompt=='fail': sys.exit(7)
+if prompt!='noout': shutil.copyfile(pathlib.Path(__file__).parent/'source.png',stages[-1]['config']['path'])
+"#;
+        std::fs::write(&cli, script).unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let engine = Engine::new(root.join("renders"), &tokio::runtime::Handle::current());
+        let submit = |r| {
+            engine.submit(r).unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let req = |p: &str| request(&root, &cli.to_string_lossy(), p);
+        let active = submit(req("slow"));
+        wait(&engine, &active, "running").await;
+        let queued = submit(req("queued"));
+        engine.cancel(&queued).unwrap();
+        engine.cancel(&active).unwrap();
+        wait(&engine, &active, "cancelled").await;
+        for prompt in ["fail", "noout"] {
+            let id = submit(req(prompt));
+            wait(&engine, &id, "failed").await;
+        }
+        let id = submit(req("success"));
+        wait(&engine, &id, "completed").await;
+        let mut eight = req("eight");
+        eight.paths.quant_bits = 8;
+        let id = submit(eight);
+        wait(&engine, &id, "completed").await;
+        let transformer =
+            std::fs::read_link(root.join("renders").join(&id).join("model/transformer")).unwrap();
+        assert_eq!(
+            transformer,
+            std::fs::canonicalize(root.join("model8/transformer")).unwrap()
+        );
+        let mut r = req("enhance");
+        r.settings.enhance = true;
+        r.paths.pe_cli = cli.to_string_lossy().into_owned();
+        r.paths.pe_model = root.join("encoder").to_string_lossy().into_owned();
+        r.paths.pe_system = root.join("system.txt").to_string_lossy().into_owned();
+        std::fs::write(&r.paths.pe_system, "instructions").unwrap();
+        let id = submit(r);
+        wait(&engine, &id, "completed").await;
+        assert_eq!(
+            engine.snapshot()["jobs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|j| j["id"] == id)
+                .unwrap()["enhanced_prompt"],
+            "Enhanced mug"
+        );
+        for prompt in ["bad", "slow"] {
+            let mut r = req(prompt);
+            r.settings.enhance = true;
+            r.paths.pe_cli = cli.to_string_lossy().into_owned();
+            r.paths.pe_model = root.join("encoder").to_string_lossy().into_owned();
+            r.paths.pe_system = root.join("system.txt").to_string_lossy().into_owned();
+            let id = submit(r);
+            if prompt == "slow" {
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    loop {
+                        if engine.snapshot()["jobs"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|j| j["id"] == id && j["stage"] == "enhance")
+                        {
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                engine.cancel(&id).unwrap();
+                wait(&engine, &id, "cancelled").await;
+            } else {
+                wait(&engine, &id, "failed").await;
+            }
+        }
+        let recovered = submit(req("success"));
+        wait(&engine, &recovered, "completed").await;
+        engine.shutdown();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    async fn wait(engine: &Engine, id: &str, state: &str) {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                if engine.snapshot()["jobs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|j| j["id"] == id && j["state"] == state)
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("Expected {state}: {}", engine.snapshot()));
+    }
 }

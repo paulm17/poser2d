@@ -76,42 +76,61 @@ previews and do not require FFmpeg or Blender.
 
 ## Image engine
 
-Open **Paths** and set the diffusion model, Qwen-Image-2.1 VAE, Qwen3-VL text encoder, and (for editing) vision projection weight files. The sd-cli executable defaults to the copy bundled with the app. Use compatible weights described in `stable-diffusion.cpp/docs/qwen_image_2.1.md`; a Hugging Face repository name or Diffusers directory is not a weight file. No models are downloaded automatically.
+Open **Paths** to select prepared vpipe models and their precision. The app detects the prepared Safetensors directories in your Hugging Face cache. Run the preparation script below before generating; the app does not download models automatically.
 
-Generate queues an immutable request. A single Tokio worker runs sd-cli, sends logs/progress through CEF events, and adds the output to the submitting session. Cancel works for waiting and active jobs. References, including scene captures, are converted to PNG per job; removing a reference after submission does not change that job. Text-to-image prompt enhancement is available through the GGUF generate executable in the sibling mlx-rs project; editing enhancement remains unavailable.
+Generate queues an immutable request. A single worker runs native vpipe pipelines, streams logs and denoising progress to the Studio, and registers the output in the submitting session. References are converted to immutable PNGs per job. Cancellation kills the active inference process group and allows the next job to run.
 
-The engine uses Euler sampling, CFG 6, CPU RNG, and disk-backed weight loading (`--params-backend disk`). Turbo mode uses its fixed 8-step sigma schedule and CFG 1. The cached Qwen Image 2.1 Turbo Q4_K_S diffusion model is filled into Paths when no model has been configured. Saved Qwen Turbo Q8_0 paths migrate to Q4_K_S when it is cached; the Q8_0 file remains untouched. Auto lets sd-cli choose its backend; the Apple Silicon selector maps to MTL0. The macOS binary supports Metal. Generated PNGs stay in the application data directory under `qwen-image-studio/renders`. Queue and take metadata survive frontend reload within the running app, but remain in memory across app restarts. Existing settings continue using local storage.
+### Build vpipe
 
-`cargo bundle` includes the existing `stable-diffusion.cpp/build/bin/sd-cli` binary. To rebuild it on macOS:
-
-```bash
-cmake -S stable-diffusion.cpp -B stable-diffusion.cpp/build -DSD_METAL=ON -DSD_BUILD_EXAMPLES=ON
-cmake --build stable-diffusion.cpp/build --target sd-cli -j 4
+```sh
+git -C vpipe submodule update --init extern/lmdb extern/pugixml extern/metal-cpp
+git -C vpipe apply ../scripts/patches/vpipe-studio-compatibility.patch
+cmake -S vpipe -B vpipe/build -DVPIPE_BUILD_PYTHON=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+cmake --build vpipe/build --target vpipe-cli -j 6
 cargo bundle
 ```
 
-Engine verification: `cargo test -p theapp` exercises FIFO execution, waiting/active cancellation, recovery after failure, progress parsing, and output-image handling using a small subprocess fixture. A real Qwen render additionally requires local model weights.
+Apply the patch once to the supplied vpipe checkout (`068c343d5bd1f591d816b8a6fe272183e7eb5c78`). If the ignored checkout is absent, clone `https://github.com/tgo-app-dev/vpipe` into `vpipe` and check out that revision first. It pins portable shaders to Metal 3.1 for macOS 15 and uses compile-time compatibility guards for tensor APIs unavailable in SDK 26.1. Newer SDK builds retain the M5 paths. This Mac uses the existing M1 SIMDgroup kernels. The patch also adds PoseStudio fused gate/up adapter support, with a regression test that verifies row order and shared factors. Vpipe is an ignored nested repository; the patch is tracked here so the build is reproducible.
 
-### Vision and memory
+### Prepare models
 
-The separate `mmproj-F16.gguf` vision projection is required for image editing. Download only this file with `hf download unsloth/Qwen3-VL-8B-Instruct-GGUF mmproj-F16.gguf`. The app detects cached vision weights and fills an empty vision path even when other model paths are already configured; explicit paths are preserved.
+All source and prepared model files live under `/Volumes/Data/Users/paul/.cache/huggingface/hub`. No GGUF weights are used.
 
-Disk loading fetches weights on demand and releases parameter buffers after use. Eager loading and CPU weight offloading are omitted. On Apple Silicon, CPU and GPU share physical memory; moving all weights to CPU RAM does not solve total memory pressure. Disk loading prioritizes reduced residency over speed, but working tensors, activations, and caches still consume memory. It does not guarantee that only one complete model component is resident.
+```sh
+python3 scripts/prepare-vpipe-models.py
+```
 
-One inference subprocess runs at a time and is reaped before the next job starts. Its model allocations are released when it exits.
+The script downloads `Qwen/Qwen-Image-2.1-Turbo` and `Qwen/Qwen-Image-2.1-PE-T2I`, then uses vpipe's `model-quantize` stage to prepare:
 
-Verified a real 256×256, 8-step Turbo edit changing a red mug to blue, using the cached Q8_0 diffusion model, Q4_K_M text encoder, F16 vision projection, and Qwen-Image-2.1 VAE. The result arrived in the Studio gallery and the inference process exited. On the Apple M1 Pro test host, peak sampled process RSS was 10.0 GiB (10,472,864 KiB), sampled every 0.5 seconds. This is an observed process-residency measurement, may miss brief peaks, and is not a limit or a measurement of total GPU/shared-system memory.
+- `vpipe-prepared/Qwen-Image-2.1-Turbo-4bit` and `Qwen-Image-2.1-Turbo-8bit`, group size 64.
+- A shared 4-bit Qwen3-VL language encoder, preserving its vision components and the VAE at source precision.
+- `vpipe-prepared/Qwen-Image-2.1-PE-T2I-4bit`, using the official system prompt and tokenizer.
 
-### Text prompt enhancement
+Preparation recipes, logs, and source snapshot revisions are retained in `vpipe-prepared`. The first download is approximately 51 GB; prepared weights need additional disk space. Component copies use vpipe's hard-link support. Original source files remain unchanged. Use `--skip-download` to prepare already-cached sources.
 
-Enable **Enhance prompt** for text-to-image generation. The queue runs `../mlx-rs/target/release/generate` using the cached PE-T2I Q4_K_M GGUF and official `system_prompt.txt`, then waits for that process to exit before starting sd-cli. This uses mlx-rs's GGUF/llama.cpp path, not its MLX backend. All three enhancer paths are configurable in Paths and detected automatically when empty.
+Paths detects these prepared directories and the existing PoseStudio V1.1 Safetensors adapter. Select **4-bit** or **8-bit** in Paths. Saved sd-cli/GGUF paths migrate to vpipe defaults while preserving pose preferences. Explicit custom vpipe paths remain configurable.
 
-The rewrite appears beneath the generated image. Explicit dimensions or aspect ratio win; otherwise a valid recommended ratio selects the nearest supported image size. **Let it think** enables the runtime's thinking option. Invalid JSON fails the job with a visible error; cancellation works during either stage. The runtime exposes temperature 1.0, top-p 0.95, top-k 20, and a 16,256-token generation cap. Its generate CLI does not expose presence penalty or an enhancer seed; the image-generation seed still applies. MTP acceleration is not enabled.
+### Generation and enhancement
 
-Downloaded files: `mozophe/Qwen-Image-2.1-PE-MTP-GGUF/qwen3.5_9b_qwen_image_2.1_pe_t2i.mtp.Q4_K_M.gguf` and `Qwen/Qwen-Image-2.1-PE-T2I/system_prompt.txt`, both in the Hugging Face cache. The GGUF weights include an MTP head but work here as ordinary generation weights. A direct real enhancement through mlx-rs returned valid JSON (308 generated tokens) in 26.5 seconds on the Apple M1 Pro.
+Turbo uses its official eight-step schedule, CFG 1, and prefix KV caching. Image edits feed each reference into both vision conditioning and VAE encoding. PoseStudio applies only to edits, at strength 0.7 by default; incomplete adapter binding fails visibly.
 
-The desktop end-to-end test also completed: PE-T2I enhanced the mug prompt through mlx-rs GGUF generation, then sd-cli produced a 256×256 image. The rewritten prompt and final image appeared in the Studio interface.
+**Enhance prompt** runs the 4-bit PE-T2I model through vpipe's Qwen3.5 backend before image generation. Its process exits before the image model starts. The official system prompt, thinking option, JSON parsing, and displayed rewritten prompt are retained. The enhancer output head and embedding table are quantized together so both load through the affine backend. Enhancement remains text-to-image only. Sampling uses temperature 1.0, top-p 0.95, top-k 20, seed 42, and a 16,256-token cap; MTP is disabled.
 
-### PoseStudio LoRA
+Outputs and per-job pipelines/logs live in the application data directory under `qwen-image-studio/renders`. Models run sequentially using vpipe's automatic SSD streaming. VAE decoding uses overlapping 512-pixel windows by default to bound GPU command and memory costs at 1024 × 1024; windows are blended and can differ from a full-frame decode. Set `VPIPE_VAE_TILE` to override the latent window size (32 by default, 16 pixels per cell for Qwen 2.1). `/usr/bin/time -l` records elapsed process time and peak resident memory in each render log. This measures process residency, not total system memory.
 
-Paths detects the cached MIUProject/VNCCS_PoseStudio_QI2.1 V1.1 LoRA. PoseStudio is enabled for image edits at strength 0.7 by default; disable it or adjust its strength in Paths to compare results. Text-to-image requests omit it. The engine applies it at runtime with the quantized Turbo model. CLI tests applied all 384 tensors at 512×512; strength 1.0 reversed the subject orientation while 0.7 preserved the broad pose. Character identity transfer with a second reference remains unverified. Existing output size settings are preserved.
+### Verification
+
+```sh
+cargo test --bin theapp
+npm --prefix frontend test
+cargo run --bin validate-vpipe
+python3 scripts/report-vpipe-validation.py
+```
+
+The validation runner uses the same backend as the desktop app. It generates six 1024 × 1024 images with seed 42: plain T2I, enhanced T2I, and PoseStudio I2I for each precision. Both I2I runs use the supplied character image. Pass a different reference path as its first argument if needed.
+
+Outputs, final pipelines, enhancer replies, complete render logs, model paths, and timing are saved under `artifacts/vpipe-validation`; `results.json` records the six results. The runner checks output dimensions and reports any failed job. Fixture tests cover pipeline construction, settings migration, enhancement parsing, progress, queue order, cancellation, and failure recovery.
+
+For targeted reruns, set `VPIPE_VALIDATION_FILTER` to comma-separated names such as `4bit-t2i,8bit-i2i`. The results manifest keeps the latest attempt for each workflow.
+
+The six required jobs passed on an M1 Pro with 32 GB RAM. Generation took approximately 4–6 minutes per job, with peak process residency of approximately 9–14 GiB. Both editing runs bound all 192 PoseStudio modules. The reference character's dress, pointed ears, and standing pose influenced the outputs, although facial identity changed. See the generated `artifacts/vpipe-validation/report.md` for images, exact timings, memory measurements, and model identities.

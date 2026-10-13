@@ -172,3 +172,7 @@ Lighting helpers and handles are always omitted from Export and Send to Studio,
 including when **Include Gizmo** is checked. Capture uses the current lighting and
 updates shadows synchronously when rendering is suspended. Existing model/grid
 export options retain their behavior.
+
+## Lighting and shadows
+
+The Lighting panel now supports six light types, multiple lights, presets, advanced shadows, object/ground controls, lighting JSON, and Three.js/R3F code export. See [Lighting and shadows](src/lighting/README.md) for controls, format migration, supported materials, performance limits, and verification results.

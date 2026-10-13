@@ -19,10 +19,10 @@ test('legacy lighting resets to independent original defaults and round trips', 
 });
 
 test('shared validation rejects invalid lighting before project/session restoration', () => {
-  for (const mutate of [s => s.version++, s => s.lights.pop(), s => s.lights[1].id = 'main',
+  for (const mutate of [s => s.version++, s => s.lights = Array(17).fill(s.lights[0]), s => s.lights[1].id = 'main',
     s => s.lights[0].type = 'spot', s => s.lights[0].position[1] = Infinity,
     s => s.lights[0].target = [...s.lights[0].position], s => s.lights[1].intensity = -1,
-    s => s.lights[0].color = 'red', s => s.lights[0].quality = 'ultra', s => s.lights[0].autoFit = false]) {
+    s => s.lights[0].color = 'red', s => s.lights[0].quality = 'ultra', s => s.lights[0].shadow.far = s.lights[0].shadow.near]) {
     const lighting = defaultLighting(); mutate(lighting);
     assert(!isLighting(lighting)); assert.throws(() => normalizeLighting(lighting));
     assert(!isProject({ mannequins: [], lighting }));
@@ -64,12 +64,12 @@ test('controller adopts lights, replaces shadow resources, follows pose edits, a
   const scene = new THREE.Scene(), light = new THREE.DirectionalLight(), ambient = new THREE.AmbientLight(); scene.add(light, ambient);
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1)); mesh.castShadow = true; scene.add(mesh);
   const stage = { scene, light, renderer: { shadowMap: {}, capabilities: { maxTextureSize: 2048 } } };
-  const controller = createLightingController(stage, () => [mesh]); controller.flush();
-  const before = light.shadow.camera.position.clone(); mesh.position.x = 100; controller.flush();
+  const controller = createLightingController(stage, () => [mesh]); controller.flush(true);
+  const before = light.shadow.camera.position.clone(); mesh.position.x = 100; controller.flush(true);
   assert(light.shadow.camera.position.x > before.x + 90);
   let disposed = 0; light.shadow.map = { dispose() { disposed++; } };
-  const edited = defaultLighting(); edited.lights[0].quality = 'low'; edited.lights[0].position = [0, -5, 0];
-  controller.apply(edited); controller.flush(); assert.equal(disposed, 1); assert.equal(light.shadow.map, null);
+  const edited = defaultLighting(); edited.lights[0].shadow.resolution = 1024; edited.lights[0].position = [0, -5, 0];
+  controller.apply(edited); controller.flush(true); assert.equal(disposed, 1); assert.equal(light.shadow.map, null);
   light.shadow.updateMatrices(light);
   assert(light.shadow.camera.position.distanceTo(light.position) > 1, 'renderer uses fitted shadow viewpoint');
   controller.apply(); assert.deepEqual(controller.snapshot(), defaultLighting()); assert.equal(light.shadow.mapSize.x, 2048);
@@ -106,7 +106,7 @@ test('shadow fitting skips unchanged scenes and refreshes for nested bone/pose c
   const scene = new THREE.Scene(), light = new THREE.DirectionalLight(); scene.add(light, new THREE.AmbientLight());
   const root = new THREE.Group(), bone = new THREE.Bone(), mesh = new THREE.Mesh(new THREE.BoxGeometry()); mesh.castShadow = true; root.add(mesh, bone);
   const controller = createLightingController({ scene, light, renderer: { shadowMap: {}, capabilities: { maxTextureSize: 4096 } } }, () => [root]);
-  controller.flush(); light.shadow.needsUpdate = false;
-  controller.flush(); assert(!light.shadow.needsUpdate);
-  bone.rotation.x = 0.1; controller.flush(); assert(light.shadow.needsUpdate);
+  controller.flush(true); light.shadow.needsUpdate = false;
+  controller.flush(true); assert(!light.shadow.needsUpdate);
+  bone.rotation.x = 0.1; controller.flush(true); assert(light.shadow.needsUpdate);
 });

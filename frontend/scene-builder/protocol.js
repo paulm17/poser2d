@@ -1,10 +1,10 @@
-import { isLighting, isLightingEditor } from './src/lighting/state.js';
+import { isLighting, isLightingEditor, isObjectShadows } from './src/lighting/state.js';
 // Shared runtime validation for the React host and the plain JavaScript editor.
 export const CHANNEL = 'qwen-stage-v1';
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const id = value => typeof value === 'string' && value.length > 0 && value.length <= 200;
 const vector = (value, length = 3) => Array.isArray(value) && value.length >= length && value.slice(0, length).every(Number.isFinite);
-const transform = value => record(value) && vector(value.position) && vector(value.rotation) && vector(value.scale);
+const transform = value => isObjectShadows(value?.shadowSettings) && record(value) && vector(value.position) && vector(value.rotation) && vector(value.scale);
 export function isProject(value) {
   return record(value) && (value.lighting === undefined || isLighting(value.lighting)) &&
     (value.lightingEditor === undefined || isLightingEditor(value.lightingEditor)) && Array.isArray(value.mannequins) && value.mannequins.every(transform) &&

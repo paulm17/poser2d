@@ -7,7 +7,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { createLightingController } from './lighting/controller.js';
 import { createLightingUI } from './lighting/ui.js';
-import { normalizeLighting, isLightingEditor } from './lighting/state.js';
+import { normalizeLighting, isLightingEditor, applyObjectShadows, isObjectShadows } from './lighting/state.js';
 import { initExportSystem } from './exportSystem.js';
 import { initEditorBridge } from './bridge.js';
 import { isProject } from '../protocol.js';
@@ -101,6 +101,7 @@ function serializeObjects() {
       }
       return {
         name: m.name,
+        shadowSettings: m.userData.shadowSettings,
         position: m.position.toArray(),
         rotation: m.rotation.toArray(),
         scale: m.scale.toArray(),
@@ -116,6 +117,7 @@ function serializeObjects() {
       scale: m.scale.toArray(),
       name: m.userData._glbFileName || m.name,
       glbBase64: m.userData._glbBase64 || null,
+      shadowSettings: m.userData.shadowSettings,
     })),
     activeIndex: mannequins.indexOf(activeMannequin),
     activeImportIndex: importedModels.indexOf(activeMannequin),
@@ -139,6 +141,7 @@ async function applyState(json) {
   const state = JSON.parse(json);
   const nextLighting = normalizeLighting(state.lighting);
   if (state.lightingEditor !== undefined && !isLightingEditor(state.lightingEditor)) throw Error('Invalid lighting editor settings.');
+  if (![...(state.mannequins ?? []), ...(state.importedModels ?? [])].every(d => isObjectShadows(d.shadowSettings))) throw Error('Invalid object shadow settings.');
   const nextModels = [];
   const nextMannequins = [];
   try {
@@ -157,6 +160,7 @@ async function applyState(json) {
         }
       }
       applyExactPose(m, d.exactPose); m.userData.poseFrame = d.poseFrame || null;
+      applyObjectShadows(m, d.shadowSettings);
     }
   } catch (error) {
     [...nextModels, ...nextMannequins].forEach(disposeObject); throw error;
@@ -188,7 +192,7 @@ async function applyState(json) {
     }
   }
   lightingController.apply(nextLighting); lightingUI.restore(state.lightingEditor);
-  lightingController.flush();
+  lightingController.flush(true);
   updatePropertiesPanel();
   updateLayerWindow();
 }
@@ -452,6 +456,7 @@ function updateLayerWindow() {
             scale: obj.scale.toArray(),
             name: obj.userData._glbFileName || obj.name,
             glbBase64: obj.userData._glbBase64 || null,
+            shadowSettings: obj.userData.shadowSettings,
           };
         } else {
           const joints = {};
@@ -466,6 +471,7 @@ function updateLayerWindow() {
           }
           exportData = {
             type: 'mannequin',
+            shadowSettings: obj.userData.shadowSettings,
             position: obj.position.toArray(),
             rotation: obj.rotation.toArray(),
             scale: obj.scale.toArray(),
@@ -514,7 +520,7 @@ function updateLayerWindow() {
   });
 }
 function deleteSelected() {
-  if (lightingUI?.active) return;
+  if (lightingUI?.active) { lightingUI.deleteSelected(); return; }
   if (!activeMannequin) return;
   const importIndex = importedModels.indexOf(activeMannequin);
   if (importIndex !== -1) {
@@ -554,11 +560,13 @@ function disposeObject(object) {
   });
 }
 async function restoreImportedModel(data) {
+  if (!isObjectShadows(data.shadowSettings)) throw Error('Invalid object shadow settings.');
   if (!data.glbBase64) throw Error('Saved model is missing its GLB data.');
   const { scene: model } = await new GLTFLoader().parseAsync(base64ToArrayBuffer(data.glbBase64), '');
   model.name = data.name || 'restored-glb';
   model.position.fromArray(data.position); model.rotation.fromArray(data.rotation); model.scale.fromArray(data.scale);
   model.userData._glbBase64 = data.glbBase64; model.userData._glbFileName = data.name;
+  applyObjectShadows(model, data.shadowSettings);
   return model;
 }
 function importGLB(file) {
@@ -592,6 +600,7 @@ function base64ToArrayBuffer(base64) {
 }
 
 function addMannequinFromData(data) {
+  if (!isObjectShadows(data.shadowSettings)) throw Error('Invalid object shadow settings.');
   const m = createFullMannequin();
   m.position.fromArray(data.position || [0, GROUND_Y, 0]);
   m.rotation.fromArray(data.rotation || [0, 0, 0, 'XYZ']);
@@ -610,6 +619,7 @@ function addMannequinFromData(data) {
     }
     applyExactPose(m, data.exactPose); m.userData.poseFrame = data.poseFrame || null;
   } catch(err) {}
+  applyObjectShadows(m, data.shadowSettings);
   mannequins.push(m);
   stage.scene.add(m);
   activeMannequin = m;
@@ -917,12 +927,27 @@ function updatePropertiesPanel() {
     updatePropertiesPanel();
   });
   setupSliderListeners();
+  const shadowControls = document.createElement('fieldset');
+  const legend = document.createElement('legend'); legend.textContent = 'Object shadows'; shadowControls.append(legend);
+  for (const [key, label] of [['cast', 'Cast shadows'], ['receive', 'Receive shadows']]) {
+    const row = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox';
+    const meshes = []; activeMannequin.traverse(node => { if (node.isMesh) meshes.push(node); });
+    const prop = key === 'cast' ? 'castShadow' : 'receiveShadow';
+    input.checked = meshes.length > 0 && meshes.every(node => node[prop]);
+    input.indeterminate = meshes.some(node => node[prop]) && !input.checked;
+    row.append(input, document.createTextNode(label)); shadowControls.append(row);
+    input.addEventListener('change', () => {
+      applyObjectShadows(activeMannequin, { ...activeMannequin.userData.shadowSettings, [key]: input.checked });
+      lightingController.invalidate(); captureState(); updatePropertiesPanel();
+    });
+  }
+  content.append(shadowControls);
 }
 
 // ─── Keyboard Shortcuts ───────────────────────────────────────────────────────
 function setupKeyboardShortcuts() {
   window.addEventListener('keydown', e => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
     if ((e.metaKey || e.ctrlKey) && e.key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     if ((e.metaKey || e.ctrlKey) && e.key === 'y') { e.preventDefault(); redo(); }
     if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -1159,9 +1184,10 @@ function init() {
     enter() { detachGizmo(); clearHighlight(); isDraggingIK = false; activeIKHandle = null; tickIKHandles(); },
     leave() { if (activeMannequin) attachGizmo(activeMannequin); tickIKHandles(); },
     commit: captureState, dragChanged: updateStageControlsEnabled,
+    getSelection: () => activeMannequin, getSubjects: () => [...mannequins, ...importedModels],
   });
   initIKHandles();
-  exportController = initExportSystem(stage, THREE, capture => editorBridge.sendCapture(capture), () => lightingController.flush());
+  exportController = initExportSystem(stage, THREE, capture => editorBridge.sendCapture(capture), () => lightingController.flush(true));
   setupHUDListeners();
   setupKeyboardShortcuts();
 
@@ -1306,7 +1332,7 @@ initBlenderGallery({
 
 const defaultProject = serializeProject();
 function animate() {
-  stage.controls.update(); stage.animationLoop?.(); lightingController.flush(); stage.renderer.render(stage.scene, stage.camera);
+  stage.controls.update(); stage.animationLoop?.(); lightingController.flush(); lightingUI.updateOverlays(); stage.renderer.render(stage.scene, stage.camera);
 }
 editorBridge = initEditorBridge({
   whenIdle,

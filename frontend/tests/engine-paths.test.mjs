@@ -10,6 +10,16 @@ const source = compile(await readFile(new URL('../src/engine.ts', import.meta.ur
 const { mergePaths, emptyPaths } = await import(url(source));
 const defaults = { ...emptyPaths, cli: '/bundled/sd-cli', model: '/cache/model', vae: '/cache/vae', llm: '/cache/llm', vision: '/cache/mmproj-F16.gguf', turbo: true };
 
+test('migrates saved Q8 Turbo model to cached Q4 while preserving other settings', () => {
+  const saved = { ...defaults, model: '/cache/old/qwen-image-2.1-turbo-Q8_0.gguf', pose_enabled: false, pose_strength: 0.5 };
+  const detected = { ...defaults, model: '/cache/new/qwen-image-2.1-turbo-Q4_K_S.gguf' };
+  assert.deepEqual(mergePaths(saved, detected), { ...saved, model: detected.model });
+  assert.equal(saved.model, '/cache/old/qwen-image-2.1-turbo-Q8_0.gguf');
+  assert.deepEqual(mergePaths(saved, { ...detected, model: '' }), saved);
+  const custom = { ...saved, model: '/custom/diffusion.gguf' };
+  assert.deepEqual(mergePaths(custom, detected), custom);
+});
+
 test('fills missing vision when existing model settings are saved', () => {
   const saved = { ...emptyPaths, model: '/custom/model', vae: '/custom/vae', llm: '/custom/llm', turbo: false };
   assert.deepEqual(mergePaths(saved, defaults), { ...saved, cli: defaults.cli, vision: defaults.vision });

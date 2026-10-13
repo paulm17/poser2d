@@ -35,6 +35,10 @@ export const engine = {
 };
 
 export function mergePaths(previous: EnginePaths, defaults: EnginePaths): EnginePaths {
+  if (previous.model.split(/[\\/]/).pop() === "qwen-image-2.1-turbo-Q8_0.gguf"
+    && defaults.model.split(/[\\/]/).pop() === "qwen-image-2.1-turbo-Q4_K_S.gguf") {
+    previous = { ...previous, model: defaults.model };
+  }
   return previous.model
     ? { ...previous, pose_lora: previous.pose_lora || defaults.pose_lora, cli: previous.cli || defaults.cli, vision: previous.vision || defaults.vision, pe_cli: previous.pe_cli || defaults.pe_cli, pe_model: previous.pe_model || defaults.pe_model, pe_system: previous.pe_system || defaults.pe_system }
     : { ...defaults, ...Object.fromEntries(Object.entries(previous).filter(([key, value]) => key !== "turbo" && value !== "")) };

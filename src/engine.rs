@@ -1069,6 +1069,22 @@ mod tests {
         );
         std::fs::remove_dir_all(hub).unwrap();
     }
+    #[test]
+    fn selects_q4_diffusion_when_both_quantizations_are_cached() {
+        let hub = std::env::temp_dir().join(format!("theapp-cache-test-{}", Uuid::new_v4()));
+        let snapshot = hub.join("models--unsloth--Qwen-Image-2.1-Turbo-GGUF/snapshots/test");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        let q4 = snapshot.join("qwen-image-2.1-turbo-Q4_K_S.gguf");
+        let q8 = snapshot.join("qwen-image-2.1-turbo-Q8_0.gguf");
+        std::fs::write(&q4, "fixture").unwrap();
+        std::fs::write(&q8, "fixture").unwrap();
+        let paths = cached_paths_in(&hub, "sd-cli".into());
+        assert_eq!(paths.model, q4.to_string_lossy());
+        assert!(paths.turbo);
+        assert!(q8.is_file());
+        std::fs::remove_dir_all(hub).unwrap();
+    }
+
     async fn wait_for(engine: &Engine, id: &str, state: &str) {
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
@@ -1130,7 +1146,7 @@ fn cached_paths_in(hub: &std::path::Path, cli: String) -> Paths {
     };
     let model = find(
         "models--unsloth--Qwen-Image-2.1-Turbo-GGUF",
-        "qwen-image-2.1-turbo-Q8_0.gguf",
+        "qwen-image-2.1-turbo-Q4_K_S.gguf",
     );
     let pose_lora = find(
         "models--MIUProject--VNCCS_PoseStudio_QI2.1",

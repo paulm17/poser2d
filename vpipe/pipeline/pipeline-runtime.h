@@ -1,0 +1,217 @@
+#ifndef PIPELINE_RUNTIME_H
+#define PIPELINE_RUNTIME_H
+
+#include "common/job.h"
+#include "common/session-member.h"
+#include "pipeline/memory-plan.h"
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#include "common/vpipe-api.h"
+
+// Exported for the in-tree apps, NOT the plugin contract (vpipe/export.h).
+VPIPE_HOST_API_BEGIN
+
+namespace vpipe {
+
+class CommandInbox;
+class EdgeReader;
+class InitBarrier;
+class OportBuffer;
+class Pipeline;
+class RuntimeContext;
+class Stage;
+
+// Per-pipeline runtime: builds the edge buffers and runtime contexts,
+// spawns one driver coroutine per Stage, schedules them on the
+// session ThreadPool, and exposes pause/stop/wait_idle.
+//
+// Lifetime: one launch per instance. Construct, launch(), then either
+// wait_idle() (data-driven shutdown) or stop() (force shutdown), then
+// destroy. Destructor calls stop() if still running so that the
+// drivers are guaranteed to be at final_suspend before their Job
+// objects are destroyed.
+//
+// The worker pool is reached through SessionMember's
+// `session()->thread_pool()`. Edge-buffer depth is NOT a session knob:
+// each oport's OportPolicy decides it, defaulting to soft-threshold
+// mode (warn at 1024 active Beats, throw at 2048).
+class PipelineRuntime : public SessionMember, public MemoryPlanSink {
+public:
+  PipelineRuntime(Pipeline*                 pipeline,
+                  const SessionContextIntf* session);
+
+  ~PipelineRuntime() override;
+
+  PipelineRuntime(const PipelineRuntime&)            = delete;
+  PipelineRuntime& operator=(const PipelineRuntime&) = delete;
+
+  // Build buffers / contexts / drivers and start them. Returns true
+  // on success, false if the graph is malformed or has already been
+  // launched. Any failure logs through the SessionContextIntf.
+  //
+  // NEVER throws. A malformed graph is a user error -- a mis-wired edge in
+  // a hand-written .vpipeline, or a pipeline edited in the composer -- and
+  // must fail THIS pipeline, not take the process down with it (which for
+  // the web-ui would drop every other pipeline and the operator's session).
+  // The build steps signal such faults by throwing, so launch() converts any
+  // escaping exception into a warn + false; see launch_().
+  bool launch();
+
+  // Request stop. Drivers exit on the next iteration boundary. Does
+  // not block. Idempotent.
+  void pause();
+
+  // pause() + close all buffers (wakes any suspended drivers) +
+  // wait_idle(). Idempotent.
+  void stop();
+
+  // Block the calling thread until every driver has reached its
+  // co_return.
+  void wait_idle();
+
+  // Bounded variant: wait up to `timeout_ms` milliseconds. Returns
+  // true if every driver finished, false on timeout. A negative
+  // timeout is equivalent to the unbounded wait_idle() above and
+  // always returns true. timeout_ms == 0 is a non-blocking probe.
+  bool wait_idle(int timeout_ms);
+
+  bool running() const noexcept
+  {
+    return _running.load(std::memory_order_acquire);
+  }
+
+  // True once every driver has reached co_return ON ITS OWN -- i.e.
+  // every stage signalled done() and the pipeline drained -- with NO
+  // pause()/stop() having been requested. This is the "all stages
+  // signalled done" condition a long-lived host (the web-ui) uses to
+  // auto-stop a self-terminating pipeline. False before launch(), after
+  // pause()/stop() (those set _stop), and while any driver is still
+  // running. All reads are atomic, so it is safe to poll from any
+  // thread.
+  bool self_completed() const noexcept
+  {
+    return _running.load(std::memory_order_acquire)
+        && !_stop.load(std::memory_order_acquire)
+        && _expected > 0
+        && _completed.load(std::memory_order_acquire) >= _expected;
+  }
+
+  unsigned num_drivers() const noexcept
+  {
+    return static_cast<unsigned>(_drivers.size());
+  }
+
+  // Per-edge buffer-utilization snapshot, for diagnostics and the
+  // web-ui overlay. One entry per consumer iport (== one EdgeReader),
+  // labelled by the producer/consumer stage ids and port indices so a
+  // caller can join it to the rendered graph edges. Read while the
+  // pipeline runs: the counts come from relaxed atomics / short locks,
+  // so a snapshot may be slightly stale but never corrupt. Empty before
+  // launch().
+  struct EdgeBufferStat {
+    std::string   from_id;     // producer stage id
+    unsigned      from_port;   // producer oport index
+    std::string   to_id;       // consumer stage id
+    unsigned      to_port;     // consumer iport index
+    std::uint32_t backlog;     // items pending for THIS consumer cursor
+    unsigned      capacity;    // producer buffer hard cap (ring depth)
+    std::uint32_t dropped;     // items dropped for this consumer
+    bool          closed;      // producer signalled EOS
+  };
+  std::vector<EdgeBufferStat> edge_buffer_stats() const;
+
+private:
+  // The real launch. May throw (port type / tag mismatches and other
+  // malformed-graph faults are reported that way); launch() is the guard
+  // that turns those into a clean false.
+  bool launch_();
+
+  // Spin until every driver's coroutine handle reports done(),
+  // i.e. has reached final_suspend. Caller must already have
+  // satisfied _completed >= _expected via the done condvar.
+  void wait_drivers_suspended_();
+
+public:
+
+private:
+  Pipeline*                                    _pipeline;
+
+  // The real (post-inline) stages this runtime drives, captured at
+  // launch. Used by stop() to clear each stage's running flag once the
+  // drivers have drained, so post-stop topology edits are permitted.
+  std::vector<Stage*>                          _live_stages;
+
+  // One per stage that declares commands, for the span of the launch.
+  // Shut at stop() before anything waits on the drivers.
+  std::vector<std::shared_ptr<CommandInbox>>   _inboxes;
+
+  // ---- the topological memory plan, and its revisions ------------------
+  //
+  // Held for the launch rather than computed and dropped, because the
+  // snapshot's unknowns -- an arena sized by the first beat, a streaming
+  // model's real resident set -- are corrected by the stages as they
+  // learn them, and a correction is only worth making if something keeps
+  // the result.
+  //
+  // MemoryPlanSink::revise arrives on the revising stage's own thread
+  // while its peers are running, so all of this is under _plan_mu.
+  void revise(const Stage* stage, const StageMemory& m) override;
+  // Stop accepting revisions. Called when the launch ends.
+  void close_plan();
+  // Recompute and report if the peak moved. Caller holds _plan_mu.
+  void replan_locked_(const std::string& why);
+
+  mutable std::mutex                           _plan_mu;
+  std::vector<Stage*>                          _plan_stages;
+  std::vector<LogicalEdge>                     _plan_edges;
+  std::vector<StageMemory>                     _plan_mem;
+  MemoryPlan                                   _plan;
+  bool                                         _plan_live = false;
+
+  std::vector<std::unique_ptr<OportBuffer>>    _oport_bufs;
+  std::vector<std::unique_ptr<EdgeReader>>     _readers;
+  // Parallel to _readers: the producer/consumer labels for each edge,
+  // captured at launch so edge_buffer_stats() can name them without
+  // re-walking the graph.
+  std::vector<EdgeBufferStat>                  _edge_labels;
+  std::vector<std::unique_ptr<RuntimeContext>> _contexts;
+  std::vector<Job>                             _drivers;
+  std::unique_ptr<InitBarrier>                 _init_barrier;
+
+  std::atomic<bool>                            _stop{false};
+  std::atomic<bool>                            _running{false};
+  bool                                         _launched = false;
+
+  // When the drivers were released, for the one line stop() reports.
+  //
+  // STEADY, not system, and the choice has a cost worth naming. A
+  // system clock can STEP -- NTP correcting a box that booted with a
+  // wrong date moves it by years -- and a duration measured across that
+  // is not merely inaccurate, it is absurd, which is the one thing a
+  // reported figure must never be. The steady clock cannot do that.
+  //
+  // What it does instead, on Apple platforms, is stop while the machine
+  // is asleep. So a pipeline left up on a laptop over a week of nightly
+  // sleeps reports the time it was AWAKE for, which is less than the
+  // calendar span and is the honest reading of "running" anyway: a
+  // suspended process is not processing.
+  std::chrono::steady_clock::time_point        _started{};
+
+  std::atomic<unsigned>                        _completed{0};
+  unsigned                                     _expected = 0;
+  std::mutex                                   _done_mu;
+  std::condition_variable                      _done_cv;
+};
+
+}
+
+VPIPE_HOST_API_END
+
+#endif

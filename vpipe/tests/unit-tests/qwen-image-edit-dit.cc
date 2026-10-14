@@ -1,0 +1,666 @@
+// Qwen-Image-Edit-2511 dual-stream DiT (M4): MetalQwenImageTransformer, one
+// denoiser step on controlled inputs, verified against the diffusers golden
+// (dit_golden.py -- transformer only, no refs). Feeds the exact packed noise
+// latent + prompt embeds + sigma, and rel-L2s the predicted velocity vs g_dit;
+// staged block-0 output vs g_dit_blk0 to localize.
+//
+// Env: VPIPE_QWEN_IMAGE_EDIT_TEST_MODEL_PATH (uses <root>/transformer),
+// VPIPE_QWEN_IMAGE_EDIT_GOLDEN. Skips if unset.
+
+#include "minitest.h"
+
+#include "apple-silicon/metal-compute/metal-compute.h"
+#include "apple-silicon/metal-compute/shared-buffer.h"
+#include "common/session.h"
+#include "generative-models/qwen-image/metal-qwen-image-transformer.h"
+
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <string>
+#include <vector>
+
+using namespace vpipe;
+using namespace vpipe::genai;
+using metal_compute::MetalCompute;
+using metal_compute::SharedBuffer;
+
+namespace {
+
+std::vector<float>
+read_f32_(const std::string& path)
+{
+  std::ifstream in(path, std::ios::binary);
+  std::vector<float> out;
+  if (!in) { return out; }
+  in.seekg(0, std::ios::end);
+  const std::streamoff n = in.tellg();
+  in.seekg(0, std::ios::beg);
+  out.resize((std::size_t)n / 4);
+  in.read(reinterpret_cast<char*>(out.data()), n);
+  return out;
+}
+
+double
+rel_l2_(const std::vector<float>& a, const float* b, std::size_t n)
+{
+  double num = 0.0, den = 0.0;
+  for (std::size_t i = 0; i < n; ++i) {
+    const double d = (double)a[i] - (double)b[i];
+    num += d * d; den += (double)b[i] * (double)b[i];
+  }
+  return den > 0.0 ? std::sqrt(num / den) : std::sqrt(num);
+}
+
+inline std::uint16_t
+f32_to_bf16_(float f)
+{
+  std::uint32_t u; std::memcpy(&u, &f, 4);
+  return (std::uint16_t)((u + 0x7fffu + ((u >> 16) & 1u)) >> 16);
+}
+inline float
+bf16_to_f32_(std::uint16_t b)
+{
+  std::uint32_t u = (std::uint32_t)b << 16;
+  float f; std::memcpy(&f, &u, 4); return f;
+}
+
+// The DiT runs bf16 (residual stream exceeds f16 range).
+SharedBuffer
+upload_(MetalCompute* mc, const std::vector<float>& v)
+{
+  SharedBuffer b = mc->make_shared_buffer(v.size() * 2);
+  auto* d = static_cast<std::uint16_t*>(b.contents());
+  for (std::size_t i = 0; i < v.size(); ++i) { d[i] = f32_to_bf16_(v[i]); }
+  return b;
+}
+
+std::vector<float>
+readback_(const SharedBuffer& b, std::size_t n)
+{
+  std::vector<float> out(n);
+  const auto* p = static_cast<const std::uint16_t*>(b.contents());
+  for (std::size_t i = 0; i < n; ++i) { out[i] = bf16_to_f32_(p[i]); }
+  return out;
+}
+
+}  // namespace
+
+// M5 matrix-core matmul2d (NAX) A/B: the mma path (default) must match the
+// steel dense_gemm_t / affine_qmm_steel path (VPIPE_QIE_NO_MMA2=1) to the bf16
+// noise floor -- dequant-once -> dense matmul2d is the same math as the fused
+// steel qmm modulo f32-rounding order, compounded over 60 dual-stream blocks.
+// Needs only the model (no golden); skips on M4/older (no matrix cores -> both
+// loads run steel, so the A/B is vacuous but still passes at ~0). Random inputs
+// suffice: both paths process identical bytes, so agreement is the invariant.
+TEST(qwen_image_edit_dit, mma_matches_steel)
+{
+  const char* root = std::getenv("VPIPE_QWEN_IMAGE_EDIT_TEST_MODEL_PATH");
+  const char* dd   = std::getenv("VPIPE_QWEN_IMAGE_EDIT_DIT_DIR");
+  const std::string dit_dir =
+      (dd != nullptr && *dd != '\0') ? std::string(dd)
+      : (root != nullptr && *root != '\0') ? std::string(root) + "/transformer"
+      : std::string();
+  if (dit_dir.empty()) { return; }
+  Session sess;
+  MetalCompute* mc = sess.metal_compute();
+  if (mc == nullptr) { return; }
+
+  // Deterministic random inputs (fixed seed): hidden [gen_seq, in_channels=64],
+  // txt [txt_seq, txt_dim=3584]. gen_seq = grid_h*grid_w.
+  const int gh = 16, gw = 16, gen_seq = gh * gw, txt_seq = 96;
+  const int IC = 64, TXTD = 3584;
+  auto rnd = [](std::uint32_t& s) {         // xorshift -> [-0.5, 0.5)
+    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+    return (float)((s >> 8) & 0xffffff) / 16777216.0f - 0.5f;
+  };
+  std::uint32_t s1 = 0x1234567u, s2 = 0x89abcdefu;
+  std::vector<float> hidden((std::size_t)gen_seq * IC),
+                     txt((std::size_t)txt_seq * TXTD);
+  for (auto& v : hidden) { v = rnd(s1); }
+  for (auto& v : txt)    { v = rnd(s2); }
+  const SharedBuffer h = upload_(mc, hidden);
+  const SharedBuffer t = upload_(mc, txt);
+  const float sigma = 0.7f;
+
+  // Each load runs the SINGLE-block staged output (stop=0, [gen_seq, hidden])
+  // -- the clean discriminator: it exercises the qkv/out/ff mma GEMMs without
+  // the 60-block residual compounding that random (untrained-regime) inputs
+  // amplify -- AND the full 60-block velocity (a diagnostic; random inputs put
+  // the net in a high-gain regime where the per-block bf16 floor compounds
+  // geometrically, so this is loose). Free each DiT before the twin loads so
+  // only one ~10GB model is resident (16GB box).
+  auto run = [&](std::vector<float>& blk0, std::vector<float>& vel) -> bool {
+    auto m = MetalQwenImageTransformer::load(dit_dir, mc, {});
+    if (m == nullptr) { return false; }
+    const bool mma = m->uses_mma2();
+    SharedBuffer b0 = m->forward(h, gen_seq, t, txt_seq, gh, gw, sigma, {}, 0);
+    SharedBuffer v  = m->forward(h, gen_seq, t, txt_seq, gh, gw, sigma);
+    if (b0.empty() || v.empty()) { return false; }
+    blk0 = readback_(b0, (std::size_t)gen_seq * 3072);
+    vel  = readback_(v,  (std::size_t)gen_seq * IC);
+    return mma;
+  };
+
+  // (1) matmul2d path (default).
+  std::vector<float> blk0_mma, vel_mma;
+  const bool mma_engaged = run(blk0_mma, vel_mma);
+  ASSERT_TRUE(!blk0_mma.empty());
+  if (!mma_engaged) {
+    std::printf("[qwen_image_edit_dit] matmul2d NOT engaged (no matrix cores "
+                "or NO_MMA2 set) -- A/B is vacuous\n");
+  }
+
+  // (2) steel path (force NO_MMA2 for this load; restore after).
+  ::setenv("VPIPE_QIE_NO_MMA2", "1", 1);
+  std::vector<float> blk0_steel, vel_steel;
+  const bool steel_mma = run(blk0_steel, vel_steel);
+  ::unsetenv("VPIPE_QIE_NO_MMA2");
+  ASSERT_TRUE(!blk0_steel.empty());
+  EXPECT_TRUE(!steel_mma);   // NO_MMA2 -> steel
+
+  const double rb = rel_l2_(blk0_mma, blk0_steel.data(), blk0_mma.size());
+  const double rv = rel_l2_(vel_mma,  vel_steel.data(),  vel_mma.size());
+  std::printf("[qwen_image_edit_dit] matmul2d vs steel: block0 rel-L2 = %.6f, "
+              "velocity rel-L2 = %.6f (mma %s)\n", rb, rv,
+              mma_engaged ? "engaged" : "OFF");
+  // Per-block: dequant-once -> matmul2d vs the fused steel qmm are both
+  // f32-accumulate, differing only by the extra bf16 rounding of the dequanted
+  // weight + accumulation order -> a small fraction of the (identical) residual.
+  EXPECT_TRUE(rb < 0.01);
+  // Velocity is diagnostic only: bound it loosely to still catch NaN/garbage.
+  EXPECT_TRUE(std::isfinite(rv) && rv < 0.2);
+}
+
+
+// STREAMED must equal PRELOADED, byte for byte.
+//
+// The streaming path reads each block into a reusable slot with pread
+// and issues the next block's read under the current block's GPU work
+// (shared/block-slots.h). That moves where the bytes come from and when
+// they arrive; it must not move a single bit of the result.
+//
+// Bit-identity is available here and is the right bar. A tolerance
+// would pass a port that skipped a block, ran one twice, read the wrong
+// index, or raced a prefetch against the slot the GPU was reading --
+// which are exactly the failures this mechanism can have, and all of
+// them produce plausible-looking numbers.
+//
+// Nothing declares a residency reserve in a unit test, so growth stays
+// off and every block of every forward really does stream. That is the
+// configuration the slots exist for, and the one a roomy box would
+// otherwise never reach (it promotes the whole stack on the first pass).
+//
+// VPIPE_QIE_STREAM_DUMP writes the streamed velocity to a file, so the
+// same test on two builds can be diffed against each other rather than
+// only against itself.
+TEST(qwen_image_edit_dit, streamed_matches_preloaded)
+{
+  const char* root = std::getenv("VPIPE_QWEN_IMAGE_EDIT_TEST_MODEL_PATH");
+  const char* dd   = std::getenv("VPIPE_QWEN_IMAGE_EDIT_DIT_DIR");
+  const std::string dit_dir =
+      (dd != nullptr && *dd != '\0') ? std::string(dd)
+      : (root != nullptr && *root != '\0') ? std::string(root) + "/transformer"
+      : std::string();
+  if (dit_dir.empty()) { return; }
+  Session sess;
+  MetalCompute* mc = sess.metal_compute();
+  if (mc == nullptr) { return; }
+
+  const int gh = 16, gw = 16, gen_seq = gh * gw, txt_seq = 96;
+  const int IC = 64, TXTD = 3584;
+  auto rnd = [](std::uint32_t& s) {
+    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+    return (float)((s >> 8) & 0xffffff) / 16777216.0f - 0.5f;
+  };
+  std::uint32_t s1 = 0x1234567u, s2 = 0x89abcdefu;
+  std::vector<float> hidden((std::size_t)gen_seq * IC),
+                     txt((std::size_t)txt_seq * TXTD);
+  for (auto& v : hidden) { v = rnd(s1); }
+  for (auto& v : txt)    { v = rnd(s2); }
+  const SharedBuffer h = upload_(mc, hidden);
+  const SharedBuffer t = upload_(mc, txt);
+  const float sigma = 0.7f;
+
+  // One at a time: two of these is ~20 GB and the point is not to
+  // measure what a box does under that.
+  // The FORWARD is timed, not the load: the load is one 38 GB read
+  // either way and would bury the thing under test. One streamed
+  // forward reads the whole stack, so this is the read path's number.
+  double fwd_s = 0.0;
+  auto run = [&](bool stream, std::vector<float>& vel) -> bool {
+    auto m = MetalQwenImageTransformer::load(dit_dir, mc, {}, stream);
+    if (m == nullptr) { return false; }
+    const auto t0 = std::chrono::steady_clock::now();
+    SharedBuffer v = m->forward(h, gen_seq, t, txt_seq, gh, gw, sigma);
+    fwd_s = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - t0).count();
+    if (v.empty()) { return false; }
+    vel = readback_(v, (std::size_t)gen_seq * IC);
+    return true;
+  };
+
+  std::vector<float> pre, str;
+  ASSERT_TRUE(run(false, pre));
+  const double pre_s = fwd_s;
+  ASSERT_TRUE(run(true, str));
+  std::printf("[qwen_image_edit_dit] forward: preloaded %.1f s, streamed "
+              "%.1f s (slots %s)\n", pre_s, fwd_s,
+              std::getenv("VPIPE_QIE_NO_SLOTS") != nullptr ? "OFF" : "on");
+  ASSERT_TRUE(pre.size() == str.size() && !pre.empty());
+
+  std::size_t diff = 0;
+  double worst = 0.0;
+  for (std::size_t i = 0; i < pre.size(); ++i) {
+    if (pre[i] != str[i]) {
+      ++diff;
+      worst = std::max(worst, (double)std::fabs(pre[i] - str[i]));
+    }
+  }
+  std::printf("[qwen_image_edit_dit] streamed vs preloaded: %zu of %zu "
+              "floats differ (worst %.3e)\n", diff, pre.size(), worst);
+  EXPECT_TRUE(diff == 0);
+
+  if (const char* out = std::getenv("VPIPE_QIE_STREAM_DUMP")) {
+    std::ofstream f(out, std::ios::binary);
+    f.write(reinterpret_cast<const char*>(str.data()),
+            (std::streamsize)(str.size() * sizeof(float)));
+  }
+}
+
+TEST(qwen_image_edit_dit, step_matches_golden)
+{
+  const char* root = std::getenv("VPIPE_QWEN_IMAGE_EDIT_TEST_MODEL_PATH");
+  const char* gd   = std::getenv("VPIPE_QWEN_IMAGE_EDIT_GOLDEN");
+  if (root == nullptr || *root == '\0' || gd == nullptr || *gd == '\0') {
+    return;
+  }
+  Session sess;
+  MetalCompute* mc = sess.metal_compute();
+  if (mc == nullptr) { return; }
+  const std::string gdir = gd;
+
+  const std::vector<float> hidden = read_f32_(gdir + "/dit_hidden.f32");
+  const std::vector<float> txt = read_f32_(gdir + "/dit_txt.f32");
+  const std::vector<float> meta = read_f32_(gdir + "/dit_meta.f32");
+  const std::vector<float> sigv = read_f32_(gdir + "/dit_sigma.f32");
+  const std::vector<float> gdit = read_f32_(gdir + "/g_dit.f32");
+  if (hidden.empty() || txt.empty() || meta.size() < 4 || gdit.empty()) {
+    return;
+  }
+  const int gen_seq = (int)meta[0], txt_seq = (int)meta[1];
+  const int gh = (int)meta[2], gw = (int)meta[3];
+  const float sigma = sigv.empty() ? 0.7f : sigv[0];
+
+  // VPIPE_QWEN_IMAGE_EDIT_DIT_DIR overrides the DiT dir (e.g. a w4/w8 quantized
+  // transformer) -- the velocity should still track the bf16 golden within the
+  // quant error added on top of the bf16 noise floor (looser bar).
+  const char* dd = std::getenv("VPIPE_QWEN_IMAGE_EDIT_DIT_DIR");
+  const std::string dit_dir = (dd != nullptr && *dd != '\0')
+      ? std::string(dd) : std::string(root) + "/transformer";
+  const bool quantized = (dd != nullptr && *dd != '\0');
+  auto m = MetalQwenImageTransformer::load(dit_dir, mc, {});
+  ASSERT_TRUE(m != nullptr);
+
+  const SharedBuffer h = upload_(mc, hidden);
+  const SharedBuffer t = upload_(mc, txt);
+
+  // Staged: post img_in embedder vs g_dit_imgin.
+  const std::vector<float> gimgin = read_f32_(gdir + "/g_dit_imgin.f32");
+  if (!gimgin.empty()) {
+    SharedBuffer e =
+        m->forward(h, gen_seq, t, txt_seq, gh, gw, sigma, {}, /*stop=*/-2);
+    ASSERT_TRUE(!e.empty());
+    const auto got = readback_(e, (std::size_t)gen_seq * 3072);
+    const double r = rel_l2_(got, gimgin.data(), got.size());
+    std::printf("[qwen_image_edit_dit] img_in rel-L2 = %.6f\n", r);
+  }
+
+  // Debug: post-attention (pre-MLP) finiteness of block 0.
+  {
+    SharedBuffer d3 =
+        m->forward(h, gen_seq, t, txt_seq, gh, gw, sigma, {}, /*stop=*/-3);
+    const auto got = readback_(d3, (std::size_t)gen_seq * 3072);
+    int nf = 0; double mx = 0;
+    for (float v : got) { if (!std::isfinite(v)) { ++nf; } else { mx = std::max(mx, (double)std::fabs(v)); } }
+    std::printf("[qwen_image_edit_dit] post-attn: nonfinite=%d maxabs=%.3f\n",
+                nf, mx);
+  }
+
+  // Staged: block-0 image-stream hidden vs g_dit_blk0.
+  const std::vector<float> gblk0 = read_f32_(gdir + "/g_dit_blk0.f32");
+  if (!gblk0.empty()) {
+    SharedBuffer b0 =
+        m->forward(h, gen_seq, t, txt_seq, gh, gw, sigma, {}, /*stop=*/0);
+    ASSERT_TRUE(!b0.empty());
+    const auto got = readback_(b0, (std::size_t)gen_seq * 3072);
+    const double r = rel_l2_(got, gblk0.data(), got.size());
+    std::printf("[qwen_image_edit_dit] block0 img rel-L2 = %.6f\n", r);
+    EXPECT_TRUE(r < 0.03);
+  }
+
+  // Full step: velocity vs g_dit. NOTE: the QwenImage DiT residual stream
+  // reaches ~1e7, forcing bf16 (f16 overflows); the reference is bf16 too, so
+  // two valid bf16 implementations agree only to the bf16 noise floor (~0.004
+  // /block, ~sqrt(60)-compounded). We check both the rel-L2 band AND that the
+  // velocity DIRECTION matches (cosine ~= 1 => coherent denoising).
+  SharedBuffer vel = m->forward(h, gen_seq, t, txt_seq, gh, gw, sigma);
+  ASSERT_TRUE(!vel.empty());
+  const auto got = readback_(vel, (std::size_t)gen_seq * 64);
+  const double r = rel_l2_(got, gdit.data(), got.size());
+  double dot = 0, na = 0, nb = 0;
+  for (std::size_t i = 0; i < got.size(); ++i) {
+    dot += (double)got[i] * gdit[i]; na += (double)got[i] * got[i];
+    nb += (double)gdit[i] * gdit[i];
+  }
+  const double cos = dot / (std::sqrt(na) * std::sqrt(nb));
+  std::printf("[qwen_image_edit_dit] velocity rel-L2 = %.6f  cosine = %.6f "
+              "(gen=%d txt=%d)\n", r, cos, gen_seq, txt_seq);
+  // bf16 noise floor for a 1e7-magnitude residual; the quantized DiT adds w4
+  // group-affine error on top (attention linears quantized), so a looser bar.
+  EXPECT_TRUE(r < (quantized ? 0.20 : 0.10));
+  EXPECT_TRUE(cos > (quantized ? 0.98 : 0.995));   // direction -> coherent
+
+  // Streaming-mode equality: the memory-bounded stream_blocks path (load + free
+  // each block on demand from the retained mmap) must be numerically IDENTICAL
+  // to the preloaded path -- same weights, kernels, and dispatch order; only
+  // the command-buffer boundaries differ (a flush per block). This is what lets
+  // AWQ calibration / a full denoise run on a 16 GB box. Free the preloaded DiT
+  // first so both need not be resident at once.
+  {
+    const std::vector<float> got_pre = got;   // preloaded velocity
+    m.reset();                                 // release the preloaded DiT
+    // (a) pure streaming: one block resident, the rest read per forward.
+    {
+      auto ms = MetalQwenImageTransformer::load(dit_dir, mc, {},
+                                                /*stream_blocks=*/true);
+      ASSERT_TRUE(ms != nullptr);
+      SharedBuffer vs = ms->forward(h, gen_seq, t, txt_seq, gh, gw, sigma);
+      ASSERT_TRUE(!vs.empty());
+      const auto got_s = readback_(vs, (std::size_t)gen_seq * 64);
+      const double rs = rel_l2_(got_s, got_pre.data(), got_pre.size());
+      std::printf("[qwen_image_edit_dit] STREAM vs PRELOAD rel-L2 = %.3e\n", rs);
+      EXPECT_TRUE(rs < 1e-5);   // bit-identical up to GPU nondeterminism
+    }
+    // (b) streaming WITH GROWTH: the resident set keeps blocks as free
+    // memory allows, so the SECOND forward runs partly on promoted
+    // blocks where the first streamed them.
+    //
+    // This is the arm that used to pin a prefix, and it asks a sharper
+    // question than pinning did. A pinned block was loaded by the same
+    // code path as a preloaded one; a PROMOTED block was streamed into a
+    // per-forward buffer and then kept, so if promotion moved or copied
+    // anything wrongly this is where it shows. Residency must change
+    // WHICH memory the weights are in and nothing about the math.
+    {
+      auto mp = MetalQwenImageTransformer::load(dit_dir, mc, {},
+                                                /*stream_blocks=*/true);
+      ASSERT_TRUE(mp != nullptr);
+      // Growth stays off until a reserve is declared -- deliberately, so
+      // a model nobody told what its peers cost does not grow against a
+      // guess. Zero is the honest answer here: nothing else is running.
+      mp->set_residency_reserve(0);
+      SharedBuffer v1 = mp->forward(h, gen_seq, t, txt_seq, gh, gw, sigma);
+      ASSERT_TRUE(!v1.empty());
+      const int kept = mp->resident_block_count();
+      SharedBuffer vp = mp->forward(h, gen_seq, t, txt_seq, gh, gw, sigma);
+      ASSERT_TRUE(!vp.empty());
+      const auto got_p = readback_(vp, (std::size_t)gen_seq * 64);
+      const double rp = rel_l2_(got_p, got_pre.data(), got_pre.size());
+      std::printf("[qwen_image_edit_dit] STREAM+GROW(%d resident) vs PRELOAD "
+                  "rel-L2 = %.3e\n", kept, rp);
+      EXPECT_TRUE(rp < 1e-5);
+    }
+  }
+}
+
+// Per-block bisect at the REAL edit config -- gen 3072 + REF 3072 + txt 200 at
+// sigma 1.0 -- against a diffusers golden (dit_bisect_golden.py). The shipped
+// `step_matches_golden` case is gen 16 / txt 24 / NO refs, i.e. exactly the
+// configuration in which the DiT is already correct; measured in latent space
+// the step-1 velocity error is 0.011 without refs but 0.093 WITH them. This
+// walks the dumped block indices to find where that error first appears.
+// Env: VPIPE_QWEN_IMAGE_EDIT_TEST_MODEL_PATH + VPIPE_QIE_BISECT_GOLDEN.
+TEST(qwen_image_edit_dit, ref_block_bisect)
+{
+  const char* root = std::getenv("VPIPE_QWEN_IMAGE_EDIT_TEST_MODEL_PATH");
+  const char* gd   = std::getenv("VPIPE_QIE_BISECT_GOLDEN");
+  if (root == nullptr || *root == '\0' || gd == nullptr || *gd == '\0') {
+    return;
+  }
+  Session sess;
+  MetalCompute* mc = sess.metal_compute();
+  if (mc == nullptr) { return; }
+  const std::string g = gd;
+
+  const std::vector<float> meta = read_f32_(g + "/r_meta.f32");
+  const std::vector<float> hid  = read_f32_(g + "/r_hidden.f32");
+  const std::vector<float> ref  = read_f32_(g + "/r_ref.f32");
+  const std::vector<float> txt  = read_f32_(g + "/r_txt.f32");
+  const std::vector<float> gvel = read_f32_(g + "/g_r_vel.f32");
+  if (meta.size() < 7 || hid.empty() || ref.empty() || txt.empty()) { return; }
+  const int gen_seq = (int)meta[0], txt_seq = (int)meta[1];
+  const int gh = (int)meta[2], gw = (int)meta[3];
+  const int rgh = (int)meta[4], rgw = (int)meta[5];
+  const float sigma = meta[6];
+  const int ref_seq = rgh * rgw;
+
+  auto m = MetalQwenImageTransformer::load(std::string(root) + "/transformer",
+                                           mc, {});
+  ASSERT_TRUE(m != nullptr);
+  const int H = 3072;
+  const SharedBuffer h = upload_(mc, hid);
+  const SharedBuffer t = upload_(mc, txt);
+  std::vector<MetalQwenImageTransformer::RefImage> ri;
+  {
+    MetalQwenImageTransformer::RefImage r;
+    r.latents = upload_(mc, ref);
+    r.seq = ref_seq; r.grid_h = rgh; r.grid_w = rgw;
+    ri.push_back(std::move(r));
+  }
+  std::printf("[qie_bisect] gen %d (+ref %d) txt %d sigma %.3f\n",
+              gen_seq, ref_seq, txt_seq, sigma);
+
+  // Per-block image-stream hidden vs the golden, for the dumped block indices.
+  std::ifstream bf(g + "/r_blocks.i32", std::ios::binary);
+  std::vector<std::int32_t> blocks;
+  if (bf) {
+    std::int32_t v;
+    while (bf.read(reinterpret_cast<char*>(&v), 4)) { blocks.push_back(v); }
+  }
+  // rel-L2 alone cannot tell a SCALE error from a STRUCTURAL one, so report the
+  // norm ratio and cosine too (a k-times-too-large tensor has cosine 1.0).
+  auto report = [](const char* what, const std::vector<float>& got,
+                   const std::vector<float>& gold) {
+    double dot = 0, na = 0, nb = 0;
+    for (std::size_t i = 0; i < got.size(); ++i) {
+      dot += (double)got[i] * gold[i];
+      na += (double)got[i] * got[i];
+      nb += (double)gold[i] * gold[i];
+    }
+    std::printf("[qie_bisect] %-16s rel-L2 = %.5f  |a|/|b| = %.5f  cos = "
+                "%.5f\n", what, rel_l2_(got, gold.data(), got.size()),
+                nb > 0 ? std::sqrt(na / nb) : 0.0,
+                (na > 0 && nb > 0) ? dot / (std::sqrt(na) * std::sqrt(nb)) : 0.0);
+  };
+
+  // stop=-2 is the post-img_in embedding: if the error is already here it is in
+  // the latent embedding (gen+ref packing / concat), not in any block.
+  const std::vector<float> gimg = read_f32_(g + "/g_r_img_in.f32");
+  if (!gimg.empty()) {
+    SharedBuffer e = m->forward(h, gen_seq, t, txt_seq, gh, gw, sigma, ri,
+                                /*stop=*/-2);
+    if (!e.empty()) {
+      const auto got = readback_(e, (std::size_t)gen_seq * H);
+      // the golden holds gen+ref rows; compare the gen rows vpipe returns
+      if (gimg.size() >= got.size()) {
+        std::vector<float> gg(gimg.begin(), gimg.begin() + got.size());
+        report("img_in(gen)", got, gg);
+      }
+    }
+  }
+  for (const std::int32_t b : blocks) {
+    char nm[64];
+    std::snprintf(nm, sizeof nm, "/g_r_blk%02d.f32", (int)b);
+    const std::vector<float> gb = read_f32_(g + nm);
+    if (gb.empty()) { continue; }
+    SharedBuffer o = m->forward(h, gen_seq, t, txt_seq, gh, gw, sigma, ri,
+                                /*stop=*/(int)b);
+    if (o.empty()) { continue; }
+    const auto got = readback_(o, (std::size_t)gen_seq * H);
+    if (got.size() != gb.size()) {
+      std::printf("[qie_bisect] block %2d SIZE %zu vs golden %zu\n", (int)b,
+                  got.size(), gb.size());
+      continue;
+    }
+    char lbl[32];
+    std::snprintf(lbl, sizeof lbl, "block %2d", (int)b);
+    report(lbl, got, gb);
+  }
+  if (!gvel.empty()) {
+    SharedBuffer v = m->forward(h, gen_seq, t, txt_seq, gh, gw, sigma, ri);
+    ASSERT_TRUE(!v.empty());
+    const auto got = readback_(v, gvel.size());
+    std::printf("[qie_bisect] FINAL velocity rel-L2 = %.5f\n",
+                rel_l2_(got, gvel.data(), got.size()));
+  }
+}
+
+// vec4 adaLN / gate twins: same arithmetic per element, so the staged block-0
+// output must be BIT-IDENTICAL. The guard is the plumbing: the
+// (H, total) -> (H/4, total/H) rewrite and the 4-alignment of every bound element offset, including the two-range image
+// gating (generated rows vs reference rows) that only this family does. An
+// unaligned vec4 access is undefined, so a wrong offset gives garbage, not a
+// rounding difference.
+TEST(qwen_image_edit_dit, vec4_elementwise_matches_scalar)
+{
+  const char* root = std::getenv("VPIPE_QWEN_IMAGE_EDIT_TEST_MODEL_PATH");
+  const char* dd   = std::getenv("VPIPE_QWEN_IMAGE_EDIT_DIT_DIR");
+  const std::string dit_dir =
+      (dd != nullptr && *dd != '\0') ? std::string(dd)
+      : (root != nullptr && *root != '\0') ? std::string(root) + "/transformer"
+      : std::string();
+  if (dit_dir.empty()) { return; }
+  Session sess;
+  MetalCompute* mc = sess.metal_compute();
+  if (mc == nullptr) { return; }
+
+  const int gh = 16, gw = 16, gen_seq = gh * gw, txt_seq = 96;
+  const int IC = 64, TXTD = 3584;
+  auto rnd = [](std::uint32_t& s) {
+    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+    return (float)((s >> 8) & 0xffffff) / 16777216.0f - 0.5f;
+  };
+  std::uint32_t s1 = 0x2468aceu, s2 = 0x13579bdfu;
+  std::vector<float> hidden((std::size_t)gen_seq * IC),
+                     txt((std::size_t)txt_seq * TXTD);
+  for (auto& v : hidden) { v = rnd(s1); }
+  for (auto& v : txt)    { v = rnd(s2); }
+  const SharedBuffer h = upload_(mc, hidden);
+  const SharedBuffer t = upload_(mc, txt);
+
+  auto run = [&](bool v4) -> std::vector<float> {
+    if (v4) { ::unsetenv("VPIPE_NO_ELT_V4"); }
+    else    { ::setenv("VPIPE_NO_ELT_V4", "1", 1); }
+    auto m = MetalQwenImageTransformer::load(dit_dir, mc, {});
+    if (m == nullptr) { return {}; }
+    SharedBuffer b0 = m->forward(h, gen_seq, t, txt_seq, gh, gw, 0.7f, {}, 0);
+    if (b0.empty()) { return {}; }
+    return readback_(b0, (std::size_t)gen_seq * 3072);
+  };
+  const std::vector<float> a = run(true);
+  const std::vector<float> b = run(false);
+  ::unsetenv("VPIPE_NO_ELT_V4");
+  ASSERT_TRUE(!a.empty() && a.size() == b.size());
+  std::size_t diff = 0;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    if (a[i] != b[i]) { ++diff; }
+  }
+  EXPECT_TRUE(diff == 0);
+  std::printf("[qwen_image_edit_dit] vec4 vs scalar elementwise: %zu/%zu "
+              "values differ\n", diff, a.size());
+}
+
+// THE MATRIX-CORE FLASH KERNEL AGAINST THE ALU ONE.
+//
+// Qwen-Image was the last DiT here still on the ALU steel attention
+// everywhere; it now takes the NAX entry by default wherever the GPU has
+// matrix cores, as krea2, flux2 and boogu already did. That moves this
+// family's DEFAULT output, so the move needs a guard.
+//
+// The two are not bit-identical and are not meant to be: they tile
+// differently (64x32 against 32x16) and accumulate the online softmax in
+// a different order. What has to hold is that they are the same
+// attention -- the same bound the sibling families' mma-vs-steel A/Bs
+// use, on the same staged single-block output, which is the clean
+// discriminator before 60 blocks of residual compounding.
+//
+// VPIPE_QIE_NO_ATTN_NAX is the switch, and uses_attn_nax() is what stops
+// this passing vacuously on a box that has no matrix cores to force off.
+TEST(qwen_image_edit_dit, forward_nax_matches_alu)
+{
+  const char* root = std::getenv("VPIPE_QWEN_IMAGE_EDIT_TEST_MODEL_PATH");
+  const char* dd   = std::getenv("VPIPE_QWEN_IMAGE_EDIT_DIT_DIR");
+  const std::string dit_dir =
+      (dd != nullptr && *dd != '\0') ? std::string(dd)
+      : (root != nullptr && *root != '\0') ? std::string(root) + "/transformer"
+      : std::string();
+  if (dit_dir.empty()) { return; }
+  Session sess;
+  MetalCompute* mc = sess.metal_compute();
+  if (mc == nullptr) { return; }
+  if (!mc->supports_matrix_cores()) {
+    std::printf("[qwen_image_edit_dit] no matrix cores -- NAX A/B is "
+                "vacuous, SKIPPED\n");
+    return;
+  }
+
+  const int gh = 16, gw = 16, gen_seq = gh * gw, txt_seq = 96;
+  const int IC = 64, TXTD = 3584;
+  auto rnd = [](std::uint32_t& s) {
+    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+    return (float)((s >> 8) & 0xffffff) / 16777216.0f - 0.5f;
+  };
+  std::uint32_t s1 = 0x51a6e00u, s2 = 0xc0ffee11u;
+  std::vector<float> hidden((std::size_t)gen_seq * IC),
+                     txt((std::size_t)txt_seq * TXTD);
+  for (auto& v : hidden) { v = rnd(s1); }
+  for (auto& v : txt)    { v = rnd(s2); }
+  const SharedBuffer h = upload_(mc, hidden);
+  const SharedBuffer t = upload_(mc, txt);
+  const float sigma = 0.7f;
+
+  // Free each DiT before the twin loads: only one ~10GB model resident.
+  auto run = [&](std::vector<float>& blk0, bool* nax) -> bool {
+    auto m = MetalQwenImageTransformer::load(dit_dir, mc, {});
+    if (m == nullptr) { return false; }
+    *nax = m->uses_attn_nax();
+    SharedBuffer b0 = m->forward(h, gen_seq, t, txt_seq, gh, gw, sigma, {}, 0);
+    if (b0.empty()) { return false; }
+    blk0 = readback_(b0, (std::size_t)gen_seq * 3072);
+    return true;
+  };
+
+  std::vector<float> blk0_nax, blk0_alu;
+  bool nax_on = false, alu_on = true;
+  ASSERT_TRUE(run(blk0_nax, &nax_on));
+  ::setenv("VPIPE_QIE_NO_ATTN_NAX", "1", 1);
+  const bool ok_alu = run(blk0_alu, &alu_on);
+  ::unsetenv("VPIPE_QIE_NO_ATTN_NAX");
+  ASSERT_TRUE(ok_alu);
+  if (blk0_nax.empty() || blk0_alu.empty()) { return; }
+
+  // The arms are the arms. Without this the test can compare the ALU
+  // kernel with itself and report agreement.
+  EXPECT_TRUE(nax_on);
+  EXPECT_TRUE(!alu_on);
+
+  const double r = rel_l2_(blk0_nax, blk0_alu.data(), blk0_nax.size());
+  std::printf("[qwen_image_edit_dit] attention NAX vs ALU: block0 rel-L2 = "
+              "%.6f (nax %s)\n", r, nax_on ? "engaged" : "OFF");
+  EXPECT_TRUE(std::isfinite(r) && r < 0.01);
+}

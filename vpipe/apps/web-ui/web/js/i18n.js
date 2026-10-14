@@ -1,0 +1,8055 @@
+// UI string localization for the web client. The catalogue lives here
+// (small, inline); the backend keeps its own catalogue for server-
+// produced messages (common/i18n.*) and the two share the current
+// language via /api/i18n so they stay in sync.
+//
+// Locale tags are IETF, lowercased with region: en-us / zh-cn / zh-tw.
+// Lookups fall back: current locale -> en-us -> the key itself.
+//
+// The catalogue is keyed by string id; each value is a 3-tuple in locale
+// order [en-us, zh-cn, zh-tw]. A "" slot defers a translation (falls back
+// to en-us). t(key, params) substitutes {name} placeholders so dynamic
+// messages keep correct word order across languages.
+
+const KEY = 'vpipe_lang';
+
+// Supported locales in display order; `label` is the self-name shown in
+// the language picker. The first entry is the fallback. The tuple slot
+// order in STRINGS matches this order.
+export const LOCALES = [
+  { tag: 'en-us', label: 'English' },
+  { tag: 'zh-cn', label: '简体中文' },
+  { tag: 'zh-tw', label: '繁體中文' },
+];
+
+// slot index into each STRINGS tuple, by locale tag.
+const SLOT = { 'en-us': 0, 'zh-cn': 1, 'zh-tw': 2 };
+
+// key -> [en-us, zh-cn, zh-tw]. Grouped by feature area. Placeholders in
+// {braces} are filled by t()'s second argument.
+const STRINGS = {
+  // ---- Navigation ----
+  'nav.pipelines': ['Pipelines', '流水线', '處理管線'],
+  'nav.profiler':  ['Profiler', '性能分析', '效能分析'],
+  'nav.io':        ['User I/O', '输入输出', '輸入輸出'],
+  'nav.database':  ['Database', '数据库', '資料庫'],
+  'nav.files':     ['Files', '文件', '檔案'],
+  'nav.composer':  ['Composer', '自定义', '自訂'],
+  'nav.settings':  ['Settings', '设置', '設定'],
+
+  // ---- Shared verbs / generic labels ----
+  'common.save':    ['Save', '保存', '儲存'],
+  'common.cancel':  ['Cancel', '取消', '取消'],
+  'common.add':     ['Add', '添加', '新增'],
+  'common.remove':  ['Remove', '移除', '移除'],
+  'common.delete':  ['Delete', '删除', '刪除'],
+  'common.create':  ['Create', '创建', '建立'],
+  'common.overwrite':['Overwrite', '覆盖', '覆蓋'],
+  'common.rename':  ['Rename', '重命名', '重新命名'],
+  'common.load':    ['Load', '加载', '載入'],
+  'common.unload':  ['Unload', '卸载', '卸載'],
+  'common.close':   ['Close', '关闭', '關閉'],
+  'common.refresh': ['Refresh', '刷新', '重新整理'],
+  'common.clear':   ['Clear', '清除', '清除'],
+  'common.start':   ['Start', '启动', '啟動'],
+  'common.stop':    ['Stop', '停止', '停止'],
+  'common.pause':   ['Pause', '暂停', '暫停'],
+  'common.play':    ['Play', '播放', '播放'],
+  'common.open':    ['Open', '打开', '開啟'],
+  'common.apply':   ['Apply', '应用', '確定'],
+  'common.undo':    ['Undo', '撤销', '復原'],
+  'common.redo':    ['Redo', '重做', '重做'],
+  'common.fit':     ['Fit', '自动缩放', '自動縮放'],
+  'common.reset':   ['Reset', '重置', '重設'],
+  'common.send':    ['Send', '发送', '傳送'],
+  'common.loading': ['Loading…', '加载中…', '載入中…'],
+  'common.dismiss': ['Dismiss', '关闭', '關閉'],
+  // The console text-size control (User I/O + Session Log headers).
+  'common.text_size':    ['Text size', '文字大小', '文字大小'],
+  'common.text_smaller': ['Smaller text', '缩小文字', '縮小文字'],
+  'common.text_larger':  ['Larger text', '放大文字', '放大文字'],
+  'common.text_size_reset': ['Reset to the default text size',
+      '恢复默认文字大小', '恢復預設文字大小'],
+
+  // ---- File open/save dialog ----
+  'fs.open_title':     ['Open file', '打开文件', '開啟檔案'],
+  'fs.save_title':     ['Save file', '保存文件', '儲存檔案'],
+  'fs.pick_folder':    ['Choose folder', '选择文件夹', '選擇資料夾'],
+  'fs.select_folder':  ['Select folder', '选择此文件夹', '選擇此資料夾'],
+  'fs.browse':         ['Browse…', '浏览…', '瀏覽…'],
+  'fs.preview_toggle': ['Show / hide preview', '显示 / 隐藏预览',
+                        '顯示 / 隱藏預覽'],
+  'fs.up':             ['Up one level', '上一级', '上一層'],
+  'fs.refresh':        ['Refresh', '刷新', '重新整理'],
+  'fs.filename':       ['Filename', '文件名', '檔名'],
+  'fs.all_files':      ['All files', '所有文件', '所有檔案'],
+  'fs.sandboxed':      ['Sandbox', '沙盒', '沙箱'],
+  'fs.native':         ['Native', '本地', '本機'],
+  'fs.empty':          ['Nothing here', '此处为空', '此處為空'],
+  'fs.n_selected':     ['{n} selected', '已选 {n} 项', '已選 {n} 項'],
+  'fs.name_required':  ['Enter a filename', '请输入文件名', '請輸入檔名'],
+  'fs.select_required':['Select a file', '请选择文件', '請選擇檔案'],
+  'fs.list_failed':    ['Browse failed: {msg}', '浏览失败：{msg}',
+                        '瀏覽失敗：{msg}'],
+  'fs.filter_image':   ['Images', '图片', '圖片'],
+  'fs.filter_audio':   ['Audio', '音频', '音訊'],
+  'fs.filter_video':   ['Video', '视频', '視訊'],
+  'fs.filter_text':    ['Text', '文本', '文字'],
+  'fs.filter_weights': ['Model weights', '模型权重', '模型權重'],
+  'fs.new_folder':     ['New folder', '新建文件夹', '新增資料夾'],
+  'fs.folder_name':    ['Folder name', '文件夹名称', '資料夾名稱'],
+  'fs.mkdir_failed':   ['Could not create folder: {msg}',
+                        '无法创建文件夹：{msg}', '無法建立資料夾：{msg}'],
+  'fs.overwrite_title':['Overwrite file?', '覆盖文件？', '覆蓋檔案？'],
+  'fs.overwrite_msg':  ['"{name}" already exists. Overwrite it?',
+                        '“{name}” 已存在，是否覆盖？',
+                        '「{name}」已存在，是否覆蓋？'],
+
+  // ---- File browser view ----
+  'fb.folders':       ['Folders', '文件夹', '資料夾'],
+  'fb.files':         ['Files', '文件', '檔案'],
+  'fb.preview':       ['Preview', '预览', '預覽'],
+  'fb.new_folder':    ['New folder', '新建文件夹', '新增資料夾'],
+  'fb.rename':        ['Rename', '重命名', '重新命名'],
+  'fb.pick_to_preview':['Select a file to preview', '选择文件以预览',
+                        '選擇檔案以預覽'],
+  'fb.no_preview':    ['No preview for this file type', '此文件类型无法预览',
+                        '此檔案類型無法預覽'],
+  'fb.download':      ['Download', '下载', '下載'],
+  'fb.modified':      ['Modified {t}', '修改于 {t}', '修改於 {t}'],
+  'fb.new_folder_name':['Folder name', '文件夹名称', '資料夾名稱'],
+  'fb.rename_to':     ['New name', '新名称', '新名稱'],
+  'fb.folder_created':['Folder created', '文件夹已创建', '資料夾已建立'],
+  'fb.renamed':       ['Renamed', '已重命名', '已重新命名'],
+  'fb.select_item':   ['Select an item to rename', '请选择要重命名的项目',
+                        '請選擇要重新命名的項目'],
+  'fb.truncated':     ['Preview truncated — showing the first {n}',
+                        '预览已截断 — 仅显示前 {n}',
+                        '預覽已截斷 — 僅顯示前 {n}'],
+  'fb.preview_failed':['Preview failed: {msg}', '预览失败：{msg}',
+                        '預覽失敗：{msg}'],
+  'fb.op_failed':     ['Failed: {msg}', '操作失败：{msg}', '操作失敗：{msg}'],
+  'fb.empty_folder':  ['Empty folder', '空文件夹', '空資料夾'],
+  'fb.resize_cols':   ['Drag to resize the columns (double-click to reset)',
+                       '拖动以调整列宽（双击恢复默认）',
+                       '拖曳以調整欄寬（雙擊恢復預設）'],
+  // Preview additions: the .vpipeline stage summary, and the dialog's
+  // side-panel toggle.
+  'fb.pl_stages':     ['{n} stages', '{n} 个流水线级', '{n} 個階段'],
+  'fb.pl_unparsed':   ['Could not parse this pipeline — showing the raw '
+                       + 'file.', '无法解析此流水线 — 显示原始文件。',
+                       '無法解析此管線 — 顯示原始檔案。'],
+
+  // ---- Settings view ----
+  'settings.title':         ['Settings', '设置', '設定'],
+  'settings.language':      ['Language', '语言', '語言'],
+  'settings.language_desc': ['Interface language. This also sets the '
+      + 'language of messages the server sends.',
+      '界面语言。同时设置服务器发送消息的语言。',
+      '介面語言。同時設定伺服器傳送訊息的語言。'],
+  'settings.theme':         ['Color theme', '颜色主题', '色彩主題'],
+  'settings.theme_desc':    ['Choose a light or dark appearance, or follow '
+      + 'your system ("Auto").',
+      '选择浅色或深色外观，或跟随系统（“自动”）。',
+      '選擇淺色或深色外觀，或跟隨系統（「自動」）。'],
+  'settings.theme_auto':    ['Auto', '自动', '自動'],
+  'settings.theme_light':   ['Light', '浅色', '淺色'],
+  'settings.theme_dark':    ['Dark', '深色', '深色'],
+  'settings.console_history': ['User I/O console history',
+      '用户输入输出控制台历史', '使用者輸入輸出主控台歷史'],
+  'settings.console_history_desc': ['Maximum number of lines the User I/O '
+      + 'console retains. Older lines are dropped first, like a terminal '
+      + 'scrollback buffer. Default is 8192.',
+      '用户输入输出控制台保留的最大行数。较旧的行会被优先丢弃，'
+      + '就像终端的回滚缓冲区。默认值为 8192 行。',
+      '使用者輸入輸出主控台保留的最大行數。較舊的行會被優先丟棄，'
+      + '就像終端機的回捲緩衝區。預設值為 8192 行。'],
+  'settings.log_history':   ['Session log history', '日志历史',
+      '日誌歷史'],
+  'settings.log_history_desc': ['Maximum number of lines the Session Log '
+      + 'view retains. Older lines are dropped first (wraparound buffer). '
+      + 'Default is 8192.',
+      '日志视图保留的最大行数。较旧的行会被优先丢弃（环形缓冲区）。'
+      + '默认值为 8192。',
+      '日誌檢視保留的最大行數。較舊的行會被優先丟棄（環形緩衝區）。'
+      + '預設值為 8192。'],
+  'settings.lines':         ['lines', '行', '行'],
+  'settings.limit_positive':['limit must be a positive integer',
+      '上限必须为正整数', '上限必須為正整數'],
+  'settings.console_updated': ['Console limit updated', '控制台上限已更新',
+      '主控台上限已更新'],
+  'settings.log_updated':   ['Log limit updated', '日志上限已更新',
+      '日誌上限已更新'],
+  'settings.save_failed':   ['Save failed: {msg}', '保存失败：{msg}',
+      '儲存失敗：{msg}'],
+  'settings.saved_current': ['saved · current {n} lines',
+      '已保存 · 当前 {n} 行', '已儲存 · 目前 {n} 行'],
+  'settings.current_range': ['current {n} lines (range {min}–{max})',
+      '当前 {n} 行（范围 {min}–{max}）', '目前 {n} 行（範圍 {min}–{max}）'],
+  'settings.wired_pool':    ['Unswappable memory (wired pool)',
+      '不可交换内存（锁定池）', '不可交換記憶體（鎖定池）'],
+  'settings.wired_pool_desc': ['Ceiling on memory this process makes '
+      + 'unswappable: model weights, a streaming model\u2019s resident '
+      + 'blocks, activation scratch. Wired pages cannot be compressed or '
+      + 'swapped, so this is what the process genuinely keeps. It can be '
+      + 'RAISED while a pipeline runs, but not lowered \u2014 giving wired '
+      + 'bytes back means unwiring buffers a model is still reading. 0 '
+      + 'restores the default share of RAM.',
+      '本进程可锁定为不可交换的内存上限：模型权重、流式模型常驻的层块、'
+      + '激活暂存区。锁定的页面无法被压缩或换出，因此这是本进程真正持有的内存。'
+      + '流水线运行期间只能调高，不能调低——归还已锁定的内存意味着解锁模型'
+      + '正在读取的缓冲区。填 0 则恢复按内存比例的默认值。',
+      '本行程可鎖定為不可交換的記憶體上限：模型權重、串流模型常駐的層塊、'
+      + '啟動暫存區。鎖定的頁面無法被壓縮或換出，因此這是本行程真正持有的'
+      + '記憶體。管線執行期間只能調高，不能調低——歸還已鎖定的記憶體意味著'
+      + '解鎖模型正在讀取的緩衝區。填 0 則恢復按記憶體比例的預設值。'],
+  'settings.mb':            ['MB', 'MB', 'MB'],
+  'settings.wired_updated': ['Wired pool updated', '锁定池已更新',
+      '鎖定池已更新'],
+  'settings.wired_current': ['current {n} MB · {used} MB wired now',
+      '当前 {n} MB · 已锁定 {used} MB', '目前 {n} MB · 已鎖定 {used} MB'],
+  'settings.wired_capped':  ['capped at {max} MB by what the GPU can keep '
+      + 'resident', '受 GPU 可常驻内存限制，上限为 {max} MB',
+      '受 GPU 可常駐記憶體限制，上限為 {max} MB'],
+  // Shown whether or not the cap is currently binding: the limit above
+  // cannot be read without it. 48 GB is roomy or already clamped
+  // depending on this number.
+  'settings.wired_device_max': ['GPU maximum {max} MB',
+      'GPU 上限 {max} MB', 'GPU 上限 {max} MB'],
+  'settings.wired_sysctl':  ['The GPU maximum is a hard ceiling: a larger '
+      + 'figure is accepted and clamped to it. To raise it, '
+      + 'sudo sysctl iogpu.wired_limit_mb=N (N in MB; 0 restores the '
+      + 'default, and it does not survive a reboot).',
+      'GPU 上限是硬性上限：填入更大的数值会被自动截断到该上限。如需提高，'
+      + '可执行 sudo sysctl iogpu.wired_limit_mb=N（N 以 MB 为单位；填 0 '
+      + '恢复默认值，且重启后失效）。',
+      'GPU 上限是硬性上限：填入更大的數值會被自動截斷到該上限。如需提高，'
+      + '可執行 sudo sysctl iogpu.wired_limit_mb=N（N 以 MB 為單位；填 0 '
+      + '恢復預設值，且重新開機後失效）。'],
+  'settings.wired_running': ['a pipeline is running \u2014 the limit can be '
+      + 'raised but not lowered',
+      '流水线正在运行——上限只能调高，不能调低',
+      '管線正在執行——上限只能調高，不能調低'],
+  'settings.wired_off':     ['wiring is off; nothing is protected from the '
+      + 'compressor', '未启用锁定；没有内存受压缩器保护',
+      '未啟用鎖定；沒有記憶體受壓縮器保護'],
+  'settings.swap_allowance': ['Swap allowance',
+      '可换出内存额度', '可換出記憶體額度'],
+  'settings.swap_allowance_desc': ['How much memory a video run may plan '
+      + 'to push OUT to the compressor or the swap file, on top of what '
+      + 'the system reports as reclaimable. The opposite of the wired '
+      + 'pool above: it reserves nothing and can be changed at any time, '
+      + 'and spending it costs speed rather than stability — the '
+      + 'pages displaced belong to other applications. Raise it if a '
+      + 'clip that used to run is refused for memory; 0 sizes a forward '
+      + 'against reclaimable memory alone.',
+      '视频任务在系统报告的可回收内存之外，还可以计划换出到压缩器或交换文件的'
+      + '内存额度。它与上面的锁定池相反：不预留任何内存，可随时修改；动用它'
+      + '损失的是速度而非稳定性——被换出的页面属于其他应用程序。如果原本'
+      + '可以运行的片段因内存被拒绝，可调高此值；填 0 则仅按可回收内存来'
+      + '衡量一次前向计算。',
+      '影片任務在系統回報的可回收記憶體之外，還可以計劃換出到壓縮器或交換檔的'
+      + '記憶體額度。它與上面的鎖定池相反：不預留任何記憶體，可隨時修改；'
+      + '動用它損失的是速度而非穩定性——被換出的頁面屬於其他應用程式。'
+      + '如果原本可以執行的片段因記憶體被拒絕，可調高此值；填 0 則僅按'
+      + '可回收記憶體來衡量一次前向計算。'],
+  'settings.swap_updated': ['Swap allowance updated', '可换出额度已更新',
+      '可換出額度已更新'],
+  'settings.swap_current': ['current {n} MB', '当前 {n} MB', '目前 {n} MB'],
+  'settings.swap_off':     ['no allowance; sized against reclaimable memory '
+      + 'alone', '未设置额度；仅按可回收内存衡量',
+      '未設定額度；僅按可回收記憶體衡量'],
+  // Beside the allowance, never instead of it: the allowance is a
+  // ceiling on spending this, not evidence that it exists.
+  'settings.swap_available': ['{n} MB could be freed right now',
+      '当前实际可释放 {n} MB', '目前實際可釋放 {n} MB'],
+  'settings.limit_nonneg':  ['limit must be 0 or a positive integer',
+      '上限必须为 0 或正整数', '上限必須為 0 或正整數'],
+  'settings.no_endpoint':   ['server does not expose the limit endpoint',
+      '服务器未提供该上限接口', '伺服器未提供該上限端點'],
+
+  // ---- Startup checks dialog ----
+  'startup.title':           ['Startup checks', '启动检查', '啟動檢查'],
+  'startup.needs_attention': ['Some startup checks need attention (open '
+      + 'System Settings > Privacy & Security):',
+      '部分启动检查需要处理（请打开“系统设置 > 隐私与安全性”）：',
+      '部分啟動檢查需要處理（請開啟「系統設定 > 隱私權與安全性」）：'],
+  'startup.all_passed':      ['All startup checks passed.',
+      '所有启动检查均已通过。', '所有啟動檢查均已通過。'],
+  'startup.ok':              ['ok', '正常', '正常'],
+  'startup.warn':            ['warn', '警告', '警告'],
+
+  // ---- Access-key dialog ----
+  'auth.title':       ['Access key required', '需要访问密钥', '需要存取金鑰'],
+  'auth.body':        ['This server requires an access key for connections '
+      + 'from other computers. Find it printed in the server console '
+      + '("Remote access key: …").',
+      '此服务器要求来自其他计算机的连接提供访问密钥。'
+      + '请在服务器控制台中查找（“Remote access key: …”）。',
+      '此伺服器要求來自其他電腦的連線提供存取金鑰。'
+      + '請在伺服器主控台中查找（「Remote access key: …」）。'],
+  'auth.key':         ['Key', '密钥', '金鑰'],
+  'auth.key_ph':      ['8-character key', '8 位字符密钥', '8 位字元金鑰'],
+  'auth.connect':     ['Connect', '连接', '連線'],
+
+  // ---- App shell ----
+  'app.dashboard':    ['Dashboard', '控制台', '儀表板'],
+  'app.coming_soon':  ['Coming soon.', '即将推出。', '即將推出。'],
+
+  // ---- Phone shell (js/phone/) ----
+  'phone.menu':          ['Menu', '菜单', '選單'],
+  'phone.views':         ['Views', '视图', '檢視'],
+  'phone.preview':       ['Preview', '预览', '預覽'],
+  'phone.compare':       ['Compare', '图像对比', '影像對比'],
+  'phone.no_stage_view': ['This server offers no "{id}" panel.',
+      '此服务器未提供“{id}”面板。', '此伺服器未提供「{id}」面板。'],
+  'phone.desktop_site':  ['Desktop layout', '桌面版界面', '桌面版介面'],
+  'phone.desktop_hint':  ['The full dashboard: profiler, database, '
+      + 'files, composer and pipeline editing.',
+      '完整控制台：性能分析、数据库、文件、自定义与流水线编辑。',
+      '完整儀表板：效能分析、資料庫、檔案、自訂與管線編輯。'],
+  'phone.desktop_confirm': ['It is built for a large screen and will be '
+      + 'hard to use here. The page reloads; come back with the '
+      + '"Phone layout" button in its top bar.',
+      '该界面为大屏幕设计，在手机上很难操作。页面将重新加载；'
+      + '可用其顶栏的“手机版界面”按钮返回。',
+      '該介面為大螢幕設計，在手機上很難操作。頁面將重新載入；'
+      + '可用其頂列的「手機版介面」按鈕返回。'],
+  'phone.desktop_switch': ['Switch', '切换', '切換'],
+  'phone.system':        ['System', '系统资源', '系統資源'],
+  'phone.sys_window':    ['Last {s} seconds · updated every second',
+      '最近 {s} 秒 · 每秒更新', '最近 {s} 秒 · 每秒更新'],
+  'phone.phone_layout':  ['Phone layout', '手机版界面', '手機版介面'],
+  'phone.pick_pipeline': ['Choose a pipeline', '选择流水线', '選擇管線'],
+  'phone.topology_note': ['Stage wiring is edited in the desktop layout.',
+      '流水线级的连线请在桌面版中编辑。',
+      '管線階段的連線請在桌面版中編輯。'],
+  'phone.more':          ['More actions', '更多操作', '更多操作'],
+  'phone.save_as':       ['Save as', '另存为', '另存為'],
+  'phone.busy_launch':   ['starting', '启动中', '啟動中'],
+  'phone.busy_pause':    ['pausing', '暂停中', '暫停中'],
+  'phone.busy_stop':     ['stopping', '停止中', '停止中'],
+  'phone.load_title':    ['Load pipeline', '加载流水线', '載入管線'],
+  'phone.loaded':        ['Loaded {id}', '已加载 {id}', '已載入 {id}'],
+  'phone.unloaded':      ['Unloaded {id}', '已卸载 {id}', '已卸載 {id}'],
+  'phone.about':         ['About this stage', '流水线级说明', '階段說明'],
+  'phone.connections':   ['Connections', '连接', '連接'],
+  'phone.inputs':        ['Inputs', '输入端口', '輸入埠'],
+  'phone.outputs':       ['Outputs', '输出端口', '輸出埠'],
+  'phone.config':        ['Configuration', '配置', '配置'],
+  'phone.none':          ['none', '无', '無'],
+  'phone.unconnected':   ['not connected', '未连接', '未連接'],
+  'phone.no_config':     ['No configurable attributes',
+      '没有可配置的属性', '沒有可設定的屬性'],
+  'phone.stop_to_edit':  ['Stop the pipeline to edit its configuration.',
+      '停止流水线后才能编辑配置。', '停止管線後才能編輯設定。'],
+  'phone.cfg_default':   ['default ({v})', '默认（{v}）', '預設（{v}）'],
+  'phone.cfg_unset_title': ['Clear — use the stage default',
+      '清除 — 使用流水线级默认值', '清除 — 使用階段預設值'],
+  'phone.cfg_bad_json':  ['{key}: not valid JSON', '{key}：不是有效的 JSON',
+      '{key}：不是有效的 JSON'],
+  'phone.cfg_bad_number':['{key}: not a number', '{key}：不是数字',
+      '{key}：不是數字'],
+  'phone.cfg_applied':   ['{id} configuration applied', '{id} 配置已应用',
+      '{id} 設定已套用'],
+  'phone.cfg_apply_failed': ['Apply failed: {msg}', '应用失败：{msg}',
+      '套用失敗：{msg}'],
+  'phone.pick_path':     ['Choose a path', '选择路径', '選擇路徑'],
+  'phone.pick_model':    ['Choose a model', '选择模型', '選擇模型'],
+  'phone.no_models':     ['No installed models match this field.',
+      '没有符合此字段的已安装模型。', '沒有符合此欄位的已安裝模型。'],
+  'phone.back':          ['Back', '返回', '返回'],
+  'phone.open_raw':      ['Open original', '打开原文件', '開啟原始檔'],
+  'phone.no_preview_kind': ['No preview for this file type.',
+      '此文件类型无法预览。', '此檔案類型無法預覽。'],
+  'phone.text_truncated': ['Showing the first {shown} of {total}.',
+      '仅显示前 {shown}，共 {total}。', '僅顯示前 {shown}，共 {total}。'],
+
+  // ---- Pipeline manager ----
+  'pl.stages':         ['Stages', '阶段', '階段'],
+  'pl.toolbox':        ['Toolbox', '工具箱', '工具箱'],
+  'pl.configuration':  ['Configuration', '配置', '配置'],
+  'pl.buf':            ['Buf', '缓冲区图示', '緩衝區圖示'],
+  'pl.buf_toggle':     ['Toggle the live buffer-fill overlay (per-edge '
+      + 'backlog / capacity while the pipeline runs)',
+      '切换实时缓冲填充叠加层（流水线运行时显示每条边的积压量 / 容量）',
+      '切換即時緩衝填充疊加層（管線執行時顯示每條邊的積壓量 / 容量）'],
+  'pl.buf_interval':   ['Buffer-fill poll interval (seconds)',
+      '缓冲填充轮询间隔（秒）', '緩衝填充輪詢間隔（秒）'],
+  'pl.filter_ph':      ['Filter…', '筛选…', '篩選…'],
+  'pl.hide_toolbox':   ['Hide toolbox', '隐藏工具箱', '隱藏工具箱'],
+  'pl.show_toolbox':   ['Show toolbox', '显示工具箱', '顯示工具箱'],
+  // ---- Editor layout toggles (configuration pane header) ----
+  'pl.dock_bottom':    ['Dock the configuration below the canvas',
+      '将配置面板停靠在画布下方', '將設定面板停靠在畫布下方'],
+  'pl.dock_right':     ['Dock the configuration to the right of the canvas',
+      '将配置面板停靠在画布右侧', '將設定面板停靠在畫布右側'],
+  'pl.docs_show':      ['Show field documentation',
+      '显示字段说明', '顯示欄位說明'],
+  'pl.docs_hide':      ['Hide field documentation',
+      '隐藏字段说明', '隱藏欄位說明'],
+  'pl.lane_view_on':   ['Show the compact lane list instead of the canvas',
+      '改用紧凑的流水线级列表代替画布', '改用精簡的階段列表取代畫布'],
+  'pl.lane_view_off':  ['Back to the stage canvas',
+      '返回流水线级画布', '返回階段畫布'],
+  'pl.resize_width':   ['Drag left or right to resize the configuration pane',
+      '左右拖动以调整配置面板宽度', '左右拖曳以調整設定面板寬度'],
+  'pl.resize_height':  ['Drag up or down to resize the configuration pane',
+      '上下拖动以调整配置面板高度', '上下拖曳以調整設定面板高度'],
+  'pl.resize_selector':['Drag left or right to resize the pipeline list',
+      '左右拖动以调整流水线列表宽度',
+      '左右拖曳以調整管線列表寬度'],
+  'pl.select_pipeline':['Select a pipeline', '请选择一个流水线', '請選擇一個管線'],
+  'pl.empty_drag':     ['Empty pipeline — drag a stage from the toolbox',
+      '空流水线 — 从工具箱拖入一个阶段',
+      '空管線 — 從工具箱拖入一個階段'],
+  'pl.empty':          ['Empty pipeline', '空流水线', '空管線'],
+  'pl.narrow_note':    ['Pane too narrow for the canvas — widen it to '
+      + 'wire stages. Tap a stage to edit its configuration here.',
+      '窗格过窄，无法显示画布 — 请加宽以连接流水线级。点按某一级即可在此编辑其配置。',
+      '窗格過窄，無法顯示畫布 — 請加寬以連接階段。點按某一階段即可在此編輯其設定。'],
+  // Same fallback, but the editor is still wide enough to keep its
+  // configuration PANE -- so the note points there instead of inline.
+  'pl.narrow_note_pane': ['Pane too narrow for the canvas — widen it to '
+      + 'wire stages. Selecting one still edits its configuration.',
+      '窗格过窄，无法显示画布 — 请加宽以连接流水线级。选中某一级仍可编辑其配置。',
+      '窗格過窄，無法顯示畫布 — 請加寬以連接階段。選取某一階段仍可編輯其設定。'],
+  // Same list, but on screen because the operator PINNED it rather than
+  // because the pane ran out of width -- so the way back is the button
+  // it was turned on with, not a wider pane.
+  'pl.lane_note_pinned': ['Lane list — pinned from the configuration '
+      + 'header. Switch back there to wire stages on the canvas.',
+      '流水线级列表 — 已在配置面板标题栏固定。回到那里可切换回画布连接各级。',
+      '階段列表 — 已在設定面板標題列固定。回到該處可切換回畫布連接各階段。'],
+  'pl.select_stopped': ['Select a stopped pipeline to edit',
+      '请选择一个已停止的流水线进行编辑',
+      '請選擇一個已停止的管線進行編輯'],
+  'pl.rebind_gone':    ['Pipeline "{id}" is no longer loaded',
+      '流水线 “{id}” 已不再加载', '管線「{id}」已不再載入'],
+  'pl.rebind_pick':    ['Pick a loaded pipeline to edit:',
+      '选择一个已加载的流水线进行编辑：', '選擇一個已載入的管線進行編輯：'],
+  'pl.rebound':        ['Now editing {id}', '正在编辑 {id}', '正在編輯 {id}'],
+  'pl.chip_hint':      ['\n(drag onto the canvas, or double-click)',
+      '\n（拖到画布上，或双击）', '\n（拖到畫布上，或雙擊）'],
+  'pl.starting':       ['Starting', '启动中', '啟動中'],
+  'pl.pausing':        ['Pausing', '暂停中', '暫停中'],
+  'pl.stopping':       ['Stopping', '停止中', '停止中'],
+  'pl.inflight_hint':  ['this can take a few seconds on big pipelines '
+      + 'while the runtime drains',
+      '在大型流水线上，运行时排空期间这可能需要几秒钟',
+      '在大型管線上，執行階段排空期間這可能需要幾秒鐘'],
+  'pl.no_pipelines':   ['No pipelines. Create or load one.',
+      '没有流水线。请创建或加载一个。', '沒有管線。請建立或載入一個。'],
+  'pl.no_matches':     ['No matches', '没有匹配项', '沒有相符項目'],
+  // Prefixes a toolbox section named after the plugin that contributed
+  // the stages under it; the plugin's own name follows, untranslated.
+  'pl.plugin_group':   ['Plugin', '插件', '外掛'],
+  'nav.plugins':       ['Plugins', '插件', '外掛'],
+  'plugins.title':     ['Plugins', '插件', '外掛'],
+  'plugins.root':      ['Plugins directory', '插件目录', '外掛目錄'],
+  'plugins.root_missing': [
+    'This directory does not exist yet. Create it and put plugin dylibs in it.',
+    '此目录尚不存在。请创建它并将插件动态库放入其中。',
+    '此目錄尚不存在。請建立它並將外掛動態庫放入其中。'],
+  // The single most important sentence in this panel: Disable is not an
+  // unload, and a user who assumes otherwise will expect memory back.
+  'plugins.no_unload': [
+    'Plugins are never unloaded: a loaded plugin stays mapped for the life '
+    + 'of the process. Disable only stops its stages being offered. Restart '
+    + 'to remove one.',
+    '插件永不卸载：已加载的插件在进程存续期间始终驻留内存。停用仅停止提供其阶段。'
+    + '需重启才能真正移除。',
+    '外掛永不卸載：已載入的外掛在行程存續期間始終駐留記憶體。停用僅停止提供其階段。'
+    + '需重新啟動才能真正移除。'],
+  'plugins.loaded':    ['Loaded', '已加载', '已載入'],
+  'plugins.available': ['Available', '可用', '可用'],
+  'plugins.none_loaded':    ['No plugins loaded', '未加载插件', '未載入外掛'],
+  'plugins.none_available': ['No plugins found', '未找到插件', '未找到外掛'],
+  'plugins.load':      ['Load', '加载', '載入'],
+  'plugins.loaded_ok': ['Plugin loaded', '插件已加载', '外掛已載入'],
+  'plugins.enable':    ['Enable', '启用', '啟用'],
+  'plugins.disable':   ['Disable', '停用', '停用'],
+  'plugins.disabled_resident': [
+    '(disabled, still resident)', '（已停用，仍驻留内存）', '（已停用，仍駐留記憶體）'],
+  'plugins.stages':    ['stages', '阶段', '階段'],
+  'pl.stages_total':   ['{n} stage{s} in total', '共 {n} 个流水线级',
+      '共 {n} 個階段'],
+  'pl.chip_ports':     ['{ins} in / {outs} out', '{ins} 入 / {outs} 出',
+      '{ins} 入 / {outs} 出'],
+  'pl.add_failed':     ['Add failed: {msg}', '添加失败：{msg}',
+      '新增失敗：{msg}'],
+  'pl.add_stage_title':['Add "{type}" stage', '添加“{type}”级',
+      '新增「{type}」階段'],
+  'pl.stage_id':       ['Stage id', '流水线级 id', '管線階段 id'],
+  'pl.add_stage_help': ['Created with default config. Its input ports are '
+      + 'shown per the stage spec — click an output port, then the target '
+      + 'input slot to wire it (inputs may be wired in any order).',
+      '以默认配置创建。其输入端口按阶段规格显示 — 点击一个输出端口，'
+      + '再点击目标输入槽即可连线（输入可按任意顺序连接）。',
+      '以預設配置建立。其輸入埠依階段規格顯示 — 點擊一個輸出埠，'
+      + '再點擊目標輸入槽即可連線（輸入可按任意順序連接）。'],
+  'pl.stage_id_required': ['stage id required', '需要流水线级 id', '需要階段 id'],
+  'pl.added':          ['Added {id}', '已添加 {id}', '已新增 {id}'],
+  'pl.wire_output_first': ['Click an output port first to start a wire',
+      '请先点击一个输出端口以开始连线',
+      '請先點擊一個輸出埠以開始連線'],
+  'pl.auto_arrange':   ['Auto-arrange', '自动排列', '自動排列'],
+  'pl.add_stage':      ['Add stage', '添加阶段', '新增階段'],
+  // Graph canvas controls + the two labels drawn on a node itself.
+  'pl.zoom_out':       ['Zoom out', '缩小', '縮小'],
+  'pl.zoom_in':        ['Zoom in', '放大', '放大'],
+  'pl.actual_size':    ['Actual size', '实际大小', '實際大小'],
+  'pl.fit_all':        ['Fit whole pipeline', '适配整条流水线', '符合整條管線'],
+  'pl.center':         ['Center', '居中', '置中'],
+  // The wheel-mode toggle names what the wheel does NOW, and what a
+  // press would switch it to, because the button is a mode indicator.
+  'pl.wheel_pan':      ['Scroll pans the canvas (trackpad) — '
+      + 'click for scroll to zoom; hold ⌘/Ctrl to zoom',
+      '滚动平移画布（触控板）— '
+      + '点击切换为滚动缩放；按住 ⌘/Ctrl 可缩放',
+      '滾動平移畫布（觸控板）— '
+      + '點擊切換為滾動縮放；按住 ⌘/Ctrl 可縮放'],
+  'pl.wheel_zoom':     ['Scroll zooms the canvas (mouse) — '
+      + 'click for scroll to pan; drag to pan',
+      '滚动缩放画布（鼠标）— '
+      + '点击切换为滚动平移；拖动可平移',
+      '滾動縮放畫布（滑鼠）— '
+      + '點擊切換為滾動平移；拖曳可平移'],
+  'pl.add_input':      ['add input', '添加输入端口', '新增輸入埠'],
+  'pl.needs_config':   ['Needs configuration: {msg}', '需要配置：{msg}',
+      '需要設定：{msg}'],
+  'pl.incompatible':   ['Incompatible types: {from} → {to}',
+      '类型不兼容：{from} → {to}', '類型不相容：{from} → {to}'],
+  'pl.incompatible_tags': ['Incompatible payload tags: {from} → {to}',
+      '负载标签不兼容：{from} → {to}', '負載標籤不相容：{from} → {to}'],
+  'pl.connected':      ['Connected', '已连接', '已連接'],
+  'pl.connect_failed': ['Connect failed: {msg}', '连接失败：{msg}',
+      '連接失敗：{msg}'],
+  'pl.disconnected':   ['Disconnected', '已断开', '已斷開'],
+  'pl.disconnect_failed': ['Disconnect failed: {msg}', '断开失败：{msg}',
+      '斷開失敗：{msg}'],
+
+  // ---- Connection editor (lane-graph node; phone + narrow desktop) ----
+  'conn.title':        ['Connections — {id}', '连接 — {id}', '連接 — {id}'],
+  'conn.edit_hint':    ["Edit this stage's connections", '编辑此阶段的连接',
+      '編輯此階段的連接'],
+  'conn.pick_iport':   ['Which input?', '选择输入端口', '選擇輸入埠'],
+  'conn.pick_source':  ['Feed {port} from…', '{port} 的来源…',
+      '{port} 的來源…'],
+  'conn.back':         ['Inputs', '输入', '輸入'],
+  'conn.unconnected':  ['not connected', '未连接', '未連接'],
+  'conn.current':      ['current source', '当前来源', '目前來源'],
+  'conn.disconnect':   ['Disconnect this input', '断开此输入', '斷開此輸入'],
+  'conn.no_iports':    ['This stage has no inputs.', '此阶段没有输入端口。',
+      '此階段沒有輸入埠。'],
+  'conn.no_sources':   ['No other stage has a compatible output.',
+      '没有其他阶段提供兼容的输出。', '沒有其他階段提供相容的輸出。'],
+  'conn.incompatible_type': ['needs {want}, emits {got}',
+      '需要 {want}，输出 {got}', '需要 {want}，輸出 {got}'],
+  'conn.incompatible_tags': ['payload tags do not match',
+      '负载标签不匹配', '負載標籤不相符'],
+  'conn.stop_to_edit': ['Stop the pipeline to change connections.',
+      '停止流水线后才能修改连接。', '停止管線後才能修改連接。'],
+  'pl.select_stage_config': ['Select a stage to view its config.',
+      '请选择一个阶段以查看其配置。', '請選擇一個階段以檢視其配置。'],
+  'pl.config_unavailable': ['Config unavailable: {msg}', '配置不可用：{msg}',
+      '配置不可用：{msg}'],
+  // A running stage's commands (docs/STAGE-COMMANDS.md).
+  'pl.commands': ['Commands', '命令', '命令'],
+  'pl.cmd_sent': ['{name}: sent; the stage answers when it next can',
+      '{name}：已发送；阶段会在下一个空档回应',
+      '{name}：已傳送；階段會在下一個空檔回應'],
+  'pl.cmd_replied': ['{name}: {result}', '{name}：{result}',
+      '{name}：{result}'],
+  'pl.cmd_failed': ['{name} failed: {msg}', '{name} 失败：{msg}',
+      '{name} 失敗：{msg}'],
+  // One step of undo for a configuration edit. Both buttons read the
+  // same slot from opposite ends, so the two hints describe one move.
+  'pl.undo_hint':      ['Undo the last configuration change to this stage',
+      '撤销对该流水线级配置的上一次修改', '復原對該階段設定的上一次變更'],
+  'pl.redo_hint':      ['Redo the configuration change that was just undone',
+      '重做刚刚撤销的配置修改', '重做剛剛復原的設定變更'],
+  'pl.config_undone':  ['Configuration change undone', '配置修改已撤销',
+      '設定變更已復原'],
+  'pl.config_redone':  ['Configuration change redone', '配置修改已重做',
+      '設定變更已重做'],
+  'pl.undo_failed':    ['Undo failed: {msg}', '撤销失败：{msg}',
+      '復原失敗：{msg}'],
+  'pl.config_readonly':['Pipeline is not stopped — config is read-only.',
+      '流水线仍在运行 — 配置为只读。', '管線未停止 — 配置為唯讀。'],
+  'pl.remove_stage_title': ['Remove this stage from the pipeline',
+      '从流水线中移除此阶段', '從管線中移除此階段'],
+  'pl.stop_to_edit':   ['Stop the pipeline to edit', '停止流水线后方可编辑',
+      '停止管線後方可編輯'],
+  'pl.field_default':  ['default: {val}', '默认：{val}', '預設：{val}'],
+  'pl.unset':          ['(unset)', '（未设置）', '（未設定）'],
+  // Marks a configured value that is not in the key's declared set --
+  // an older pipeline file, or a spelling the stage still accepts but no
+  // longer advertises. Shown beside the value, which is KEPT.
+  'pl.choice_unlisted': ['(not listed)', '（不在列表中）', '（不在清單中）'],
+  // ---- Model browser ----
+  'pl.mb_browse':      ['Browse compatible models', '浏览兼容模型',
+      '瀏覽相容模型'],
+  'pl.mb_title':       ['Compatible models', '兼容模型', '相容模型'],
+  'pl.mb_failed':      ['Failed to load models: {msg}', '加载模型失败：{msg}',
+      '載入模型失敗：{msg}'],
+  'pl.mb_empty':       ['No compatible installed models. Fetch one with a '
+      + 'model-fetch stage.', '没有兼容的已安装模型。请用 model-fetch 阶段获取。',
+      '沒有相容的已安裝模型。請用 model-fetch 階段取得。'],
+  'pl.mb_g_models':    ['Models', '模型', '模型'],
+  'pl.mb_g_supplements': ['Supplements', '附属模型', '附屬模型'],
+  'pl.mb_g_datasets':  ['Datasets', '数据集', '資料集'],
+  'pl.mb_attaches':    ['attaches to {p}', '附属于 {p}', '附屬於 {p}'],
+  'pl.mb_search':      ['Filter by name, variant or type…',
+      '按名称、变体或类型筛选…', '依名稱、變體或類型篩選…'],
+  'pl.mb_in':          ['takes', '输入', '輸入'],
+  'pl.mb_out':         ['makes', '输出', '輸出'],
+  'pl.mb_count':       ['{n} models', '{n} 个模型', '{n} 個模型'],
+  'pl.mb_count_filtered': ['{n} of {total} models',
+      '{total} 个模型中的 {n} 个', '{total} 個模型中的 {n} 個'],
+  'pl.mb_no_match':    ['Nothing matches this filter. Clear it to see the '
+      + 'compatible models again.',
+      '没有符合此筛选条件的模型。清除筛选可重新查看兼容模型。',
+      '沒有符合此篩選條件的模型。清除篩選可重新查看相容模型。'],
+  'pl.btn_unset':      ['⊘ unset', '⊘ 未设置', '⊘ 未設定'],
+  'pl.btn_clear':      ['× clear', '× 清除', '× 清除'],
+  'pl.omit_field':     ['omit this field from the config',
+      '从配置中省略此字段', '從配置中省略此欄位'],
+  'pl.clear_omit':     ['clear (omit this field from the config)',
+      '清除（从配置中省略此字段）', '清除（從配置中省略此欄位）'],
+  // Free-text fields are tri-state: omitted, present-but-empty, or a value.
+  // This placeholder marks the middle one -- the box looks empty either way,
+  // so it has to say which is being sent.
+  'pl.empty_value':    ['(empty value)', '（空值）', '（空值）'],
+  'pl.unset_type_value': ['unset (type a value to set it)',
+      '未设置（输入值以设置）', '未設定（輸入值以設定）'],
+  'pl.set_empty':      ['send an explicit empty value instead of omitting',
+      '发送显式空值而不是省略', '傳送顯式空值而非省略'],
+  // Shown ON a JSON box that did not parse when it lost focus. Auto-apply
+  // took every other field and declined this one, and nothing else on
+  // screen would say so.
+  'pl.json_invalid':   ['not valid JSON \u2014 this field was not applied',
+      '不是有效的 JSON——此字段未被应用', '不是有效的 JSON——此欄位未被套用'],
+  'pl.create_title':   ['Create Pipeline', '创建管线', '建立管線'],
+  'pl.pipeline_id':    ['Pipeline id', '流水线 id', '管線 id'],
+  'pl.id_required':    ['id required', '需要 id', '需要 id'],
+  'pl.new_id':         ['New id', '新 id', '新 id'],
+  'pl.rename_stage':   ['Rename stage', '重命名阶段', '重新命名階段'],
+  'pl.rename_stage_title': ['Rename Stage', '重命名阶段', '重新命名階段'],
+  'pl.stage_renamed':  ['Renamed "{from}" to "{to}"',
+      '已将“{from}”重命名为“{to}”', '已將「{from}」重新命名為「{to}」'],
+  'pl.rename_pl_title': ['Rename Pipeline', '重命名管线', '重新命名管線'],
+  'pl.rename_pl_stopped': ['Stop the pipeline before renaming',
+      '重命名前请先停止管线', '重新命名前請先停止管線'],
+  'pl.pl_renamed':     ['Renamed pipeline "{from}" to "{to}"',
+      '已将管线“{from}”重命名为“{to}”',
+      '已將管線「{from}」重新命名為「{to}」'],
+  'pl.rename_failed':  ['Rename failed: {msg}', '重命名失败：{msg}',
+      '重新命名失敗：{msg}'],
+  'pl.duplicate_stage': ['Duplicate', '创建副本', '建立副本'],
+  'pl.stage_duplicated': ['Duplicated "{from}" as "{to}"',
+      '已将“{from}”复制为“{to}”', '已將「{from}」複製為「{to}」'],
+  'pl.duplicate_failed': ['Duplicate failed: {msg}', '创建副本失败：{msg}',
+      '建立副本失敗：{msg}'],
+  'pl.create_failed':  ['Create failed: {msg}', '创建失败：{msg}',
+      '建立失敗：{msg}'],
+  'pl.load_title':     ['Load Pipeline', '加载管线', '載入管線'],
+  'pl.vpipeline_filter': ['Pipelines (*.vpipeline)', '管线 (*.vpipeline)',
+                          '管線 (*.vpipeline)'],
+  'pl.file_path':      ['File path', '文件路径', '檔案路徑'],
+  'pl.path_required':  ['path required', '需要路径', '需要路徑'],
+  'pl.load_failed_title': ['Could not load the pipeline',
+      '无法加载管线', '無法載入管線'],
+  'pl.launch_failed_title': ['Could not start the pipeline',
+      '无法启动管线', '無法啟動管線'],
+  'pl.op_done':        ['{op} {id}', '{op} {id}', '{op} {id}'],
+  'pl.state_stopped':  ['stopped', '已停止', '已停止'],
+  'pl.state_paused':   ['paused', '已暂停', '已暫停'],
+  'pl.state_running':  ['running', '运行中', '執行中'],
+  'pl.vpipeline_files':['{n} .vpipeline file{s} in {cwd}',
+      '在 {cwd} 中有 {n} 个 .vpipeline 文件',
+      '在 {cwd} 中有 {n} 個 .vpipeline 檔案'],
+  'pl.no_vpipeline':   ['No .vpipeline files in {cwd} (type any path)',
+      '{cwd} 中没有 .vpipeline 文件（可输入任意路径）',
+      '{cwd} 中沒有 .vpipeline 檔案（可輸入任意路徑）'],
+  'pl.save_title':     ['Save Pipeline "{id}"', '保存管线“{id}”',
+      '儲存管線「{id}」'],
+  'pl.save_path_label':['File path (blank = remembered path)',
+      '文件路径（留空 = 记住的路径）', '檔案路徑（留空 = 記住的路徑）'],
+  'pl.save_hint':      ['A path with no extension gets ".vpipeline" '
+      + 'appended automatically.',
+      '没有扩展名的路径会自动追加“.vpipeline”。',
+      '沒有副檔名的路徑會自動附加「.vpipeline」。'],
+  'pl.saved':          ['Saved to {path}', '已保存到 {path}', '已儲存至 {path}'],
+  'pl.save_failed':    ['Save failed: {msg}', '保存失败：{msg}',
+      '儲存失敗：{msg}'],
+  'pl.unload_title':   ['Unload Pipeline', '卸载流水线', '卸載管線'],
+  'pl.unload_confirm': ['Unload "{id}"? Unsaved edits are lost.',
+      '卸载“{id}”？未保存的修改将丢失。',
+      '卸載「{id}」？未儲存的修改將遺失。'],
+  'pl.unload_failed':  ['Unload failed: {msg}', '卸载失败：{msg}',
+      '卸載失敗：{msg}'],
+  'pl.remove_stage_modal': ['Remove Stage', '移除阶段', '移除階段'],
+  'pl.remove_stage_confirm': ['Remove stage "{id}"?', '移除阶段“{id}”？',
+      '移除階段「{id}」？'],
+  'pl.removed':        ['Removed {id}', '已移除 {id}', '已移除 {id}'],
+  'pl.remove_failed':  ['Remove failed: {msg}', '移除失败：{msg}',
+      '移除失敗：{msg}'],
+  'pl.list_failed':    ['List failed: {msg}', '获取列表失败：{msg}',
+      '取得列表失敗：{msg}'],
+  'pl.detail_failed':  ['Load detail failed: {msg}', '加载详情失败：{msg}',
+      '載入詳情失敗：{msg}'],
+  'pl.stage_types_failed': ['Stage types failed: {msg}',
+      '获取阶段类型失败：{msg}', '取得階段類型失敗：{msg}'],
+  'pl.op_failed':      ['{op} failed: {msg}', '{op}失败：{msg}',
+      '{op}失敗：{msg}'],
+  'pl.invalid_number': ['invalid number for "{key}"', '“{key}”的数字无效',
+      '「{key}」的數字無效'],
+  'pl.bad_config':     ['Bad config: {msg}', '配置错误：{msg}',
+      '配置錯誤：{msg}'],
+  'pl.config_applied': ['Config applied', '配置已应用', '配置已套用'],
+  'pl.apply_failed':   ['Apply failed: {msg}', '应用失败：{msg}',
+      '套用失敗：{msg}'],
+
+  // ---- Profiler ----
+  'prof.max_events':   ['Max events captured per worker',
+      '每个工作线程捕获的最大事件数', '每個工作執行緒擷取的最大事件數'],
+  'prof.reset_title':  ['Clear captured events and start fresh',
+      '清除已捕获的事件并重新开始', '清除已擷取的事件並重新開始'],
+  'prof.events_per_worker': ['events/worker', '事件/线程', '事件/執行緒'],
+  'prof.hide_workers': ['LLM/ANE only', '仅 LLM/ANE', '僅 LLM/ANE'],
+  'prof.hide_workers_title': ['Hide worker / overflow lanes; show only the '
+      + 'LLM and ANE activity lanes',
+      '隐藏工作线程 / 溢出通道，仅显示 LLM 与 ANE 活动通道',
+      '隱藏工作執行緒 / 溢位通道，僅顯示 LLM 與 ANE 活動通道'],
+  'prof.capture_summary': ['Capture summary', '捕获摘要', '擷取摘要'],
+  'prof.events':       ['Events', '事件', '事件'],
+  'prof.lanes':        ['Lanes', '通道', '通道'],
+  'prof.span':         ['Span', '跨度', '跨度'],
+  'prof.dropped':      ['Dropped', '已丢弃', '已丟棄'],
+  'prof.hint_click':   ['Click a block (begin/end pair) or marker to '
+      + 'inspect it.', '点击一个区块（开始/结束对）或标记以查看详情。',
+      '點擊一個區塊（開始/結束對）或標記以檢視詳情。'],
+  'prof.hint_start':   ['Start a capture while a pipeline runs.',
+      '在流水线运行时开始捕获。', '在管線執行時開始擷取。'],
+  'prof.stage':        ['Stage', '流水线级', '管線階段'],
+  'prof.lane':         ['Lane', '通道', '通道'],
+  'prof.open_suffix':  [' → (open)', ' → （进行中）', ' → （進行中）'],
+  'prof.begin':        ['Begin', '开始', '開始'],
+  'prof.end':          ['End', '结束', '結束'],
+  'prof.still_open':   ['still open at capture end', '在捕获结束时仍未结束',
+      '在擷取結束時仍未結束'],
+  'prof.duration':     ['Duration', '时长', '時長'],
+  'prof.value':        ['Value', '值', '值'],
+  'prof.throughput':   ['Throughput', '吞吐量', '吞吐量'],
+  'prof.event':        ['Event', '事件', '事件'],
+  'prof.transient':    ['  (transient)', '  （瞬时）', '  （瞬時）'],
+  'prof.t_rel':        ['t (rel)', 't（相对）', 't（相對）'],
+  'prof.t_abs':        ['t (abs)', 't（绝对）', 't（絕對）'],
+  'prof.gvid':         ['gvid', 'gvid', 'gvid'],
+  'prof.lane_corner':  ['lane', '通道', '通道'],
+  'prof.capturing_empty': ['Capturing… run a pipeline to generate events',
+      '正在捕获… 运行流水线以生成事件',
+      '正在擷取… 執行管線以產生事件'],
+  'prof.no_events':    ['No events. Launch a pipeline, Start, then Stop.',
+      '没有事件。启动流水线，点击“启动”，然后点击“停止”。',
+      '沒有事件。啟動管線，點擊「啟動」，然後點擊「停止」。'],
+  'prof.capturing':    ['capturing · {n} events', '正在捕获 · {n} 个事件',
+      '正在擷取 · {n} 個事件'],
+  'prof.idle':         ['idle', '空闲', '閒置'],
+  'prof.events_count': ['{n} events', '{n} 个事件', '{n} 個事件'],
+  'prof.lane_overflow':['overflow', '溢出', '溢位'],
+  'prof.lane_worker':  ['worker {id}', '工作线程 {id}', '工作執行緒 {id}'],
+  'prof.ongoing':      [' (ongoing)', '（进行中）', '（進行中）'],
+  'prof.resize_title': ['Drag to resize the details panel',
+      '拖动以调整详情面板大小', '拖曳以調整詳情面板大小'],
+  'prof.data_failed':  ['Profiler data failed: {msg}', '性能数据获取失败：{msg}',
+      '效能資料取得失敗：{msg}'],
+  'prof.start_failed': ['Start failed: {msg}', '启动失败：{msg}',
+      '啟動失敗：{msg}'],
+  'prof.stop_failed':  ['Stop failed: {msg}', '停止失败：{msg}',
+      '停止失敗：{msg}'],
+  'prof.reset_failed': ['Reset failed: {msg}', '重置失败：{msg}',
+      '重設失敗：{msg}'],
+
+  // ---- Database browser ----
+  'db.databases':      ['Databases', '数据库', '資料庫'],
+  'db.drop_this':      ['Drop this database', '删除此数据库', '刪除此資料庫'],
+  'db.no_databases':   ['No databases in the session env.',
+      '会话环境中没有数据库。', '工作階段環境中沒有資料庫。'],
+  'db.select_db':      ['Select a database on the left.',
+      '请在左侧选择一个数据库。', '請在左側選擇一個資料庫。'],
+  'db.mode_auto':      ['Auto', '自动', '自動'],
+  'db.mode_text':      ['Text', '文本', '文字'],
+  'db.mode_number':    ['Number', '数字', '數字'],
+  'db.mode_time':      ['Time', '时间', '時間'],
+  'db.match_exact':    ['Exact', '精确', '精確'],
+  'db.match_range':    ['Range', '范围', '範圍'],
+  'db.local_time':     ['Local time ({tz})', '本地时间（{tz}）',
+      '本地時間（{tz}）'],
+  'db.exact_ph':       ['key value (blank = all)', '键值（留空 = 全部）',
+      '鍵值（留空 = 全部）'],
+  'db.from_ph':        ['from (blank = unbounded)', '起始（留空 = 不限）',
+      '起始（留空 = 不限）'],
+  'db.to_ph':          ['to (blank = unbounded)', '结束（留空 = 不限）',
+      '結束（留空 = 不限）'],
+  'db.interpret_as':   ['Interpret key as', '将键解释为', '將鍵解釋為'],
+  'db.match':          ['Match', '匹配', '比對'],
+  'db.key':            ['Key', '键', '鍵'],
+  'db.from':           ['From', '起始', '起始'],
+  'db.to':             ['To', '结束', '結束'],
+  'db.run_query':      ['Run query', '运行查询', '執行查詢'],
+  'db.query_failed':   ['Query failed: {msg}', '查询失败：{msg}',
+      '查詢失敗：{msg}'],
+  'db.empty':          ['(empty)', '（空）', '（空）'],
+  'db.delete_this':    ['Delete this entry', '删除此条目', '刪除此項目'],
+  'db.no_matching':    ['No matching keys.', '没有匹配的键。', '沒有相符的鍵。'],
+  'db.page_of':        ['Page {n} of {total}{plus}', '第 {n} / {total}{plus} 页',
+      '第 {n} / {total}{plus} 頁'],
+  'db.page_n':         ['Page {n}', '第 {n} 页', '第 {n} 頁'],
+  'db.first':          ['« First', '« 首页', '« 首頁'],
+  'db.first_title':    ['First page', '首页', '首頁'],
+  'db.prev':           ['‹ Prev', '‹ 上一页', '‹ 上一頁'],
+  'db.prev_title':     ['Previous page', '上一页', '上一頁'],
+  'db.next':           ['Next ›', '下一页 ›', '下一頁 ›'],
+  'db.next_title':     ['Next page', '下一页', '下一頁'],
+  'db.last':           ['Last »', '末页 »', '末頁 »'],
+  'db.last_title':     ['Last page', '末页', '末頁'],
+  'db.total':          ['{shown} / {total}{plus} in total',
+      '共 {shown} / {total}{plus}', '共 {shown} / {total}{plus}'],
+  'db.truncated':      [' (truncated)', '（已截断）', '（已截斷）'],
+  'db.truncated_title':['scan limit reached', '已达到扫描上限',
+      '已達到掃描上限'],
+  'db.read_failed':    ['Read failed: {msg}', '读取失败：{msg}',
+      '讀取失敗：{msg}'],
+  'db.key_not_found':  ['Key not found.', '未找到该键。', '找不到該鍵。'],
+  'db.enc_json':       ['FlexData → JSON', 'FlexData → JSON', 'FlexData → JSON'],
+  'db.enc_binary':     ['binary · od -t x1 (first 128 B)',
+      '二进制 · od -t x1（前 128 B）', '二進位 · od -t x1（前 128 B）'],
+  'db.list_failed':    ['Database list failed: {msg}', '数据库列表获取失败：{msg}',
+      '資料庫列表取得失敗：{msg}'],
+  'db.delete_entry':   ['Delete entry', '删除条目', '刪除項目'],
+  'db.delete_entry_confirm': ['Permanently delete this key from "{db}"? '
+      + 'This cannot be undone.',
+      '从“{db}”中永久删除此键？此操作无法撤销。',
+      '從「{db}」中永久刪除此鍵？此操作無法復原。'],
+  'db.entry_deleted':  ['Entry deleted', '条目已删除', '項目已刪除'],
+  'db.delete_failed':  ['Delete failed: {msg}', '删除失败：{msg}',
+      '刪除失敗：{msg}'],
+  'db.drop_db':        ['Drop database', '删除数据库', '刪除資料庫'],
+  'db.drop_db_confirm':['Permanently drop the entire "{name}" database and '
+      + 'every entry in it? This cannot be undone.',
+      '永久删除整个“{name}”数据库及其中的所有条目？此操作无法撤销。',
+      '永久刪除整個「{name}」資料庫及其中的所有項目？此操作無法復原。'],
+  'db.db_dropped':     ['Database dropped', '数据库已删除', '資料庫已刪除'],
+  'db.drop_failed':    ['Drop failed: {msg}', '删除失败：{msg}',
+      '刪除失敗：{msg}'],
+  // ---- Database value filter (stream) ----
+  'db.value_filter':   ['Value filter', '值过滤', '值篩選'],
+  'db.add_value_filter': ['+ Add keyword', '+ 添加关键词', '+ 新增關鍵字'],
+  'db.vfilter_ph':     ['keyword', '关键词', '關鍵字'],
+  'db.cond_includes':  ['includes', '包含', '包含'],
+  'db.cond_excludes':  ['excludes', '排除', '排除'],
+  'db.cond_regex':     ['matches regex', '匹配正则', '符合正規'],
+  'db.cond_regex_not': ['no regex match', '不匹配正则', '不符正規'],
+  'db.cond_regex_line': ['line matches regex', '单行匹配正则', '單行符合正規'],
+  'db.cond_regex_line_not': ['no line matches regex', '无单行匹配正则',
+      '無單行符合正規'],
+  'db.highlight':      ['Highlight', '高亮', '標示'],
+  'db.highlight_title': ['Highlight the value-filter matches in the value '
+      + 'below', '在下方值中高亮值过滤命中的内容',
+      '在下方值中標示值篩選命中的內容'],
+  'db.match_when':     ['Match', '匹配', '比對'],
+  'db.combine_all':    ['all', '全部', '全部'],
+  'db.combine_any':    ['any', '任一', '任一'],
+  'db.op_and':         ['and', '并且', '並且'],
+  'db.op_or':          ['or', '或者', '或者'],
+  'db.indent':         ['Indent (group under the row above)',
+      '缩进（与上一行分组）', '縮排（與上一行分組）'],
+  'db.outdent':        ['Outdent', '取消缩进', '取消縮排'],
+  'db.scanning':       ['scanning…', '扫描中…', '掃描中…'],
+
+  // ---- I/O workspace ----
+  'io.split_options':  ['Split / view options', '拆分 / 视图选项',
+      '分割 / 檢視選項'],
+  'io.hls':            ['HLS Video', 'HLS 视频', 'HLS 影片'],
+  'io.session_log':    ['Session Log', '会话日志', '工作階段日誌'],
+  'io.new_view':       ['New view', '新建视图', '新增檢視'],
+  'io.add_view':       ['Add a view', '添加一个视图', '新增一個檢視'],
+  'io.more_soon':      ['More view types coming soon.',
+      '更多视图类型即将推出。', '更多檢視類型即將推出。'],
+  'io.split_v':        ['Split vertically (left / right)',
+      '垂直拆分（左 / 右）', '垂直分割（左 / 右）'],
+  'io.split_h':        ['Split horizontally (top / bottom)',
+      '水平拆分（上 / 下）', '水平分割（上 / 下）'],
+  // The Shift variants: same split, this panel keeps the OTHER half.
+  'io.split_v_alt':    ['Split vertically (this view right)',
+      '垂直拆分（本视图在右）', '垂直分割（本檢視在右）'],
+  'io.split_h_alt':    ['Split horizontally (this view bottom)',
+      '水平拆分（本视图在下）', '水平分割（本檢視在下）'],
+  'io.replace_view':   ['Replace view…', '替换视图…', '替換檢視…'],
+  'io.close_pane':     ['Close pane', '关闭窗格', '關閉窗格'],
+
+  // ---- Composer view ----
+  'composer.pipeline_editor': ['Pipeline editor', '流水线编辑器',
+                               '管線編輯器'],
+  'composer.pick_pipeline': ['Pipeline', '流水线', '管線'],
+  'composer.add':       ['Add panel', '添加面板', '新增面板'],
+  'composer.save':      ['Save', '保存', '儲存'],
+  'composer.load':      ['Load', '加载', '載入'],
+  'composer.save_file': ['Save to file…', '保存为文件…', '儲存為檔案…'],
+  'composer.save_pipeline': ['Save with pipeline…', '随流水线保存…',
+                             '隨管線儲存…'],
+  'composer.load_file': ['Load from file…', '从文件加载…', '從檔案載入…'],
+  'composer.load_pipeline': ['Load for pipeline…', '为流水线加载…',
+                             '為管線載入…'],
+  'composer.clear':     ['Clear all', '清空全部', '清空全部'],
+  'composer.empty':     ['Add a panel from the toolbar to compose a '
+                         + 'dashboard.', '从工具栏添加面板以组合仪表板。',
+                         '從工具列新增面板以組合儀表板。'],
+  'composer.float':     ['Float', '浮动', '浮動'],
+  'composer.dock_left': ['Dock left', '停靠左侧', '停靠左側'],
+  'composer.dock_right':['Dock right', '停靠右侧', '停靠右側'],
+  'composer.dock_top':  ['Dock top', '停靠顶部', '停靠頂部'],
+  'composer.dock_bottom': ['Dock bottom', '停靠底部', '停靠底部'],
+  'composer.maximize':  ['Maximize as background', '最大化为背景',
+                         '最大化為背景'],
+  'composer.restore':   ['Restore to window', '还原为窗口', '還原為視窗'],
+  'composer.replace_view': ['Replace view…', '替换视图…', '替換檢視…'],
+  'composer.close':     ['Close', '关闭', '關閉'],
+  'composer.no_pipeline': ['No pipeline available', '没有可用的流水线',
+                           '沒有可用的管線'],
+  'composer.no_saved':  ['No saved layout for a pipeline', '没有已保存的布局',
+                         '沒有已儲存的版面'],
+  'composer.layout_filter': ['Composer layout (*.json)',
+      '组合布局 (*.json)', '組合版面 (*.json)'],
+  'composer.save_file_title': ['Save composer layout', '保存组合布局',
+                               '儲存組合版面'],
+  'composer.load_file_title': ['Load composer layout', '加载组合布局',
+                               '載入組合版面'],
+  'composer.file_too_large': ['File too large', '文件过大', '檔案過大'],
+  'composer.save_pl_title': ['Save pipeline + layout — {id}',
+      '保存流水线 + 布局 — {id}', '儲存管線 + 版面 — {id}'],
+  'composer.saved_pl_path': ['Saved to {path}', '已保存到 {path}',
+                             '已儲存至 {path}'],
+  'composer.save_pl_failed': ['Save failed: {msg}', '保存失败：{msg}',
+                              '儲存失敗：{msg}'],
+  'composer.no_saved_pl': ['No saved arrangement for "{id}"',
+      '“{id}”没有已保存的布局', '「{id}」沒有已儲存的版面'],
+  'composer.loaded':    ['Layout loaded', '布局已加载', '版面已載入'],
+  'composer.load_failed': ['Load failed: {msg}', '加载失败：{msg}',
+                           '載入失敗：{msg}'],
+  'composer.confirm_clear': ['Remove all panels?', '移除所有面板？',
+                             '移除所有面板？'],
+
+  // ---- Session log view ----
+  'log.threshold':     ['Capture threshold (affects future messages only)',
+      '捕获阈值（仅影响后续消息）', '擷取門檻（僅影響後續訊息）'],
+  'log.set_level_failed': ['Set level failed: {msg}', '设置级别失败：{msg}',
+      '設定等級失敗：{msg}'],
+  'log.level':         ['Level', '级别', '等級'],
+
+  // ---- User I/O view ----
+  'userio.waiting':    ['(waiting for input request)', '（等待输入请求）',
+      '（等待輸入請求）'],
+  'userio.response_ph':['type a response…', '输入回复…', '輸入回覆…'],
+  'userio.newline':    [' new line', ' 换行', ' 換行'],
+  'userio.send_word':  [' send', ' 发送', ' 傳送'],
+  'userio.input_requested': ['Input requested:', '请求输入：', '請求輸入：'],
+  'userio.password_ph':['enter password…', '输入密码…', '輸入密碼…'],
+  'userio.media_ph':   ['type a response… (attach, drop or paste image/audio)',
+      '输入回复…（可附加、拖入或粘贴图片/音频）',
+      '輸入回覆…（可附加、拖入或貼上圖片/音訊）'],
+  'userio.image_preview': ['image preview', '图片预览', '圖片預覽'],
+  'userio.attach_image': ['Attach image', '附加图片', '附加圖片'],
+  'userio.attach_audio': ['Attach audio', '附加音频', '附加音訊'],
+  'userio.attach_unsupported': ['Unsupported file type: {name}',
+      '不支持的文件类型：{name}', '不支援的檔案類型：{name}'],
+  'userio.attach_failed': ['Failed to read file: {name}',
+      '读取文件失败：{name}', '讀取檔案失敗：{name}'],
+  'userio.attach_too_big': ['File too large: {name} (limit {mb} MB)',
+      '文件过大：{name}（上限 {mb} MB）',
+      '檔案過大：{name}（上限 {mb} MB）'],
+  'userio.markdown':   ['Markdown', 'Markdown', 'Markdown'],
+  'userio.thinking':   ['Thinking', '思考过程', '思考過程'],
+  'userio.thinking_title': ['Show the model’s reasoning '
+      + '("thinking") segments; when off they collapse to a 💭 glyph',
+      '显示模型的推理（思考）内容；关闭时折叠为 💭 图标',
+      '顯示模型的推理（思考）內容；關閉時摺疊為 💭 圖示'],
+  'userio.thinking_hidden': ['thinking hidden — enable the '
+      + 'Thinking toggle to view',
+      '思考内容已隐藏——打开“思考过程”开关可查看',
+      '思考內容已隱藏——開啟「思考過程」開關可檢視'],
+  'userio.interrupt':  ['Interrupt', '中断', '中斷'],
+  'userio.interrupt_title': ['Stop the work running right now (e.g. a '
+      + 'model’s reply) without ending the pipeline; whatever was '
+      + 'produced so far is kept',
+      '停止当前正在进行的工作（例如模型正在生成的回复），但不结束流水线；'
+      + '已生成的内容会保留',
+      '停止目前正在進行的工作（例如模型正在生成的回覆），但不結束管線；'
+      + '已產生的內容會保留'],
+  'userio.interrupted':['Interrupted {n} running task(s)',
+      '已中断 {n} 个正在运行的任务', '已中斷 {n} 個正在執行的工作'],
+  'userio.interrupt_idle': ['Nothing running to interrupt',
+      '当前没有可中断的任务', '目前沒有可中斷的工作'],
+  'userio.markdown_title': ['Render console text as simple Markdown '
+      + '(bold / italic / underline, headings, lists, code, tables)',
+      '将控制台文本渲染为简单 Markdown'
+      + '（粗体 / 斜体 / 下划线、标题、列表、代码、表格）',
+      '將主控台文字算繪為簡易 Markdown'
+      + '（粗體 / 斜體 / 底線、標題、清單、程式碼、表格）'],
+
+  // ---- HLS video view ----
+  'hls.select':        ['Select an HLS stream', '选择一个 HLS 流',
+      '選擇一個 HLS 串流'],
+  'hls.no_streams':    ['No active HLS streams. Launch a pipeline with an '
+      + '"hls-broadcast" stage, then Refresh.',
+      '没有活动的 HLS 流。请启动一个包含“hls-broadcast”阶段的管线，'
+      + '然后刷新。',
+      '沒有作用中的 HLS 串流。請啟動一個包含「hls-broadcast」階段的'
+      + '管線，然後重新整理。'],
+  'hls.list_failed':   ['Failed to list streams: {msg}', '获取流列表失败：{msg}',
+      '取得串流列表失敗：{msg}'],
+  'hls.playing':       ['HLS · {stage}', 'HLS · {stage}', 'HLS · {stage}'],
+  'hls.change_stream': ['Change stream', '切换流', '切換串流'],
+  'hls.playback_error':['Playback error', '播放错误', '播放錯誤'],
+  'hls.no_hls':        ['This browser cannot play HLS',
+      '此浏览器无法播放 HLS', '此瀏覽器無法播放 HLS'],
+  'hls.stream_error':  ['Stream error ({detail})', '流错误（{detail}）',
+      '串流錯誤（{detail}）'],
+  'hls.load_failed':   ['hls.js failed to load', 'hls.js 加载失败',
+      'hls.js 載入失敗'],
+
+  // ---- Stage-provided views (see stage-views.js) ----
+  // A view's own strings ship inside its module and are merged at load
+  // time; only the host's own failure message lives here.
+  'views.load_failed': ['Could not load the "{id}" view: {msg}',
+      '无法加载“{id}”视图：{msg}', '無法載入「{id}」檢視：{msg}'],
+
+  // ---- Status bar ----
+  'status.ane':          ['ANE', 'ANE', 'ANE'],
+  'status.gpu':          ['GPU', 'GPU', 'GPU'],
+  'status.gpu_mem':      ['GPU mem', '显存', '顯示記憶體'],
+  'status.mem':          ['MEM', '内存', '記憶體'],
+  'status.machine_title':['GPU / chip model', 'GPU / 芯片型号', 'GPU / 晶片型號'],
+  'status.progress':     ['WORK', '进度', '進度'],
+  'status.no_progress':  ['Nothing in progress', '暂无进行中的任务',
+      '目前沒有進行中的工作'],
+  'status.elapsed':      ['{t} elapsed', '已用 {t}', '已用 {t}'],
+  'status.eta_left':     ['{t} left', '剩余 {t}', '剩餘 {t}'],
+
+  // ---- Stage spec docs (overlay; see tOr) ----------------------------
+  // These translate the text authored in the C++ stage specs -- the stage
+  // display name and doc, every config key's doc, every port's doc -- which
+  // reaches the browser in English over /api/stage-types.
+  //
+  // The en-us slot is EMPTY on purpose. tOr() falls back to the string the
+  // API sent, which IS the C++ doc, so an English reader always sees the
+  // spec itself and a copy here could only go stale. It measurably did:
+  // when this table held English, 7 of its 34 spec entries had drifted from
+  // the source they were copied from, some by a whole clause. Leave the
+  // slot empty; translate the other two.
+  //
+  // Keys: cat.<category>, stage.<type>.name, stage.<type>.doc,
+  // cfg.<type>.<key>, port.<type>.<port>. A stage whose input and output
+  // ports share a name qualifies them, port.<type>.in.<port> /
+  // port.<type>.out.<port>, which the port lookup prefers (graph.js).
+  //
+  // cat.* keeps its English: its fallback is the raw category slug.
+
+  // Stage categories.
+  'cat.audio': ['Audio', '音频', '音訊'],
+  'cat.control': ['Control', '控制', '控制'],
+  'cat.database': ['Database', '数据库', '資料庫'],
+  'cat.generative': ['Generative', '生成', '生成'],
+  'cat.generic': ['Generic', '通用', '通用'],
+  'cat.model-specific-config': ['Model Config', '模型配置', '模型設定'],
+  'cat.network': ['Network', '网络', '網路'],
+  'cat.preparation': ['Preparation', '准备', '準備'],
+  'cat.text': ['Text', '文本', '文字'],
+  'cat.vision': ['Vision', '视觉', '視覺'],
+  'cat.visual': ['Visual', '影像', '影像'],
+
+  // ---- Audio Capture (audio) ----
+  'stage.audio-capture.name': ['', '音频采集', '音訊擷取'],
+  'stage.audio-capture.doc': ['',
+      '源：通过 FFmpeg avfoundation 采集麦克风 / 线路输入设备，每个音频数据'
+      + '包发出一个 EncodedSegment。仅 Apple 平台。无输入端口。',
+      '來源：透過 FFmpeg avfoundation 擷取麥克風 / 線路輸入裝置，每個音訊封'
+      + '包發出一個 EncodedSegment。僅 Apple 平台。無輸入埠。'],
+  'cfg.audio-capture.device_id': ['',
+      'avfoundation 设备索引（与 device_name 互斥）',
+      'avfoundation 裝置索引（與 device_name 互斥）'],
+  'cfg.audio-capture.device_name': ['',
+      'avfoundation 设备名称；不区分大小写的子串匹配（与 device_id 互斥）',
+      'avfoundation 裝置名稱；不區分大小寫的子字串比對（與 device_id 互斥）'],
+  'cfg.audio-capture.sample_rate': ['',
+      '请求的输入采样率（0 = 设备默认）',
+      '請求的輸入取樣率（0 = 裝置預設）'],
+  'cfg.audio-capture.channels': ['',
+      '请求的输入声道数（0 = 设备默认）',
+      '請求的輸入聲道數（0 = 裝置預設）'],
+  'cfg.audio-capture.reconnect_delay_ms': ['',
+      '出错后重新打开前的退避时间（毫秒）',
+      '出錯後重新開啟前的退避時間（毫秒）'],
+  'cfg.audio-capture.oport_depth': ['',
+      '输出环形缓冲深度（丢弃最旧）',
+      '輸出環形緩衝深度（丟棄最舊）'],
+  'port.audio-capture.audio': ['',
+      '每个音频数据包一个 EncodedSegment（原始 PCM，设备原生采样率）；下游'
+      + '接 audio-to-pcm',
+      '每個音訊封包一個 EncodedSegment（原始 PCM，裝置原生取樣率）；下游接 '
+      + 'audio-to-pcm'],
+
+  // ---- Audio Segment (VAD) (audio) ----
+  'stage.audio-segment.name': ['', '音频分段 (VAD)', '音訊分段 (VAD)'],
+  'stage.audio-segment.doc': ['',
+      'Silero-VAD 语音分段器：在单声道 PCM 流上做窗口/步长的语音活动检测，'
+      + '配合一个带迟滞的有限状态机，发出 [start_us,end_us) 的语段标记，供'
+      + '下游切片器使用（例如流式的 audio-transcribe）。输出端口上不流动 '
+      + 'PCM。',
+      'Silero-VAD 語音分段器：在單聲道 PCM 串流上做視窗/跳距的語音活動偵測'
+      + '，配合一個帶遲滯的有限狀態機，發出 [start_us,end_us) 的語段標記，'
+      + '供下游切片器使用（例如串流的 audio-transcribe）。輸出埠上不流動 '
+      + 'PCM。'],
+  'cfg.audio-segment.model_path': ['',
+      'Silero VAD 模型：models 数据库中的键（由 model-fetch 注册）或一个 '
+      + '.mlpackage / .mlmodelc 目录；同名时数据库键优先于路径',
+      'Silero VAD 模型：models 資料庫中的鍵（由 model-fetch 註冊）或一個 '
+      + '.mlpackage / .mlmodelc 目錄；同名時資料庫鍵優先於路徑'],
+  'cfg.audio-segment.compute_units': ['',
+      '0=仅 CPU  1=CPU+GPU  2=全部  3=CPU+ANE',
+      '0=僅 CPU  1=CPU+GPU  2=全部  3=CPU+ANE'],
+  'cfg.audio-segment.sample_rate': ['',
+      '预期的输入采样率（Hz），[8000,48000]',
+      '預期的輸入取樣率（Hz），[8000,48000]'],
+  'cfg.audio-segment.window_samples': ['',
+      '每次推理的输入长度，[32,1048576]',
+      '每次推理的輸入長度，[32,1048576]'],
+  'cfg.audio-segment.hop_samples': ['',
+      '每次推理前进多少采样，[1,window_samples]',
+      '每次推理前進多少取樣，[1,window_samples]'],
+  'cfg.audio-segment.speech_threshold': ['',
+      'VAD 概率大于等于该值即进入候选语音态',
+      'VAD 機率大於等於該值即進入候選語音態'],
+  'cfg.audio-segment.silence_threshold': ['',
+      'VAD 概率小于该值即进入候选静音态（须小于 speech_threshold）',
+      'VAD 機率小於該值即進入候選靜音態（須小於 speech_threshold）'],
+  'cfg.audio-segment.min_speech_ms': ['',
+      '候选语音持续多少毫秒后才开启一个语段',
+      '候選語音持續多少毫秒後才開啟一個語段'],
+  'cfg.audio-segment.min_silence_ms': ['',
+      '候选静音持续多少毫秒后才关闭一个语段',
+      '候選靜音持續多少毫秒後才關閉一個語段'],
+  'cfg.audio-segment.max_segment_s': ['',
+      '超过该时长即强制关闭（标记为不完整），(0,120]',
+      '超過該長度即強制關閉（標記為不完整），(0,120]'],
+  'cfg.audio-segment.pre_pad_ms': ['',
+      '把语段起点往前拉多少毫秒',
+      '把語段起點往前拉多少毫秒'],
+  'cfg.audio-segment.post_pad_ms': ['',
+      '把语段终点往后推多少毫秒',
+      '把語段終點往後推多少毫秒'],
+  'cfg.audio-segment.input_feature_name': ['',
+      'PCM 输入特征名',
+      'PCM 輸入特徵名'],
+  'cfg.audio-segment.prob_feature_name': ['',
+      'VAD 概率输出特征名',
+      'VAD 機率輸出特徵名'],
+  'cfg.audio-segment.state_h_in_name': ['',
+      'LSTM 隐状态输入名',
+      'LSTM 隱狀態輸入名'],
+  'cfg.audio-segment.state_c_in_name': ['',
+      'LSTM 细胞状态输入名',
+      'LSTM 記憶單元狀態輸入名'],
+  'cfg.audio-segment.state_h_out_name': ['',
+      '下一步的 LSTM 隐状态输出名',
+      '下一步的 LSTM 隱狀態輸出名'],
+  'cfg.audio-segment.state_c_out_name': ['',
+      '下一步的 LSTM 细胞状态输出名',
+      '下一步的 LSTM 記憶單元狀態輸出名'],
+  'cfg.audio-segment.sr_feature_name': ['',
+      'int32 采样率输入特征名；留空则禁用',
+      'int32 取樣率輸入特徵名；留空則停用'],
+  'cfg.audio-segment.state_h_shape': ['',
+      'LSTM 隐状态张量形状（例如 [1,128] 或 [2,1,64]）',
+      'LSTM 隱狀態張量形狀（例如 [1,128] 或 [2,1,64]）'],
+  'cfg.audio-segment.state_c_shape': ['',
+      'LSTM 细胞状态张量形状（例如 [1,128] 或 [2,1,64]）',
+      'LSTM 記憶單元狀態張量形狀（例如 [1,128] 或 [2,1,64]）'],
+  'port.audio-segment.audio': ['',
+      '单声道 F32 PCM TensorBeat [N] 或 [1,N]；语段时间由 '
+      + 'sideband.timestamp_us 驱动',
+      '單聲道 F32 PCM TensorBeat [N] 或 [1,N]；語段時間由 '
+      + 'sideband.timestamp_us 驅動'],
+  'port.audio-segment.segments': ['',
+      '每关闭一个语段发出一个 FlexData：{start_us, end_us, index, '
+      + 'is_partial}；只是时间标记，不含 PCM',
+      '每關閉一個語段發出一個 FlexData：{start_us, end_us, index, '
+      + 'is_partial}；只是時間標記，不含 PCM'],
+
+  // ---- Audio Tagging (audio) ----
+  'stage.audio-tagging.name': ['', '音频标注', '音訊標註'],
+  'stage.audio-tagging.doc': ['',
+      '在滑动的 PCM 窗口上运行 AudioSet 标注模型（CoreML；按 model_kind 选'
+      + '择 CED-base 或 BEATs），每个窗口发出得分最高的 k 个类别标签。',
+      '在滑動的 PCM 視窗上執行 AudioSet 標註模型（CoreML；按 model_kind 選'
+      + '擇 CED-base 或 BEATs），每個視窗發出得分最高的 k 個類別標籤。'],
+  'cfg.audio-tagging.model_path': ['',
+      'AudioSet 标注模型：models 数据库中的键（由 model-fetch 注册，例如 '
+      + 'BEATs 补充模型）或一个 .mlpackage / .mlmodelc 目录；同名时数据库键'
+      + '优先于路径',
+      'AudioSet 標註模型：models 資料庫中的鍵（由 model-fetch 註冊，例如 '
+      + 'BEATs 補充模型）或一個 .mlpackage / .mlmodelc 目錄；同名時資料庫鍵'
+      + '優先於路徑'],
+  'cfg.audio-tagging.model_kind': ['',
+      '模型族："beats" | "ced"（决定标签表与形状默认值）',
+      '模型族："beats" | "ced"（決定標籤表與形狀預設值）'],
+  'cfg.audio-tagging.compute_units': ['',
+      '0=仅 CPU  1=CPU+GPU  2=全部  3=CPU+ANE',
+      '0=僅 CPU  1=CPU+GPU  2=全部  3=CPU+ANE'],
+  'cfg.audio-tagging.sample_rate': ['',
+      '预期的输入采样率（Hz），[8000,48000]',
+      '預期的輸入取樣率（Hz），[8000,48000]'],
+  'cfg.audio-tagging.window_seconds': ['',
+      '窗口长度（秒），(0,60]（beats：10，ced：5）',
+      '視窗長度（秒），(0,60]（beats：10，ced：5）'],
+  'cfg.audio-tagging.hop_seconds': ['',
+      '每次运行前进多少秒，(0,窗口长度]（beats：8，ced：4）',
+      '每次執行前進多少秒，(0,視窗長度]（beats：8，ced：4）'],
+  'cfg.audio-tagging.top_k': ['',
+      '每个窗口输出多少个标签，>= 1',
+      '每個視窗輸出多少個標籤，>= 1'],
+  'cfg.audio-tagging.score_threshold': ['',
+      '丢弃概率低于该值的标签，[0,1]',
+      '丟棄機率低於該值的標籤，[0,1]'],
+  'port.audio-tagging.pcm': ['',
+      '单声道 F32 16 kHz PCM TensorBeat [N] 或 [1,N]；边带的 timestamp_us/'
+      + 'sample_rate 会被采用',
+      '單聲道 F32 16 kHz PCM TensorBeat [N] 或 [1,N]；邊帶的 timestamp_us/'
+      + 'sample_rate 會被採用'],
+  'port.audio-tagging.tags': ['',
+      '每个窗口一个 FlexData：得分最高的 top_k 个 AudioSet 标签 {label,'
+      + 'index,score} + 窗口元数据',
+      '每個視窗一個 FlexData：得分最高的 top_k 個 AudioSet 標籤 {label,'
+      + 'index,score} + 視窗中繼資料'],
+
+  // ---- Audio Temporal Resample (audio) ----
+  'stage.audio-temporal-resample.name': ['',
+      '音频时间重采样',
+      '音訊時間重新取樣'],
+  'stage.audio-temporal-resample.doc': ['',
+      '通过一条 FFmpeg 滤镜链把 PCM 重采样到另一个采样率和/或速度，音高可以'
+      + '保持不变、跟随速度变化，或按指定的半音数升高或降低。',
+      '透過一條 FFmpeg 濾鏡鏈把 PCM 重新取樣到另一個取樣率和/或速度，音高可'
+      + '以保持不變、跟隨速度變化，或按指定的半音數升高或降低。'],
+  'cfg.audio-temporal-resample.output_sample_rate': ['',
+      '要重采样到的目标采样率——它是时间分辨率，既不改变时长也不改变音高。0'
+      + '（默认）保持输入的采样率。这是模型会强制要求的那个旋钮：MiniMax-H3'
+      + ' 的音频 VAE 只读 32000，Qwen3-ASR 只读 16000',
+      '要重新取樣到的目標取樣率——它是時間解析度，既不改變長度也不改變音高。'
+      + '0（預設）保持輸入的取樣率。這是模型會強制要求的那個旋鈕：'
+      + 'MiniMax-H3 的音訊 VAE 只讀 32000，Qwen3-ASR 只讀 16000'],
+  'cfg.audio-temporal-resample.speed': ['',
+      '时长因子：输出的时长是输入的 1/speed。2.0 是两倍快，0.5 是一半。音高'
+      + '会怎样是 `pitch` 的事，与这一项无关。默认 1.0',
+      '長度因子：輸出的長度是輸入的 1/speed。2.0 是兩倍快，0.5 是一半。音高'
+      + '會怎樣是 `pitch` 的事，與這一項無關。預設 1.0'],
+  'cfg.audio-temporal-resample.pitch': ['',
+      '"maintain"（默认）在时长变化时保持音高——WSOLA 时间伸缩（ffmpeg 的 `'
+      + 'atempo`），这正是让人声仍然可辨的做法。"follow" 让音高跟着速度走，'
+      + '变成花栗鼠音或拖腔：磁带式行为，而且不费什么——因为它只是一次重采样'
+      + '而已。"raise" / "lower" 按 `pitch_semitones` 独立于速度做移调，因'
+      + '此两个旋钮可以叠加',
+      '"maintain"（預設）在長度變化時保持音高——WSOLA 時間伸縮（ffmpeg 的 `'
+      + 'atempo`），這正是讓人聲仍然可辨的做法。"follow" 讓音高跟著速度走，'
+      + '變成花栗鼠音或拖腔：磁帶式行為，而且不費什麼——因為它只是一次重新取'
+      + '樣而已。"raise" / "lower" 按 `pitch_semitones` 獨立於速度做移調，'
+      + '因此兩個旋鈕可以疊加'],
+  'cfg.audio-temporal-resample.pitch_semitones': ['',
+      '`raise` / `lower` 移调多少，按十二平均律的半音计（12 = 一个八度）。'
+      + '对这两者必须为正——方向已经写在 `pitch` 里，这里再用正负号就会出现'
+      + '同一个请求的两种写法，还多出一种一不小心互相抵消的可能。maintain /'
+      + ' follow 会忽略它',
+      '`raise` / `lower` 移調多少，按十二平均律的半音計（12 = 一個八度）。'
+      + '對這兩者必須為正——方向已經寫在 `pitch` 裡，這裡再用正負號就會出現'
+      + '同一個請求的兩種寫法，還多出一種一不小心互相抵銷的可能。maintain /'
+      + ' follow 會忽略它'],
+  'cfg.audio-temporal-resample.stacked': ['',
+      'false（默认）：每个节拍一段 PCM，输出端口自成一个时钟域，因为速度变'
+      + '化并不是一个节拍进、一个节拍出。true：整段波形装在一个节拍里——即 `'
+      + 'temporal-stack` 构建的形状——于是本阶段是 1:1 的，输出端口与输入端'
+      + '口共用时钟，不跨越任何时钟域。这是声明出来的而不是探测出来的：时钟'
+      + '分析在启动时就运行，那时还没有任何节拍存在',
+      'false（預設）：每個節拍一段 PCM，輸出埠自成一個時脈域，因為速度變化'
+      + '並不是一個節拍進、一個節拍出。true：整段波形裝在一個節拍裡——即 `'
+      + 'temporal-stack` 建構的形狀——於是本階段是 1:1 的，輸出埠與輸入埠共'
+      + '用時脈，不跨越任何時脈域。這是宣告出來的而不是探測出來的：時脈分析'
+      + '在啟動時就執行，那時還沒有任何節拍存在'],
+  'port.audio-temporal-resample.in.pcm': ['',
+      'f32 PCM TensorBeat，单声道 [N] 或平面的 [C, N]，边带带 `sample_rate`',
+      'f32 PCM TensorBeat，單聲道 [N] 或平面的 [C, N]，邊帶帶 `sample_rate`'],
+  'port.audio-temporal-resample.out.pcm': ['',
+      '同样的布局，位于 `output_sample_rate`，边带中的采样率与时长已重写。'
+      + '流式情形下，分块长度由滤镜自己决定。声明的时钟组是流式情形下的答案'
+      + '；`stacked` 时 oport_clock_group() 与输入端口共用时钟',
+      '同樣的版面，位於 `output_sample_rate`，邊帶中的取樣率與長度已重寫。'
+      + '串流情形下，分塊長度由濾鏡自己決定。宣告的時脈組是串流情形下的答案'
+      + '；`stacked` 時 oport_clock_group() 與輸入埠共用時脈'],
+
+  // ---- Audio → PCM (audio) ----
+  'stage.audio-to-pcm.name': ['', '音频流 → PCM', '音訊串流 → PCM'],
+  'stage.audio-to-pcm.doc': ['',
+      '解码音频 EncodedSegment 并重采样为 output_sample_rate 上的 F32 PCM（'
+      + '单声道，或平面立体声），按固定时长分块发出。跨越“数据包速率 -> 分'
+      + '块速率”两个时钟域。',
+      '解碼音訊 EncodedSegment 並重新取樣為 output_sample_rate 上的 F32 PCM'
+      + '（單聲道，或平面立體聲），按固定長度分塊發出。跨越「封包速率 -> 分'
+      + '塊速率」兩個時脈域。'],
+  'cfg.audio-to-pcm.output_sample_rate': ['',
+      '重采样目标频率（Hz），[1000,384000]',
+      '重新取樣目標頻率（Hz），[1000,384000]'],
+  'cfg.audio-to-pcm.channels': ['',
+      '输出声道数，1（单声道，默认）或 2（立体声）。单声道发出 [N]；立体声'
+      + '发出平面的 [2, N]——声道优先，也就是本代码树中所有平面 PCM 消费者读'
+      + '取的布局，而不是重采样器内部产生的 LRLR 交织格式。下混为单声道是有'
+      + '损的，而这对某些消费者很要紧：以单声道送给 MiniMax-H3 的参考音轨会'
+      + '被复制上混回去，于是本来有立体声像的文件，左右两路却完全相同',
+      '輸出聲道數，1（單聲道，預設）或 2（立體聲）。單聲道發出 [N]；立體聲'
+      + '發出平面的 [2, N]——聲道優先，也就是本程式碼樹中所有平面 PCM 消費者'
+      + '讀取的版面，而不是重新取樣器內部產生的 LRLR 交錯格式。下混為單聲道'
+      + '是失真的，而這對某些消費者很要緊：以單聲道送給 MiniMax-H3 的參考音'
+      + '軌會被複製上混回去，於是本來有立體聲像的檔案，左右兩路卻完全相同'],
+  'cfg.audio-to-pcm.chunk_duration_s': ['',
+      '每次发出的分块最短秒数，(0,600]',
+      '每次發出的分塊最短秒數，(0,600]'],
+  'cfg.audio-to-pcm.chunk_overlap_s': ['',
+      '每个发出的分块保留多少秒，好让下一个分块以它们开头——这段上下文让消费'
+      + '者能看到紧接其前的内容。必须小于 chunk_duration_s。此后每个节拍前'
+      + '进 (chunk_duration_s - chunk_overlap_s)，因此 N 个分块覆盖的音频少'
+      + '于 N x chunk_duration_s。0（默认）= 相邻分块不共享任何内容',
+      '每個發出的分塊保留多少秒，好讓下一個分塊以它們開頭——這段上下文讓消費'
+      + '者能看到緊接其前的內容。必須小於 chunk_duration_s。此後每個節拍前'
+      + '進 (chunk_duration_s - chunk_overlap_s)，因此 N 個分塊涵蓋的音訊少'
+      + '於 N x chunk_duration_s。0（預設）= 相鄰分塊不共用任何內容'],
+  'cfg.audio-to-pcm.max_chunk_duration_s': ['',
+      '分块秒数的硬上限；须大于等于 chunk_duration_s',
+      '分塊秒數的硬上限；須大於等於 chunk_duration_s'],
+  'cfg.audio-to-pcm.oport_capacity': ['',
+      '输出端口缓冲深度（以分块计），须大于等于 1',
+      '輸出埠緩衝深度（以分塊計），須大於等於 1'],
+  'cfg.audio-to-pcm.flush_on_eos': ['',
+      '源关闭时把不完整的分块也发出去',
+      '來源關閉時把不完整的分塊也發出去'],
+  'cfg.audio-to-pcm.emit_log_every': ['',
+      '每发出第 N 个分块记录一行 INFO 日志（须大于等于 1）',
+      '每發出第 N 個分塊記錄一行 INFO 日誌（須大於等於 1）'],
+  'port.audio-to-pcm.audio': ['',
+      'kind=Audio 的 EncodedSegment（例如来自 rtsp-capture 的 AAC，或原始 '
+      + 'PCM）',
+      'kind=Audio 的 EncodedSegment（例如來自 rtsp-capture 的 AAC，或原始 '
+      + 'PCM）'],
+  'port.audio-to-pcm.pcm': ['',
+      '位于 output_sample_rate 上的 F32 PCM TensorBeat——单声道为 [N]，'
+      + 'channels=2 时为平面的 [2, N]；边带带 ts/sr/duration',
+      '位於 output_sample_rate 上的 F32 PCM TensorBeat——單聲道為 [N]，'
+      + 'channels=2 時為平面的 [2, N]；邊帶帶 ts/sr/duration'],
+
+  // ---- Transcribe (audio) ----
+  'stage.audio-transcribe.name': ['', '语音转录', '語音轉錄'],
+  'stage.audio-transcribe.doc': ['',
+      '用 Qwen3-ASR 语言模型（编码器 + 贪心/采样解码）转录每段传入的 PCM 音'
+      + '频，通过界面委托记录转录文本，并在 0 号输出端口以 FlexData {text[,'
+      + ' start_us, end_us]} 的形式发出。',
+      '用 Qwen3-ASR 語言模型（編碼器 + 貪婪/取樣解碼）轉錄每段傳入的 PCM 音'
+      + '訊，透過介面委派記錄轉錄文字，並在 0 號輸出埠以 FlexData {text[, '
+      + 'start_us, end_us]} 的形式發出。'],
+  'cfg.audio-transcribe.hf_dir': ['',
+      'ASR 语言模型：models 数据库中的键（由 model-fetch 注册的 '
+      + 'huggingface.co 路径），或一个文件系统路径。同名时数据库键优先于路'
+      + '径。',
+      'ASR 語言模型：models 資料庫中的鍵（由 model-fetch 註冊的 '
+      + 'huggingface.co 路徑），或一個檔案系統路徑。同名時資料庫鍵優先於路'
+      + '徑。'],
+  'cfg.audio-transcribe.compute_dtype': ['',
+      'bf16 | f16 | f32',
+      'bf16 | f16 | f32'],
+  'cfg.audio-transcribe.page_tokens': ['',
+      'ContextManager 的 K/V 分页大小',
+      'ContextManager 的 K/V 分頁大小'],
+  'cfg.audio-transcribe.max_pages': ['',
+      '每个语言模型的分页池容量（>= 1）',
+      '每個語言模型的分頁池容量（>= 1）'],
+  'cfg.audio-transcribe.max_new_tokens': ['',
+      '每段音频的生成预算（>= 1）',
+      '每段音訊的生成預算（>= 1）'],
+  'cfg.audio-transcribe.sample_rate': ['',
+      '边带没有 sample_rate 时使用的后备采样率（Hz，>= 1）',
+      '邊帶沒有 sample_rate 時使用的後備取樣率（Hz，>= 1）'],
+  'cfg.audio-transcribe.language_hint': ['',
+      '非空时会先发出 \'language X\'，使模型只生成转录文本',
+      '非空時會先發出 \'language X\'，使模型只產生轉錄文字'],
+  'cfg.audio-transcribe.pcm_buffer_s': ['',
+      '流式模式下滚动 PCM 缓冲区的长度（秒），(0,300]',
+      '串流模式下滾動 PCM 緩衝區的長度（秒），(0,300]'],
+  'cfg.audio-transcribe.late_marker_skip': ['',
+      '丢弃起点已早于缓冲区范围的分段标记',
+      '丟棄起點已早於緩衝區範圍的分段標記'],
+  'port.audio-transcribe.audio': ['',
+      '单声道 F32 PCM TensorBeat [N] 或 [1,N]；块模式下每个节拍一段音频，流'
+      + '式模式下是连续的 PCM 流；sideband.sample_rate 会被采用',
+      '單聲道 F32 PCM TensorBeat [N] 或 [1,N]；區塊模式下每個節拍一段音訊，'
+      + '串流模式下是連續的 PCM 串流；sideband.sample_rate 會被採用'],
+  'port.audio-transcribe.segments': ['',
+      '可选的 FlexData 语段标记 {start_us,end_us,index,is_partial}（例如来'
+      + '自 audio-segment）；接上它会把本阶段切换到流式模式（按标记从滚动 '
+      + 'PCM 缓冲区中切片）',
+      '可選的 FlexData 語段標記 {start_us,end_us,index,is_partial}（例如來'
+      + '自 audio-segment）；接上它會把本階段切換到串流模式（按標記從滾動 '
+      + 'PCM 緩衝區中切片）'],
+  'port.audio-transcribe.sampler': ['',
+      '可选的 token 采样器配置 FlexData（sampler-select）。在第一个节拍时锁'
+      + '存，之后每段音频都沿用；未接线 = 贪心（argmax）解码',
+      '可選的 token 取樣器組態 FlexData（sampler-select）。在第一個節拍時鎖'
+      + '存，之後每段音訊都沿用；未接線 = 貪婪（argmax）解碼'],
+  'port.audio-transcribe.transcript': ['',
+      '每段转录完成的音频一个 FlexData {text, start_us, end_us}（start_us/'
+      + 'end_us 仅在流式模式下出现）。可选——不接也没问题（转录文本仍会记录'
+      + '）。',
+      '每段轉錄完成的音訊一個 FlexData {text, start_us, end_us}（start_us/'
+      + 'end_us 僅在串流模式下出現）。可選——不接也沒問題（轉錄文字仍會記錄'
+      + '）。'],
+
+  // ---- Load Audio (audio) ----
+  'stage.load-audio.name': ['', '加载音频', '載入音訊'],
+  'stage.load-audio.doc': ['',
+      '源：解复用音频文件或 URL，逐个节拍发出其编码数据包——相当于 '
+      + 'rtsp-capture 音频输出端口的文件版。下游接 audio-to-pcm，由它解码并'
+      + '重采样。',
+      '來源：解多工音訊檔案或 URL，逐個節拍發出其編碼封包——相當於 '
+      + 'rtsp-capture 音訊輸出埠的檔案版。下游接 audio-to-pcm，由它解碼並重'
+      + '新取樣。'],
+  'cfg.load-audio.input_url': ['',
+      '音频文件路径或网络 URL。所安装的 FFmpeg 能解复用的任何容器与编码格式'
+      + '——mp3、m4a/aac、flac、wav、ogg、opus，或视频文件中的音频轨',
+      '音訊檔案路徑或網路 URL。所安裝的 FFmpeg 能解多工的任何容器與編碼格式'
+      + '——mp3、m4a/aac、flac、wav、ogg、opus，或影片檔案中的音訊軌'],
+  'cfg.load-audio.stream_index': ['',
+      '要读取的流的绝对索引（按 ffprobe 的编号，包含视频流在内），而不是第 '
+      + 'N 条音频流；-1（默认）取文件中的第一条音频流',
+      '要讀取的串流絕對索引（按 ffprobe 的編號，包含視訊串流在內），而不是'
+      + '第 N 條音訊串流；-1（預設）取檔案中的第一條音訊串流'],
+  'cfg.load-audio.start_s': ['',
+      '读取第一个数据包前先定位到该媒体时间（自文件开头起的秒数）；0（默认'
+      + '）从头开始。精度到数据包：第一个采样与请求位置的偏差不超过一个数据'
+      + '包',
+      '讀取第一個封包前先定位到該媒體時間（自檔案開頭起的秒數）；0（預設）'
+      + '從頭開始。精度到封包：第一個取樣與請求位置的偏差不超過一個封包'],
+  'cfg.load-audio.duration_s': ['',
+      '在 start_s 之后这么多秒处停止；0（默认）读到文件结尾。跨越终点的那个'
+      + '数据包会被完整发出，因此窗口可能多出一个数据包',
+      '在 start_s 之後這麼多秒處停止；0（預設）讀到檔案結尾。跨越終點的那個'
+      + '封包會被完整發出，因此視窗可能多出一個封包'],
+  'cfg.load-audio.read_timeout_ms': ['',
+      '网络打开/读取超时，单位毫秒；0 = 不限时',
+      '網路開啟/讀取逾時，單位毫秒；0 = 不限時'],
+  'cfg.load-audio.options': ['',
+      '传给解复用器 open 的额外 av_dict 选项',
+      '傳給解多工器 open 的額外 av_dict 選項'],
+  'port.load-audio.audio': ['',
+      '每个节拍一个编码数据包，形式为 kind=Audio 的 EncodedSegment，携带该'
+      + '流的 codec_id / sample_rate / channels / extradata。请接到 '
+      + 'audio-to-pcm，由它负责解码与重采样',
+      '每個節拍一個編碼封包，形式為 kind=Audio 的 EncodedSegment，攜帶該串'
+      + '流的 codec_id / sample_rate / channels / extradata。請接到 '
+      + 'audio-to-pcm，由它負責解碼與重新取樣'],
+
+  // ---- Save Audio (audio) ----
+  'stage.save-audio.name': ['', '保存音频', '儲存音訊'],
+  'stage.save-audio.doc': ['',
+      '汇聚节点：把每段传入的 PCM（一个节拍 = 一段音频）编码成文件：经 '
+      + 'FFmpeg 输出 AAC / MP3 / M4A，或直接写 16 位 WAV。它是 save-image '
+      + '的音频对应物，与 text-to-speech 配套。多个节拍会在扩展名之前追加递'
+      + '增编号。',
+      '匯聚節點：把每段傳入的 PCM（一個節拍 = 一段音訊）編碼成檔案：經 '
+      + 'FFmpeg 輸出 AAC / MP3 / M4A，或直接寫 16 位元 WAV。它是 save-image'
+      + ' 的音訊對應物，與 text-to-speech 配套。多個節拍會在副檔名之前附加'
+      + '遞增編號。'],
+  'cfg.save-audio.output_path': ['',
+      '输出文件路径；没有扩展名时会按 `format` 补上一个。路径中的 printf '
+      + '整数格式（clip-%03d.wav）用于给音频片段编号，%t 则填入本地时间'
+      + '（%t{...} 可写 strftime 格式）；没有整数格式时，同一次运行中的'
+      + '第二个及以后的片段会加 -NNN 序号',
+      '輸出檔案路徑；沒有副檔名時會按 `format` 補上一個。路徑中的 printf '
+      + '整數格式（clip-%03d.wav）用於給音訊片段編號，%t 則填入本地時間'
+      + '（%t{...} 可寫 strftime 格式）；沒有整數格式時，同一次執行中的'
+      + '第二個及以後的片段會加 -NNN 序號'],
+  'cfg.save-audio.no_overwrite': ['',
+      '绝不覆盖已存在的文件：序号从磁盘上所有已占用的名字之后开始，而不是'
+      + '从 0 开始。默认关闭，因为通常的流水线希望每次运行都重写同一个文件',
+      '絕不覆蓋已存在的檔案：序號從磁碟上所有已占用的名字之後開始，而不是'
+      + '從 0 開始。預設關閉，因為通常的管線希望每次執行都重寫同一個檔案'],
+  'cfg.save-audio.format': ['',
+      'wav | aac | mp3 | m4a（m4a => mp4 容器中的 AAC）。默认：从 '
+      + 'output_path 的扩展名推断，否则为 wav',
+      'wav | aac | mp3 | m4a（m4a => mp4 容器中的 AAC）。預設：從 '
+      + 'output_path 的副檔名推斷，否則為 wav'],
+  'cfg.save-audio.bitrate': ['',
+      'AAC / MP3 的目标比特率（比特/秒）',
+      'AAC / MP3 的目標位元率（位元/秒）'],
+  'cfg.save-audio.sample_rate': ['',
+      '0 = 使用负载中的 sideband.sample_rate；两者都没有时用 24000',
+      '0 = 使用負載中的 sideband.sample_rate；兩者都沒有時用 24000'],
+  'port.save-audio.pcm': ['',
+      'f32 PCM 的 TensorBeat，秩为 1 的 [采样数]（单声道）或秩为 2 的 [声道'
+      + '数, 采样数]；sideband.sample_rate 会被采用。每个节拍是一段完整的音'
+      + '频。',
+      'f32 PCM 的 TensorBeat，秩為 1 的 [取樣數]（單聲道）或秩為 2 的 [聲道'
+      + '數, 取樣數]；sideband.sample_rate 會被採用。每個節拍是一段完整的音'
+      + '訊。'],
+  'port.save-audio.info': ['',
+      '可选的 FlexData 对象，描述刚写出的文件：{path, format, samples, '
+      + 'sample_rate, duration_s}。下游消费者是可选的。',
+      '可選的 FlexData 物件，描述剛寫出的檔案：{path, format, samples, '
+      + 'sample_rate, duration_s}。下游消費者是可選的。'],
+
+  // ---- Buffer (control) ----
+  'stage.buffer.name': ['', '缓冲寄存器', '緩衝暫存器'],
+  'stage.buffer.doc': ['',
+      '单节拍采样保持寄存器。`advance` 把下一个 `in` 节拍读入 1 节拍缓冲区'
+      + '（丢弃原先保存的内容）；`emit` 把缓冲的节拍复制一份送到 `out`。用'
+      + '于解耦上下游的速率：推进快于发出会丢弃输入，发出快于推进则重复保持'
+      + '的节拍。',
+      '單節拍取樣保持暫存器。`advance` 把下一個 `in` 節拍讀入 1 節拍緩衝區'
+      + '（丟棄原先保存的內容）；`emit` 把緩衝的節拍複製一份送到 `out`。用'
+      + '於解耦上下游的速率：推進快於發出會丟棄輸入，發出快於推進則重複保持'
+      + '的節拍。'],
+  'port.buffer.in': ['',
+      '任意节拍；每次 advance 触发采样一个进入 1 节拍缓冲区',
+      '任意節拍；每次 advance 觸發取樣一個進入 1 節拍緩衝區'],
+  'port.buffer.advance': ['',
+      '任意节拍；每一个都把下一个 `in` 节拍读入缓冲区，替换（丢弃）此前保持'
+      + '的节拍',
+      '任意節拍；每一個都把下一個 `in` 節拍讀入緩衝區，取代（丟棄）此前保持'
+      + '的節拍'],
+  'port.buffer.emit': ['',
+      '任意节拍；每一个都把缓冲的节拍复制一份送到 `out`（若尚未缓冲过任何节'
+      + '拍，则不发出）',
+      '任意節拍；每一個都把緩衝的節拍複製一份送到 `out`（若尚未緩衝過任何節'
+      + '拍，則不發出）'],
+  'port.buffer.out': ['',
+      '缓冲节拍的副本，每次 emit 触发一个',
+      '緩衝節拍的副本，每次 emit 觸發一個'],
+
+  // ---- call (control) ----
+  'stage.call.doc': ['',
+      '把另一条流水线当作函数调用：call 阶段的输入/输出端口连到被调流水线的'
+      + '输入/输出端口，运行时在启动时将其内联展开。纯结构性阶段——它本身从'
+      + '不运行。',
+      '把另一條管線當作函式呼叫：call 階段的輸入/輸出埠連到被呼叫管線的輸入'
+      + '/輸出埠，執行階段在啟動時將其內聯展開。純結構性階段——它本身從不執'
+      + '行。'],
+  'cfg.call.pipeline': ['',
+      '要内联的被调流水线 id',
+      '要內聯的被呼叫管線 id'],
+  'cfg.call.num_oports': ['',
+      '输出端口数量；必须等于 callee.num_oports()',
+      '輸出埠數量；必須等於 callee.num_oports()'],
+
+  // ---- Timer (control) ----
+  'stage.chrono.name': ['', '定时器', '計時器'],
+  'stage.chrono.doc': ['',
+      '周期性源：以固定速率（frequency_hz 或 period_*）发出 TriggerBeat，可'
+      + '限定次数。',
+      '週期性來源：以固定速率（frequency_hz 或 period_*）發出 TriggerBeat，'
+      + '可限定次數。'],
+  'cfg.chrono.frequency_hz': ['',
+      '每秒滴答次数；与 period_* 互斥',
+      '每秒滴答次數；與 period_* 互斥'],
+  'cfg.chrono.period_seconds': ['',
+      '周期中的秒数部分（period_* 各项相加）',
+      '週期中的秒數部分（period_* 各項相加）'],
+  'cfg.chrono.period_minutes': ['', '周期中的分钟部分', '週期中的分鐘部分'],
+  'cfg.chrono.period_hours': ['', '周期中的小时部分', '週期中的小時部分'],
+  'cfg.chrono.period_days': ['', '周期中的天数部分', '週期中的天數部分'],
+  'cfg.chrono.count': ['',
+      '发出多少个节拍后结束；0 = 永不停止',
+      '發出多少個節拍後結束；0 = 永不停止'],
+  'port.chrono.tick': ['', '周期性的 TriggerBeat', '週期性的 TriggerBeat'],
+
+  // ---- External Input (control) ----
+  'stage.external-input.name': ['', '外部输入', '外部輸入'],
+  'stage.external-input.doc': ['',
+      '源：来自管线外部的节拍。每条 `push` 命令把调用方的张量复制成一个节拍'
+      + '发出；每条 `lease` 把一个可写节拍交给调用方原地填写，命令关闭时发出'
+      + '；`finish` 结束流。由 C++ / Python API 驱动。',
+      '來源：來自管線外部的節拍。每條 `push` 命令把呼叫方的張量複製成一個節拍'
+      + '發出；每條 `lease` 把一個可寫節拍交給呼叫方原地填寫，命令關閉時發出'
+      + '；`finish` 結束串流。由 C++ / Python API 驅動。'],
+  'port.external-input.tensor': ['',
+      '每次 push、每个关闭的 lease 各一个 TensorBeat',
+      '每次 push、每個關閉的 lease 各一個 TensorBeat'],
+
+  // ---- External Tap (control) ----
+  'stage.external-tap.name': ['', '外部探针', '外部探針'],
+  'stage.external-tap.doc': ['',
+      '透传阶段，让管线外部的代码原地读取和修改节拍：`read` 命令零拷贝地暴'
+      + '露下一个 TensorBeat，并一直持有到命令关闭。gate 模式下每个节拍都要等'
+      + '一次读取。由 C++ / Python API 驱动。',
+      '透傳階段，讓管線外部的程式碼原地讀取和修改節拍：`read` 命令零拷貝地暴'
+      + '露下一個 TensorBeat，並一直持有到命令關閉。gate 模式下每個節拍都要等'
+      + '一次讀取。由 C++ / Python API 驅動。'],
+  'cfg.external-tap.mode': ['',
+      '"pass"：节拍自由通过，排队中的 read 取走下一个。"gate"：每个 '
+      + 'TensorBeat 都等待一次 read，管线按调用方的节奏运行',
+      '"pass"：節拍自由通過，排隊中的 read 取走下一個。"gate"：每個 '
+      + 'TensorBeat 都等待一次 read，管線按呼叫方的節奏執行'],
+  'port.external-tap.in': ['', '任意节拍', '任意節拍'],
+  'port.external-tap.out': ['',
+      '同样的节拍，顺序不变，带着调用方原地所做的修改',
+      '同樣的節拍，順序不變，帶著呼叫方原地所做的修改'],
+
+  // ---- Feedback In (control) ----
+  'stage.feedback-rx.name': ['', '反馈器接收端', '回饋器接收端'],
+  'stage.feedback-rx.doc': ['',
+      '单时钟域反馈对的接收端：缓存 iport 上最近的一个节拍，供同名的 '
+      + 'feedback-tx 重新发出（相当于延迟一轮的寄存器）。',
+      '單一時脈域回饋對的接收端：快取輸入埠上最近的一個節拍，供同名的 '
+      + 'feedback-tx 重新發出（相當於延遲一輪的暫存器）。'],
+  'port.feedback-rx.in': ['',
+      '任意节拍；最新的一个会被缓存，供发射端取用',
+      '任意節拍；最新的一個會被快取，供傳送端取用'],
+
+  // ---- Feedback Out (control) ----
+  'stage.feedback-tx.name': ['', '反馈器发射端', '回饋器傳送端'],
+  'stage.feedback-tx.doc': ['',
+      '单时钟域反馈对的源端：等待同名的 feedback-rx 收到新节拍，然后在 0 号'
+      + '输出端口重新发出它的副本。',
+      '單一時脈域回饋對的來源端：等待同名的 feedback-rx 收到新節拍，然後在 '
+      + '0 號輸出埠重新發出它的副本。'],
+  'cfg.feedback-tx.from': ['',
+      '要中继的 feedback-rx 阶段 id',
+      '要轉送的 feedback-rx 階段 id'],
+  'cfg.feedback-tx.prime': ['',
+      '在任何反馈出现之前先发出什么，好让第一轮没有历史的循环能够启动。\''
+      + 'none\'（默认）等待 rx 收到节拍——而当那个节拍正是本阶段发出的结果时'
+      + '，就会死锁。\'empty-tensor\' 先发出一个空的 TensorBeatPayload：这是“'
+      + '本轮没有内容”的约定写法，video-ref-encoder 等消费者会直接跳过它。'
+      + '每次运行只预置一次',
+      '在任何回饋出現之前先發出什麼，好讓第一輪沒有歷史的迴圈能夠啟動。\''
+      + 'none\'（預設）等待 rx 收到節拍——而當那個節拍正是本階段發出的結果時'
+      + '，就會死結。\'empty-tensor\' 先發出一個空的 TensorBeatPayload：這是'
+      + '「本輪沒有內容」的約定寫法，video-ref-encoder 等消費者會直接跳過它'
+      + '。每次執行只預置一次'],
+  'port.feedback-tx.out': ['',
+      'rx 端最新节拍的副本（延迟一轮）',
+      'rx 端最新節拍的副本（延遲一輪）'],
+
+  // ---- Shell (control) ----
+  'stage.shell.name': ['', 'Shell 命令', 'Shell 指令'],
+  'stage.shell.doc': ['',
+      '汇聚节点：每收到一个输入节拍（负载不限）就通过 /bin/sh 执行一条 '
+      + 'shell 命令；stdout 记为 info，stderr 记为 warn，可选地把 getline '
+      + '接到它的标准输入。受会话文件沙盒约束。EOS 结束本阶段。',
+      '匯聚節點：每收到一個輸入節拍（負載不限）就透過 /bin/sh 執行一條 '
+      + 'shell 指令；stdout 記為 info，stderr 記為 warn，可選地把 getline '
+      + '接到它的標準輸入。受工作階段檔案沙箱約束。EOS 結束本階段。'],
+  'cfg.shell.command': ['',
+      '原样传给 /bin/sh -c 的 shell 命令',
+      '原樣傳給 /bin/sh -c 的 shell 指令'],
+  'cfg.shell.forward_stdin': ['',
+      '把界面的 getline() 接到命令的标准输入（供交互式程序使用）；否则标准'
+      + '输入为 /dev/null',
+      '把介面的 getline() 接到指令的標準輸入（供互動式程式使用）；否則標準'
+      + '輸入為 /dev/null'],
+  'cfg.shell.allow': ['',
+      '会话处于沙盒中时，该命令唯一被允许 exec 的程序（名称或绝对路径）；留'
+      + '空 => 任意程序（无论如何它的写入/网络仍受限）',
+      '工作階段處於沙箱中時，該指令唯一被允許 exec 的程式（名稱或絕對路徑）'
+      + '；留空 => 任意程式（無論如何它的寫入/網路仍受限）'],
+  'cfg.shell.allow_network': ['',
+      '会话处于沙盒中时允许访问网络（未启用沙盒时无效）',
+      '工作階段處於沙箱中時允許存取網路（未啟用沙箱時無效）'],
+  'cfg.shell.timeout_ms': ['',
+      '挂钟超时；到期时该命令的进程组会被终止。0 => 不限',
+      '掛鐘逾時；到期時該指令的行程群組會被終止。0 => 不限'],
+  'port.shell.trigger': ['',
+      '任意节拍；每一个都执行一次命令',
+      '任意節拍；每一個都執行一次指令'],
+
+  // ---- Video Cleanup (database) ----
+  'stage.videos-db-cleanup.name': ['', '视频清理', '影片清理'],
+  'stage.videos-db-cleanup.doc': ['',
+      '源：周期性清扫 <camera><suffix> LMDB 分段索引，删除早于 '
+      + 'retention_seconds 的记录。纯 LMDB 副作用；0 入 / 0 出。',
+      '來源：週期性清掃 <camera><suffix> LMDB 分段索引，刪除早於 '
+      + 'retention_seconds 的記錄。純 LMDB 副作用；0 入 / 0 出。'],
+  'cfg.videos-db-cleanup.camera_name': ['',
+      '选定 <camera_name><suffix> 子数据库',
+      '選定 <camera_name><suffix> 子資料庫'],
+  'cfg.videos-db-cleanup.videos_db_suffix': ['',
+      '追加在 camera_name 之后的后缀',
+      '附加在 camera_name 之後的後綴'],
+  'cfg.videos-db-cleanup.retention_seconds': ['',
+      '删除早于此秒数的记录；须大于 0',
+      '刪除早於此秒數的記錄；須大於 0'],
+  'cfg.videos-db-cleanup.sweep_interval_seconds': ['',
+      '两次清扫之间的挂钟秒数；须大于等于 1',
+      '兩次清掃之間的掛鐘秒數；須大於等於 1'],
+  'cfg.videos-db-cleanup.run_once': ['',
+      '清扫一次后即结束',
+      '清掃一次後即結束'],
+
+  // ---- Audio VAE Decode (generative) ----
+  'stage.audio-vae-decode.name': ['', '音频 VAE 解码', '音訊 VAE 解碼'],
+  'stage.audio-vae-decode.doc': ['',
+      '在 metal-compute 后端把潜在音轨解码为 PCM。它是 vae-decode 的音频对'
+      + '应物，也是 generate-video 音频输出端口的下游。',
+      '在 metal-compute 後端把潛在音軌解碼為 PCM。它是 vae-decode 的音訊對'
+      + '應物，也是 generate-video 音訊輸出埠的下游。'],
+  'cfg.audio-vae-decode.hf_dir': ['',
+      '含音频 VAE 的模型目录（从 <hf_dir>/audio_vae 读取）。可选：model 输'
+      + '入端口上的 model-select 源会覆盖它',
+      '含音訊 VAE 的模型目錄（從 <hf_dir>/audio_vae 讀取）。可選：model 輸'
+      + '入埠上的 model-select 來源會覆寫它'],
+  'cfg.audio-vae-decode.unload_when_idle': ['',
+      '每个节拍处理完就释放 VAE 权重，下一个节拍再重新加载。"auto"（默认）'
+      + '根据物理内存与流水线的权重字节数自行判断；"always" / "never" 可强'
+      + '制',
+      '每個節拍處理完就釋放 VAE 權重，下一個節拍再重新載入。"auto"（預設）'
+      + '根據實體記憶體與管線的權重位元組數自行判斷；"always" / "never" 可'
+      + '強制'],
+  'cfg.audio-vae-decode.i8_gemm': ['',
+      '加速模式（有损）：编解码器的大块矩阵乘改用动态 int8 GEMM。默认关闭，而'
+      + '且是出于质量上的理由，不是因为没实现：编解码器是潜变量与人眼所见像素'
+      + '之间的最后一环，它里面的近似没有地方可以被吸收——而 DiT 内部同样的取'
+      + '舍，后面还跟着几十个 block 和一次解码。之所以可设，是为了让这个取舍能'
+      + '被测量。只有已注册的模型族会读取它；内置的编解码器会忽略。环境变量 '
+      + 'VPIPE_I8_GEMM 可覆盖',
+      '加速模式（失真）：編解碼器的大塊矩陣乘改用動態 int8 GEMM。預設關閉，而'
+      + '且是出於品質上的理由，不是因為沒實作：編解碼器是潛變數與人眼所見像素'
+      + '之間的最後一環，它裡面的近似沒有地方可以被吸收——而 DiT 內部同樣的取'
+      + '捨，後面還跟著幾十個 block 和一次解碼。之所以可設，是為了讓這個取捨能'
+      + '被測量。只有已註冊的模型族會讀取它；內建的編解碼器會忽略。環境變數 '
+      + 'VPIPE_I8_GEMM 可覆寫'],
+  'port.audio-vae-decode.latent': ['',
+      'f32 [立体声, 潜通道数, 帧数] 的潜在音频（已白化）',
+      'f32 [立體聲, 潛通道數, 影格數] 的潛在音訊（已白化）'],
+  'port.audio-vae-decode.model': ['',
+      '可选的共享模型引用，来自 model-select 源；覆盖 hf_dir 配置',
+      '可選的共享模型參照，來自 model-select 來源；覆寫 hf_dir 設定'],
+  'port.audio-vae-decode.audio': ['',
+      '解码出的 PCM，f32 TensorBeat [声道数, 采样数]，平面排列',
+      '解碼出的 PCM，f32 TensorBeat [聲道數, 取樣數]，平面排列'],
+
+  // ---- Audio VAE Encode (generative) ----
+  'stage.audio-vae-encode.name': ['', '音频 VAE 编码', '音訊 VAE 編碼'],
+  'stage.audio-vae-encode.doc': ['',
+      '把 PCM 编码成潜在音轨——即全模态生成器所依据的参考。它是 vae-encode '
+      + '的音频对应物，也是 generate-video 的 ref_audio_rows 的上游。它会累'
+      + '积所有节拍并在 EOS 时一次性编码：音频 VAE 是因果的且会在时间上压缩'
+      + '，因此分块单独编码后无法拼接。',
+      '把 PCM 編碼成潛在音軌——即全模態生成器所依據的參考。它是 vae-encode '
+      + '的音訊對應物，也是 generate-video 的 ref_audio_rows 的上游。它會累'
+      + '積所有節拍並在 EOS 時一次性編碼：音訊 VAE 是因果的且會在時間上壓縮'
+      + '，因此分塊單獨編碼後無法拼接。'],
+  'cfg.audio-vae-encode.hf_dir': ['',
+      '含音频 VAE 的模型目录。可选：model 输入端口上的 model-select 源会覆'
+      + '盖它',
+      '含音訊 VAE 的模型目錄。可選：model 輸入埠上的 model-select 來源會覆'
+      + '寫它'],
+  'cfg.audio-vae-encode.sample_rate': ['',
+      '后备采样率，仅用于边带未标明采样率的节拍。会标注自身采样率的生产者（'
+      + 'audio-to-pcm 就会）让这一项变得不必要',
+      '後備取樣率，僅用於邊帶未標明取樣率的節拍。會標註自身取樣率的生產者（'
+      + 'audio-to-pcm 就會）讓這一項變得不必要'],
+  'cfg.audio-vae-encode.max_seconds': ['',
+      '拒绝缓冲超过这么多秒。参考音轨是一段素材而不是实时流，对着一支开着的'
+      + '麦克风做无上限缓冲，最终会以 OOM 而不是一条消息收场',
+      '拒絕緩衝超過這麼多秒。參考音軌是一段素材而不是即時串流，對著一支開著'
+      + '的麥克風做無上限緩衝，最終會以 OOM 而不是一條訊息收場'],
+  'cfg.audio-vae-encode.unload_when_idle': ['',
+      '编码完成后释放 VAE 权重。"auto"（默认）根据物理内存与流水线的权重字'
+      + '节数自行判断；"always" / "never" 可强制',
+      '編碼完成後釋放 VAE 權重。"auto"（預設）根據實體記憶體與管線的權重位'
+      + '元組數自行判斷；"always" / "never" 可強制'],
+  'cfg.audio-vae-encode.i8_gemm': ['',
+      '加速模式（有损）：编解码器的大块矩阵乘改用动态 int8 GEMM。默认关闭，而'
+      + '且是出于质量上的理由，不是因为没实现：编解码器是潜变量与人眼所见像素'
+      + '之间的最后一环，它里面的近似没有地方可以被吸收——而 DiT 内部同样的取'
+      + '舍，后面还跟着几十个 block 和一次解码。之所以可设，是为了让这个取舍能'
+      + '被测量。只有已注册的模型族会读取它；内置的编解码器会忽略。环境变量 '
+      + 'VPIPE_I8_GEMM 可覆盖',
+      '加速模式（失真）：編解碼器的大塊矩陣乘改用動態 int8 GEMM。預設關閉，而'
+      + '且是出於品質上的理由，不是因為沒實作：編解碼器是潛變數與人眼所見像素'
+      + '之間的最後一環，它裡面的近似沒有地方可以被吸收——而 DiT 內部同樣的取'
+      + '捨，後面還跟著幾十個 block 和一次解碼。之所以可設，是為了讓這個取捨能'
+      + '被測量。只有已註冊的模型族會讀取它；內建的編解碼器會忽略。環境變數 '
+      + 'VPIPE_I8_GEMM 可覆寫'],
+  'port.audio-vae-encode.audio': ['',
+      'f32 PCM，秩为 1 的 [N] 单声道或秩为 2 的 [声道数, N] 平面排列，取值'
+      + '在 [-1, 1]；采样率由 sideband.sample_rate 给出。所有节拍都会被累积'
+      + '，编码在 EOS 时只做一次',
+      'f32 PCM，秩為 1 的 [N] 單聲道或秩為 2 的 [聲道數, N] 平面排列，取值'
+      + '在 [-1, 1]；取樣率由 sideband.sample_rate 給出。所有節拍都會被累積'
+      + '，編碼在 EOS 時只做一次'],
+  'port.audio-vae-encode.model': ['',
+      '可选的共享模型引用，来自 model-select 源；覆盖 hf_dir 配置',
+      '可選的共享模型參照，來自 model-select 來源；覆寫 hf_dir 設定'],
+  'port.audio-vae-encode.latent': ['',
+      '编码后的音轨，f32 TensorBeat，采用编码器自身的潜变量形状——对接 '
+      + 'generate-video 的 ref_audio_rows 的模型族即 [rows, dim]。每次运行'
+      + '在排空时发出一个节拍',
+      '編碼後的音軌，f32 TensorBeat，採用編碼器自身的潛變數形狀——對接 '
+      + 'generate-video 的 ref_audio_rows 的模型族即 [rows, dim]。每次執行'
+      + '在排空時發出一個節拍'],
+
+  // ---- Diffusion Conditioner (generative) ----
+  'stage.diffusion-conditioner.name': ['', '扩散条件生成', '擴散條件產生'],
+  'stage.diffusion-conditioner.doc': ['',
+      '提示词（外加可选的参考图像）-> 扩散 DiT 所需的条件嵌入。本阶段拥有分'
+      + '词器 + 文本编码器 +（对能看图的模型）Qwen2.5-VL 视觉塔。它是 '
+      + 'generate-image 拆分出来的编码器一半；请与同一个 hf_dir 上的 '
+      + 'generate-image 阶段配对使用。若某模型族的检查点在文本编码器上带有'
+      + '内容政策分类器，则每条提示词（编辑任务还包括源图像）都会先经它筛查'
+      + '——这是强制的，没有配置项；被拒绝的提示词会得到一张空白图像而不是'
+      + '生成结果。',
+      '提示詞（外加可選的參考影像）-> 擴散 DiT 所需的條件嵌入。本階段擁有斷'
+      + '詞器 + 文字編碼器 +（對能看圖的模型）Qwen2.5-VL 視覺塔。它是 '
+      + 'generate-image 拆分出來的編碼器一半；請與同一個 hf_dir 上的 '
+      + 'generate-image 階段配對使用。若某模型族的檢查點在文字編碼器上帶有'
+      + '內容政策分類器，則每條提示詞（編輯任務還包括來源影像）都會先經它篩'
+      + '查——這是強制的，沒有設定項；被拒絕的提示詞會得到一張空白影像而不'
+      + '是生成結果。'],
+  'cfg.diffusion-conditioner.hf_dir': ['',
+      '模型目录（text_encoder/、transformer/、tokenizer/）；由 transformer '
+      + '的 _class_name 决定模型族与编码器。可选：model 输入端口上的 '
+      + 'model-select 源会覆盖它',
+      '模型目錄（text_encoder/、transformer/、tokenizer/）；由 transformer '
+      + '的 _class_name 決定模型族與編碼器。可選：model 輸入埠上的 '
+      + 'model-select 來源會覆寫它'],
+  'cfg.diffusion-conditioner.encoder_dir': ['',
+      '仅 VOSR：DINOv2 检查点，它与修复器自身的权重是分开下载的'
+      + '（facebook/dinov2-large，或从参考实现的 torch-hub pickle 转换出来的同'
+      + '一批张量）。不填时先试 `<hf_dir>/dinov2`，再试注册表键。其余模型族的'
+      + '编码器都在 hf_dir 里面，会忽略这一项',
+      '僅 VOSR：DINOv2 檢查點，它與修復器自身的權重是分開下載的'
+      + '（facebook/dinov2-large，或從參考實作的 torch-hub pickle 轉換出來的同'
+      + '一批張量）。不填時先試 `<hf_dir>/dinov2`，再試登錄檔鍵。其餘模型族的'
+      + '編碼器都在 hf_dir 裡面，會忽略這一項'],
+  'cfg.diffusion-conditioner.reference_mode': ['',
+      'ref_image 输入端口上的参考图如何与提示词配对。“auto”（默认）即本阶段'
+      + '每个输入都遵循的规则：来源只发一个节拍就结束的图，用于每一条提示词（'
+      + '一张源图，多条指令）；持续发送的，则每次条件生成取用一张（一个文件夹'
+      + '，每张都用同一条指令编辑）。“latch”即使来源一直不结束，也在整段运行中'
+      + '保持第一张图——例如永远不会结束数据流的实时输入。“per_beat”要求每次条'
+      + '件生成都有一张新的图，图一停就结束运行，哪怕只来过一张',
+      'ref_image 輸入埠上的參考影像如何與提示詞配對。「auto」（預設）即本階段'
+      + '每個輸入都遵循的規則：來源只發一個節拍就結束的影像，用於每一條提示詞'
+      + '（一張來源影像，多條指令）；持續發送的，則每次條件產生取用一張（一個'
+      + '資料夾，每張都用同一條指令編輯）。「latch」即使來源一直不結束，也在整'
+      + '段執行中保持第一張影像——例如永遠不會結束資料流的即時輸入。「per_beat」'
+      + '要求每次條件產生都有一張新的影像，影像一停就結束執行，哪怕只來過一張'],
+  'cfg.diffusion-conditioner.grounded_negative': ['',
+      '仅限能看图的模型族：始终在 1 号输出端口发出负向条件——对（可能为空的'
+      + '）负向提示词做一次接地编码——好让 DiT 能跑无分类器引导（CFG>1）。与'
+      + ' Krea-2 的编辑删除配方一致（空的接地负向条件）。默认 false（只在接'
+      + '了非空负向提示词时才发负向条件）',
+      '僅限能看圖的模型族：始終在 1 號輸出埠發出負向條件——對（可能為空的）'
+      + '負向提示詞做一次接地編碼——好讓 DiT 能跑無分類器引導（CFG>1）。與 '
+      + 'Krea-2 的編輯刪除配方一致（空的接地負向條件）。預設 false（只在接'
+      + '了非空負向提示詞時才發負向條件）'],
+  'cfg.diffusion-conditioner.unload_when_idle': ['',
+      '每发出一次条件就释放文本编码器（以及视觉塔），下一条提示词再重新加载'
+      + '。编码器在整个去噪过程中都空闲，因此在内存吃紧的机器上，正是它让一'
+      + '个大 DiT 与一个大编码器共处一机（4 位的 Boogu-Image 是约 5.6 GB 的'
+      + ' DiT，旁边还有约 4.7 GB 的 Qwen3-VL 多模态语言模型）。"auto"（默认'
+      + '）综合物理内存、是否有同伴阶段选择了流式加载，以及流水线的权重字节'
+      + '数来判断。也可以强制："destroy"（释放字节，代价是每条提示词都要重'
+      + '新加载）、"park"（把它们交给内核标为可丢弃——只有机器真的缺内存时才'
+      + '回收，否则无需重新加载即可复用），或 "keep"（钉住不放）。旧写法："'
+      + 'always" = destroy，"never" = keep',
+      '每發出一次條件就釋放文字編碼器（以及視覺塔），下一條提示詞再重新載入'
+      + '。編碼器在整個去噪過程中都閒置，因此在記憶體吃緊的機器上，正是它讓'
+      + '一個大 DiT 與一個大編碼器共處一機（4 位元的 Boogu-Image 是約 5.6 '
+      + 'GB 的 DiT，旁邊還有約 4.7 GB 的 Qwen3-VL 多模態語言模型）。"auto"'
+      + '（預設）綜合實體記憶體、是否有同伴階段選擇了串流載入，以及管線的權'
+      + '重位元組數來判斷。也可以強制："destroy"（釋放位元組，代價是每條提'
+      + '示詞都要重新載入）、"park"（把它們交給核心標為可丟棄——只有機器真的'
+      + '缺記憶體時才回收，否則無需重新載入即可重用），或 "keep"（釘住不放'
+      + '）。舊寫法："always" = destroy，"never" = keep'],
+  'port.diffusion-conditioner.prompt': ['',
+      '提示词文本（FlexData 字符串或 {text: ...}）',
+      '提示詞文字（FlexData 字串或 {text: ...}）'],
+  'port.diffusion-conditioner.negative': ['',
+      '可选的负向提示词（FlexData），供 DiT 做无分类器引导；其条件从 1 号输'
+      + '出端口发出',
+      '可選的負向提示詞（FlexData），供 DiT 做無分類器引導；其條件從 1 號輸'
+      + '出埠發出'],
+  'port.diffusion-conditioner.model': ['',
+      '可选的共享模型引用，来自 model-select 源；覆盖 hf_dir 配置',
+      '可選的共享模型參照，來自 model-select 來源；覆寫 hf_dir 設定'],
+  'port.diffusion-conditioner.ref_image': ['',
+      '可选的原始参考图像（平面 RGB TensorBeat [3,H,W]，即 load-image 的'
+      + '格式；U8，或 0..1 的 F16 / F32——为视觉塔舍入到 8 位，VAE 仍保留其'
+      + '精度）。能看图的模型族（Qwen-Image-Edit）会把它送进 Qwen2.5-VL 视'
+      + '觉塔；其余模型族会忽略它。',
+      '可選的原始參考影像（平面 RGB TensorBeat [3,H,W]，即 load-image 的'
+      + '格式；U8，或 0..1 的 F16 / F32——為視覺塔捨入到 8 位元，VAE 仍保留'
+      + '其精度）。能看圖的模型族（Qwen-Image-Edit）會把它送進 Qwen2.5-VL 視'
+      + '覺塔；其餘模型族會忽略它。'],
+  'port.diffusion-conditioner.ref_image2': ['',
+      '可选的第二张参考图像（格式相同）。在支持多参考的模型族（'
+      + 'Qwen-Image-Edit-2511）上，或模板按参考逐段展开的模型族上，视觉'
+      + '语言模型必须看到两张图（DiT 的 ref_latent1 只携带第二张的空间细节'
+      + '）。每个参考各有自己的视觉块、mROPE 频带和 deepstack 运行。Krea-2 '
+      + '的设计只支持单参考，会忽略它。',
+      '可選的第二張參考影像（格式相同）。在支援多參考的模型族（'
+      + 'Qwen-Image-Edit-2511）上，或範本按參考逐段展開的模型族上，視覺'
+      + '語言模型必須看到兩張圖（DiT 的 ref_latent1 只攜帶第二張的空間細節'
+      + '）。每個參考各有自己的視覺區塊、mROPE 頻帶和 deepstack 執行。'
+      + 'Krea-2 的設計只支援單參考，會忽略它。'],
+  'port.diffusion-conditioner.model_config': ['',
+      '可选的模型专属参数，来自常驻模型族自己的配置源（krea2-model-config、'
+      + 'boogu-image-model-config、qwen-image-edit-model-config，或树外模型'
+      + '族自己的配置源）。目前指的是参考图像如何为接地编码做'
+      + '准备：各模型族的参考管道对它的限制各不相同，数值之间不可互换。未接'
+      + '时按该模型族自己的数值执行',
+      '可選的模型專屬參數，來自常駐模型族自己的組態來源（krea2-model-config'
+      + '、boogu-image-model-config、qwen-image-edit-model-config，或樹外模'
+      + '型族自己的組態來源）。目前指的是參考影像如何為接地編碼做'
+      + '準備：各模型族的參考管道對它的限制各不相同，數值之間不可互換。未接'
+      + '時按該模型族自己的數值執行'],
+  'port.diffusion-conditioner.ref_images': ['',
+      '可选：以一个列表传入的参考图像（load-image 的 `images`），数量不限，'
+      + '格式与 ref_image 相同且各自保持原尺寸。它们按列表顺序排在 ref_image '
+      + '/ ref_image2 之后，能看图的模型族会看到全部参考；支持数量较少的模型'
+      + '族只取前几张并给出提示。请与 vae-encode 的 `images` 接同一个列表，'
+      + '这样潜变量才能一一对应',
+      '可選：以一個列表傳入的參考影像（load-image 的 `images`），數量不限，'
+      + '格式與 ref_image 相同且各自保持原尺寸。它們按列表順序排在 ref_image '
+      + '/ ref_image2 之後，能看圖的模型族會看到全部參考；支援數量較少的模型'
+      + '族只取前幾張並給出提示。請與 vae-encode 的 `images` 接同一個列表，'
+      + '這樣潛變數才能一一對應'],
+  'port.diffusion-conditioner.conditioning': ['',
+      '供 generate-image DiT 使用的条件张量（形状与类型随模型族而定：krea2 '
+      + 'f16 [n,12,2560]；flux2 f16 [n,3*enc_hidden]；qwen-image-edit 看图'
+      + '模式 bf16 [n_real,3584]；经条件配置文件接入的模型族，按该配置文件'
+      + '决定的形状）',
+      '供 generate-image DiT 使用的條件張量（形狀與型別隨模型族而定：krea2 '
+      + 'f16 [n,12,2560]；flux2 f16 [n,3*enc_hidden]；qwen-image-edit 看圖'
+      + '模式 bf16 [n_real,3584]；經條件設定檔接入的模型族，按該設定檔決定'
+      + '的形狀）'],
+  'port.diffusion-conditioner.neg_conditioning': ['',
+      '负向提示词的条件（形状/类型相同）；仅在接了负向提示词时才发出',
+      '負向提示詞的條件（形狀/型別相同）；僅在接了負向提示詞時才發出'],
+
+  // ---- LoRA training (generative) ----
+  'stage.training-dataset.name': ['', '训练数据集', '訓練資料集'],
+  'stage.training-dataset.doc': ['',
+      '源阶段：把一个图片与标注文件夹变成 LoRA 训练图所需的三路数据流——'
+      + '适配到长宽比分桶的图片（给 vae-encode）、套用了触发词的标注（给 '
+      + 'diffusion-conditioner），以及告诉 train-lora 如何配对的清单。'
+      + '编码结果按模型缓存，重跑时只编码有变化的部分。0-1 入 / 3 出。',
+      '源階段：把一個圖片與標註資料夾變成 LoRA 訓練圖所需的三路資料流——'
+      + '適配到長寬比分桶的圖片（給 vae-encode）、套用了觸發詞的標註（給 '
+      + 'diffusion-conditioner），以及告訴 train-lora 如何配對的清單。'
+      + '編碼結果按模型快取，重跑時只編碼有變化的部分。0-1 入 / 3 出。'],
+  'cfg.training-dataset.dir': ['',
+      '图片所在文件夹，递归扫描（png、jpg、jpeg、webp、bmp、tif）。名为 '
+      + 'N_名称 的子文件夹里的图片每轮重复 N 次（与 kohya 数据集的布局相同）。',
+      '圖片所在資料夾，遞迴掃描（png、jpg、jpeg、webp、bmp、tif）。名為 '
+      + 'N_名稱 的子資料夾裡的圖片每輪重複 N 次（與 kohya 資料集的佈局相同）。'],
+  'cfg.training-dataset.captions': ['',
+      '标注来源：sidecar（每张图旁的文本文件，多行即多条标注）、jsonl（文件夹'
+      + '中带 file_name 与 text 的 metadata.jsonl），或 none',
+      '標註來源：sidecar（每張圖旁的文字檔，多行即多條標註）、jsonl（資料夾'
+      + '中帶 file_name 與 text 的 metadata.jsonl），或 none'],
+  'cfg.training-dataset.caption_ext': ['',
+      'sidecar 标注文件的扩展名（默认 .txt）',
+      'sidecar 標註檔的副檔名（預設 .txt）'],
+  'cfg.training-dataset.trigger_word': ['',
+      '适配器要学会响应的词。按 caption_template 加到每条标注上，标注里已有'
+      + '该词时不再添加；标注中的 [trigger] 占位符会被原地替换。会写入保存的'
+      + '适配器元数据。',
+      '適配器要學會回應的詞。按 caption_template 加到每條標註上，標註裡已有'
+      + '該詞時不再添加；標註中的 [trigger] 佔位符會被原地替換。會寫入儲存的'
+      + '適配器中繼資料。'],
+  'cfg.training-dataset.caption_template': ['',
+      '触发词如何与标注拼接：替换 {trigger} 与 {caption}（默认 '
+      + '"{trigger}, {caption}"）',
+      '觸發詞如何與標註拼接：替換 {trigger} 與 {caption}（預設 '
+      + '"{trigger}, {caption}"）'],
+  'cfg.training-dataset.missing_caption': ['',
+      '没有标注的图片：trigger_only（只用触发词——用少量图片训练一个主体的'
+      + '常见做法）、skip 或 error',
+      '沒有標註的圖片：trigger_only（只用觸發詞——用少量圖片訓練一個主體的'
+      + '常見做法）、skip 或 error'],
+  'cfg.training-dataset.shuffle_tags': ['',
+      '逗号分隔的标签式标注：打乱 keep_tags 之后的标签顺序，免得适配器学到'
+      + '顺序。每种打乱都会预先编码（共 caption_variants 种）。',
+      '逗號分隔的標籤式標註：打亂 keep_tags 之後的標籤順序，免得適配器學到'
+      + '順序。每種打亂都會預先編碼（共 caption_variants 種）。'],
+  'cfg.training-dataset.keep_tags': ['',
+      '打乱时固定在最前面的标签数（默认 1，即触发词）',
+      '打亂時固定在最前面的標籤數（預設 1，即觸發詞）'],
+  'cfg.training-dataset.caption_variants': ['',
+      '打乱时每条标注保留的编码数（默认 4；嵌入是缓存的，所以每轮变化的标注'
+      + '必须预先编码）',
+      '打亂時每條標註保留的編碼數（預設 4；嵌入是快取的，所以每輪變化的標註'
+      + '必須預先編碼）'],
+  'cfg.training-dataset.resolution': ['',
+      '每个分桶保持的面积对应的正方形边长：一个数（默认 1024）或列表，如 '
+      + '[512, 768, 1024]——每张图都会在每个分辨率下编码，小数据集这样泛化更好',
+      '每個分桶保持的面積對應的正方形邊長：一個數（預設 1024）或列表，如 '
+      + '[512, 768, 1024]——每張圖都會在每個解析度下編碼，小資料集這樣泛化更好'],
+  'cfg.training-dataset.bucket_step': ['',
+      '分桶边长取该值的整数倍（默认 32，即 Qwen-Image-2.1 的尺寸网格）',
+      '分桶邊長取該值的整數倍（預設 32，即 Qwen-Image-2.1 的尺寸網格）'],
+  'cfg.training-dataset.max_aspect': ['',
+      '分桶允许的最大长宽比（默认 2.0）；更宽的图片会被裁到这个比例',
+      '分桶允許的最大長寬比（預設 2.0）；更寬的圖片會被裁到這個比例'],
+  'cfg.training-dataset.flip': ['',
+      'off 或 random：每张图还会额外编码一份镜像。默认关闭——文字和不对称'
+      + '的主体经不起镜像。',
+      'off 或 random：每張圖還會額外編碼一份鏡像。預設關閉——文字和不對稱'
+      + '的主體經不起鏡像。'],
+  'cfg.training-dataset.alpha': ['',
+      'drop（RGB 图片）或 keep（RGBA，用于接受四通道的 VAE 以及带透明度的'
+      + '图片）',
+      'drop（RGB 圖片）或 keep（RGBA，用於接受四通道的 VAE 以及帶透明度的'
+      + '圖片）'],
+  'cfg.training-dataset.preview_prompts': ['',
+      '每个检查点都采样的提示词，便于对比：字符串或列表；{trigger} 会被展开。'
+      + '默认只用触发词。',
+      '每個檢查點都取樣的提示詞，便於對比：字串或列表；{trigger} 會被展開。'
+      + '預設只用觸發詞。'],
+  'cfg.training-dataset.seed': ['',
+      '标签打乱与留出样本选择的随机种子（默认 0）',
+      '標籤打亂與保留樣本選擇的隨機種子（預設 0）'],
+  'cfg.training-dataset.cache_dir': ['',
+      '编码后的标注与图片在多次运行之间保存的位置，重跑时只编码有变化的'
+      + '部分：auto（~/Library/Caches/vpipe/train 下每个数据集一个文件夹）、'
+      + '一个目录，或 none。需要接上 model 端口——缓存按模型区分。请放在内置 '
+      + 'SSD 上。',
+      '編碼後的標註與圖片在多次執行之間保存的位置，重跑時只編碼有變化的'
+      + '部分：auto（~/Library/Caches/vpipe/train 下每個資料集一個資料夾）、'
+      + '一個目錄，或 none。需要接上 model 埠——快取按模型區分。請放在內建 '
+      + 'SSD 上。'],
+  'cfg.training-dataset.validation': ['',
+      '从训练中留出、在每个检查点以固定噪声打分的图片：-1（auto：500 张及'
+      + '以上的数据集留出 1%，最多 64；更少则不留）、0，或一个数量',
+      '從訓練中保留、在每個檢查點以固定雜訊評分的圖片：-1（auto：500 張及'
+      + '以上的資料集保留 1%，最多 64；更少則不保留）、0，或一個數量'],
+  'port.training-dataset.model': ['',
+      '可选：model-select 源，编码后的数据集按它指定的检查点缓存',
+      '可選：model-select 源，編碼後的資料集按它指定的檢查點快取'],
+  'port.training-dataset.images': ['',
+      '适配到分桶的平面 U8 [C,H,W] 图片，给 vae-encode（每个样本、分辨率与'
+      + '镜像各一张）',
+      '適配到分桶的平面 U8 [C,H,W] 圖片，給 vae-encode（每個樣本、解析度與'
+      + '鏡像各一張）'],
+  'port.training-dataset.captions': ['',
+      '给 diffusion-conditioner 的标注文本：所有变体，然后是空提示词，然后是'
+      + '预览提示词',
+      '給 diffusion-conditioner 的標註文字：所有變體，然後是空提示詞，然後是'
+      + '預覽提示詞'],
+  'port.training-dataset.manifest': ['',
+      '一个节拍，描述每个样本以及另外两路流的顺序，给 train-lora',
+      '一個節拍，描述每個樣本以及另外兩路流的順序，給 train-lora'],
+
+  'stage.optimizer-select.name': ['', '优化器', '最佳化器'],
+  'stage.optimizer-select.doc': ['',
+      '选择 train-lora 使用的优化器与学习率计划，作为一个 FlexData 节拍发出。'
+      + '与 training-dataset 和 train-lora 配套。0 入 / 1 出（只发一次）。',
+      '選擇 train-lora 使用的最佳化器與學習率排程，作為一個 FlexData 節拍發出。'
+      + '與 training-dataset 和 train-lora 配套。0 入 / 1 出（只發一次）。'],
+  'cfg.optimizer-select.optimizer': ['',
+      'adamw（默认）、prodigy（自行估计步长——learning_rate 设为 1.0；对小'
+      + '数据集较宽容）、lion 或 sgd',
+      'adamw（預設）、prodigy（自行估計步長——learning_rate 設為 1.0；對小'
+      + '資料集較寬容）、lion 或 sgd'],
+  'cfg.optimizer-select.learning_rate': ['',
+      '0（默认）取优化器自己的默认值：adamw 1e-4、prodigy 1.0、lion 3e-5、'
+      + 'sgd 1e-2',
+      '0（預設）取最佳化器自己的預設值：adamw 1e-4、prodigy 1.0、lion 3e-5、'
+      + 'sgd 1e-2'],
+  'cfg.optimizer-select.beta1': ['',
+      '一阶矩衰减（sgd 为动量），默认 0.9',
+      '一階矩衰減（sgd 為動量），預設 0.9'],
+  'cfg.optimizer-select.beta2': ['', '二阶矩衰减，默认 0.999',
+      '二階矩衰減，預設 0.999'],
+  'cfg.optimizer-select.eps': ['', '默认 1e-8', '預設 1e-8'],
+  'cfg.optimizer-select.weight_decay': ['', '解耦权重衰减，默认 0.01',
+      '解耦權重衰減，預設 0.01'],
+  'cfg.optimizer-select.lr_schedule': ['',
+      '学习率随训练如何变化：auto（默认：小数据集用 constant，64 张及以上'
+      + '用 cosine）、constant、linear、cosine、cosine_restarts。叫 '
+      + 'lr_schedule 是因为这里的“scheduler”指噪声计划。',
+      '學習率隨訓練如何變化：auto（預設：小資料集用 constant，64 張及以上'
+      + '用 cosine）、constant、linear、cosine、cosine_restarts。叫 '
+      + 'lr_schedule 是因為這裡的「scheduler」指雜訊排程。'],
+  'cfg.optimizer-select.warmup_steps': ['',
+      '从零开始的线性预热；-1（默认）为整个训练的 2%',
+      '從零開始的線性預熱；-1（預設）為整個訓練的 2%'],
+  'cfg.optimizer-select.min_lr_ratio': ['',
+      'linear 与 cosine 结束时的学习率比例（默认 0）',
+      'linear 與 cosine 結束時的學習率比例（預設 0）'],
+  'cfg.optimizer-select.restarts': ['',
+      'cosine_restarts 的周期数（默认 1）',
+      'cosine_restarts 的週期數（預設 1）'],
+  'cfg.optimizer-select.grad_clip': ['',
+      '梯度裁剪的全局 L2 范数；0 关闭（默认 1.0）',
+      '梯度裁剪的全域 L2 範數；0 關閉（預設 1.0）'],
+  'cfg.optimizer-select.ema': ['',
+      '适配器权重的 EMA 衰减，如 0.999；每个检查点同时保存平均后的适配器。'
+      + '0（默认）关闭。',
+      '適配器權重的 EMA 衰減，如 0.999；每個檢查點同時儲存平均後的適配器。'
+      + '0（預設）關閉。'],
+  'cfg.optimizer-select.prodigy_d_coef': ['',
+      'prodigy：缩放其步长估计（默认 1.0）',
+      'prodigy：縮放其步長估計（預設 1.0）'],
+  'cfg.optimizer-select.bias_correction': ['',
+      'prodigy：Adam 的偏差校正（默认关闭，与 prodigyopt 相同）',
+      'prodigy：Adam 的偏差校正（預設關閉，與 prodigyopt 相同）'],
+  'port.optimizer-select.optimizer': ['',
+      '优化器配置 {kind: optimizer, optimizer, learning_rate, ...}',
+      '最佳化器組態 {kind: optimizer, optimizer, learning_rate, ...}'],
+
+  'stage.train-lora.name': ['', '训练 LoRA', '訓練 LoRA'],
+  'stage.train-lora.doc': ['',
+      '在扩散模型上训练 LoRA 适配器，数据来自由模型自身的条件编码器与 VAE 编码'
+      + '的 training-dataset。缓存编码后的数据集，等编码器用完后再载入模型，按 '
+      + 'optimizer-select 的配置训练，并保存检查点（附预览），generate-image 的'
+      + '适配器选择器会列出它们。目前支持 Qwen-Image-2.1。',
+      '在擴散模型上訓練 LoRA 適配器，資料來自由模型自身的條件編碼器與 VAE 編碼'
+      + '的 training-dataset。快取編碼後的資料集，等編碼器用完後再載入模型，按 '
+      + 'optimizer-select 的組態訓練，並儲存檢查點（附預覽），generate-image 的'
+      + '適配器選擇器會列出它們。目前支援 Qwen-Image-2.1。'],
+  'cfg.train-lora.hf_dir': ['',
+      '要训练的模型：注册键或检查点根目录（model 端口上的 model-select 节拍'
+      + '会覆盖它）',
+      '要訓練的模型：註冊鍵或檢查點根目錄（model 埠上的 model-select 節拍'
+      + '會覆蓋它）'],
+  'cfg.train-lora.output_dir': ['',
+      '适配器、检查点与续训状态的存放位置',
+      '適配器、檢查點與續訓狀態的存放位置'],
+  'cfg.train-lora.name': ['',
+      '适配器名称：<name>.safetensors、每个检查点的 <name>-000500.safetensors，'
+      + '以及它在注册表中的键',
+      '適配器名稱：<name>.safetensors、每個檢查點的 <name>-000500.safetensors，'
+      + '以及它在註冊表中的鍵'],
+  'cfg.train-lora.rank': ['', '适配器的秩（默认 16）',
+      '適配器的秩（預設 16）'],
+  'cfg.train-lora.alpha': ['',
+      '适配器的 alpha；0（默认）等于秩，即强度 1',
+      '適配器的 alpha；0（預設）等於秩，即強度 1'],
+  'cfg.train-lora.targets': ['',
+      '训练哪些投影：attn_ff（默认——q、k、v、out 与前馈；多数已发布适配器'
+      + '都这样训练）或 attn',
+      '訓練哪些投影：attn_ff（預設——q、k、v、out 與前饋；多數已發布適配器'
+      + '都這樣訓練）或 attn'],
+  'cfg.train-lora.init_from': ['',
+      '从同目标、同秩的现有适配器文件继续（留空：新的适配器，初始即为基础'
+      + '模型）',
+      '從同目標、同秩的現有適配器檔案繼續（留空：新的適配器，初始即為基礎'
+      + '模型）'],
+  'cfg.train-lora.steps': ['',
+      '优化器步数；0（默认）为自动——小数据集每张图 100 步（600 至 3000），'
+      + '大数据集两轮',
+      '最佳化器步數；0（預設）為自動——小資料集每張圖 100 步（600 至 3000），'
+      + '大資料集兩輪'],
+  'cfg.train-lora.epochs': ['', '遍历数据集的轮数，steps 为 0 时使用',
+      '遍歷資料集的輪數，steps 為 0 時使用'],
+  'cfg.train-lora.batch_size': ['',
+      '优化器每步累积的样本数（默认 1）。样本依次运行，所以批量越大花的是'
+      + '时间而不是内存。',
+      '最佳化器每步累積的樣本數（預設 1）。樣本依次執行，所以批次越大花的是'
+      + '時間而不是記憶體。'],
+  'cfg.train-lora.seed': ['',
+      '本次训练的随机种子：样本顺序、噪声、sigma、丢弃',
+      '本次訓練的隨機種子：樣本順序、雜訊、sigma、丟棄'],
+  'cfg.train-lora.seed_sequence': ['',
+      '多个优化器节拍做扫参时每个训练任务的种子：increment（默认）、'
+      + 'randomize、keep',
+      '多個最佳化器節拍做掃參時每個訓練任務的種子：increment（預設）、'
+      + 'randomize、keep'],
+  'cfg.train-lora.caption_dropout': ['',
+      '样本改用空提示词而非其标注训练的概率（默认 0.05），用于保持引导有效',
+      '樣本改用空提示詞而非其標註訓練的機率（預設 0.05），用於保持引導有效'],
+  'cfg.train-lora.timestep_sampling': ['',
+      'sigma 如何抽取：auto（logit-normal 抽样再按图片尺寸套用模型自己的推理'
+      + '平移，使训练集中在采样花步数的地方）、uniform、logit_normal 或 shift'
+      + '（静态平移）',
+      'sigma 如何抽取：auto（logit-normal 抽樣再按圖片尺寸套用模型自己的推理'
+      + '平移，使訓練集中在取樣花步數的地方）、uniform、logit_normal 或 shift'
+      + '（靜態平移）'],
+  'cfg.train-lora.logit_mean': ['', 'logit-normal 的均值（默认 0）',
+      'logit-normal 的均值（預設 0）'],
+  'cfg.train-lora.logit_std': ['', 'logit-normal 的标准差（默认 1）',
+      'logit-normal 的標準差（預設 1）'],
+  'cfg.train-lora.shift': ['',
+      'timestep_sampling=shift 时的静态平移（默认 3）',
+      'timestep_sampling=shift 時的靜態平移（預設 3）'],
+  'cfg.train-lora.save_every': ['',
+      '检查点间隔步数；0（默认）为自动（小数据集每 250 步）',
+      '檢查點間隔步數；0（預設）為自動（小資料集每 250 步）'],
+  'cfg.train-lora.preview_every': ['',
+      '预览采样间隔步数；0（默认）为每个检查点，-1 为从不',
+      '預覽取樣間隔步數；0（預設）為每個檢查點，-1 為從不'],
+  'cfg.train-lora.preview_steps': ['', '预览的采样步数（默认 20）',
+      '預覽的取樣步數（預設 20）'],
+  'cfg.train-lora.preview_cfg': ['',
+      '预览相对空提示词的引导强度（默认 4；1 为不引导）',
+      '預覽相對空提示詞的引導強度（預設 4；1 為不引導）'],
+  'cfg.train-lora.preview_seed': ['',
+      '预览的噪声种子，各检查点相同以便对比（默认 42）',
+      '預覽的雜訊種子，各檢查點相同以便對比（預設 42）'],
+  'cfg.train-lora.recompute': ['',
+      'auto（默认）：内存够时保留每个块的激活，省下约四分之一的步时；不够时'
+      + '逐块重算。always / never 强制其一。',
+      'auto（預設）：記憶體夠時保留每個區塊的啟用值，省下約四分之一的步時；'
+      + '不夠時逐區塊重算。always / never 強制其一。'],
+  'cfg.train-lora.ane': ['',
+      'M4 系列：前向与反向中的大 GEMM 与神经网络引擎分摊（M4 Pro 上 1024^2 '
+      + '一步实测快 1.13 倍）。不要在 M5 上启用。',
+      'M4 系列：前向與反向中的大 GEMM 與神經網路引擎分攤（M4 Pro 上 1024^2 '
+      + '一步實測快 1.13 倍）。不要在 M5 上啟用。'],
+  'cfg.train-lora.i8_gemm': ['',
+      'M5 及更新：前向与反向使用 int8 矩阵核心 GEMM（有损，每个 GEMM 约 '
+      + '1e-2）',
+      'M5 及更新：前向與反向使用 int8 矩陣核心 GEMM（有損，每個 GEMM 約 '
+      + '1e-2）'],
+  'cfg.train-lora.resume': ['',
+      'auto（默认）：继续同名的被停止的训练；never：重新开始',
+      'auto（預設）：繼續同名的被停止的訓練；never：重新開始'],
+  'cfg.train-lora.register': ['',
+      '把训练好的适配器登记到模型注册表，让 generate-image 的 LoRA 选择器'
+      + '列出它（默认开启）',
+      '把訓練好的適配器登記到模型註冊表，讓 generate-image 的 LoRA 選擇器'
+      + '列出它（預設開啟）'],
+  'cfg.train-lora.cache': ['',
+      '训练时编码后数据集存放的位置：ram、disk（每一步从 training-dataset '
+      + '的 cache_dir 读取），或 auto——放得下本机内存的八分之一就用 ram，'
+      + '否则用 disk',
+      '訓練時編碼後資料集存放的位置：ram、disk（每一步從 training-dataset '
+      + '的 cache_dir 讀取），或 auto——放得下本機記憶體的八分之一就用 ram，'
+      + '否則用 disk'],
+  'cmd.train-lora.save': ['Save now', '立即保存', '立即儲存'],
+  'cmd.train-lora.save.doc': ['',
+      '现在保存一个检查点（含续训状态），并在 checkpoints 端口发出；在优化步'
+      + '之间处理',
+      '現在儲存一個檢查點（含續訓狀態），並在 checkpoints 埠發出；在最佳化步'
+      + '之間處理'],
+  'cmd.train-lora.preview': ['Preview now', '立即预览', '立即預覽'],
+  'cmd.train-lora.preview.doc': ['',
+      '用当前适配器立即采样预览提示词，并在 previews 端口发出潜变量；在优化步'
+      + '之间处理',
+      '用目前的適配器立即取樣預覽提示詞，並在 previews 埠發出潛變數；在最佳化'
+      + '步之間處理'],
+  'port.train-lora.conditioning': ['',
+      'diffusion-conditioner 对每条标注、空提示词与预览提示词的输出，按清单顺序',
+      'diffusion-conditioner 對每條標註、空提示詞與預覽提示詞的輸出，按清單順序'],
+  'port.train-lora.latents': ['',
+      'vae-encode 对每张图片的 f32 [C,h,w] 潜变量，按清单顺序',
+      'vae-encode 對每張圖片的 f32 [C,h,w] 潛變量，按清單順序'],
+  'port.train-lora.manifest': ['', 'training-dataset 的清单（一个节拍）',
+      'training-dataset 的清單（一個節拍）'],
+  'port.train-lora.model': ['',
+      '可选：来自 model-select 源的共享模型引用',
+      '可選：來自 model-select 源的共享模型引用'],
+  'port.train-lora.optimizer': ['',
+      '可选：optimizer-select 的配置（默认 AdamW）；多个节拍各跑一个训练任务',
+      '可選：optimizer-select 的組態（預設 AdamW）；多個節拍各跑一個訓練任務'],
+  'port.train-lora.previews': ['',
+      '每个检查点的预览潜变量，f32 [C,h,w]，给 vae-decode',
+      '每個檢查點的預覽潛變量，f32 [C,h,w]，給 vae-decode'],
+  'port.train-lora.checkpoints': ['',
+      '每保存一个适配器发一个节拍 {path, step, loss, trigger_word}',
+      '每儲存一個適配器發一個節拍 {path, step, loss, trigger_word}'],
+  'port.train-lora.metrics': ['',
+      '每步一个节拍 {step, loss, lr, grad_norm, sec}',
+      '每步一個節拍 {step, loss, lr, grad_norm, sec}'],
+
+  // ---- Diffusion Sampler (generative) ----
+  'stage.diffusion-sampler-select.name': ['', '扩散采样器', '擴散取樣器'],
+  'stage.diffusion-sampler-select.doc': ['',
+      '选择扩散采样器/积分器（euler | heun | dpmpp_2m | dpmpp_sde | dmd），'
+      + '把它的配置作为 FlexData 节拍发出，供 generate-image 阶段锁存。与 '
+      + 'scheduler-select 配套。语言模型的 token 采样器请改用 '
+      + 'sampler-select。0 入 / 1 出（只发一次）。',
+      '選擇擴散取樣器/積分器（euler | heun | dpmpp_2m | dpmpp_sde | dmd），'
+      + '把它的組態作為 FlexData 節拍發出，供 generate-image 階段鎖存。與 '
+      + 'scheduler-select 配套。語言模型的 token 取樣器請改用 '
+      + 'sampler-select。0 入 / 1 出（只發一次）。'],
+  'cfg.diffusion-sampler-select.method': ['',
+      '采样方法：euler（默认）| heun | dpmpp_2m | dpmpp_sde | dmd（'
+      + 'Boogu-Image Turbo 的少步学生模型：先跳到 x0 再重新加噪；只对 DMD '
+      + '蒸馏过的检查点有意义）',
+      '取樣方法：euler（預設）| heun | dpmpp_2m | dpmpp_sde | dmd（'
+      + 'Boogu-Image Turbo 的少步學生模型：先跳到 x0 再重新加噪；只對 DMD '
+      + '蒸餾過的檢查點有意義）'],
+  'cfg.diffusion-sampler-select.eta': ['',
+      'dpmpp_sde 的随机性强度，0 = 确定性（默认 1.0）',
+      'dpmpp_sde 的隨機性強度，0 = 確定性（預設 1.0）'],
+  'cfg.diffusion-sampler-select.s_noise': ['',
+      'dpmpp_sde 附加噪声的比例（默认 1.0）',
+      'dpmpp_sde 附加雜訊的比例（預設 1.0）'],
+  'cfg.diffusion-sampler-select.seed': ['',
+      'dpmpp_sde / dmd 重新加噪的随机种子（默认 0）',
+      'dpmpp_sde / dmd 重新加噪的隨機種子（預設 0）'],
+  'cfg.diffusion-sampler-select.conditioning_sigma': ['',
+      '仅 dmd：噪声计划的起始 sigma，linspace(该值, 1, steps+1)[:-1]（默认 '
+      + '0.0——参考实现的图像编辑设定；文生图脚本传 0.001）',
+      '僅 dmd：雜訊排程的起始 sigma，linspace(該值, 1, steps+1)[:-1]（預設 '
+      + '0.0——參考實作的影像編輯設定；文生圖指令碼傳 0.001）'],
+  'port.diffusion-sampler-select.sampler': ['',
+      '采样器配置 {sampler,method,eta,s_noise,seed,+conditioning_sigma}',
+      '取樣器組態 {sampler,method,eta,s_noise,seed,+conditioning_sigma}'],
+
+  // ---- Generate Image (generative) ----
+  'stage.generate-audio.name': ['', '生成音频', '生成音訊'],
+  'stage.generate-audio.doc': ['',
+      '根据风格提示词和歌词生成歌曲（YuE2，metal）：先规划 ABC 乐谱，再写出歌'
+      + '曲的语义 token，最后用流匹配生成供 audio-vae-decode 解码的潜空间音频'
+      + '。',
+      '根據風格提示詞和歌詞生成歌曲（YuE2，metal）：先規劃 ABC 樂譜，再寫出歌'
+      + '曲的語義 token，最後用流匹配生成供 audio-vae-decode 解碼的潛空間音訊'
+      + '。'],
+  'cfg.generate-audio.hf_dir': ['',
+      '音频生成模型：models 数据库中的键或模型目录。目前支持 YuE2（m-a-p/YuE2'
+      + '-3B）。VAE 不在这里——请把 audio_latent 接到 audio-vae-decode，并在那'
+      + '里使用 m-a-p/YuE2-Vae',
+      '音訊生成模型：models 資料庫中的鍵或模型目錄。目前支援 YuE2（m-a-p/YuE2'
+      + '-3B）。VAE 不在這裡——請把 audio_latent 接到 audio-vae-decode，並在那'
+      + '裡使用 m-a-p/YuE2-Vae'],
+  'cfg.generate-audio.style': ['',
+      '风格提示词——曲风、情绪、乐器、人声（即 [Tags] 段）。提示节拍中的 "styl'
+      + 'e" 会覆盖它',
+      '風格提示詞——曲風、情緒、樂器、人聲（即 [Tags] 段）。提示節拍中的 "styl'
+      + 'e" 會覆蓋它'],
+  'cfg.generate-audio.lyrics': ['',
+      '歌词，用 [Verse] / [Chorus] / [Bridge] / [Intro] / [Outro] 标题分段。'
+      + '提示节拍会覆盖它',
+      '歌詞，用 [Verse] / [Chorus] / [Bridge] / [Intro] / [Outro] 標題分段。'
+      + '提示節拍會覆蓋它'],
+  'cfg.generate-audio.abc': ['',
+      '可选：ABC 记谱法的乐谱，用于翻唱或改编（需要 cot 为 melody 或 full）。'
+      + '留空则由模型自行谱写',
+      '選用：ABC 記譜法的樂譜，用於翻唱或改編（需要 cot 為 melody 或 full）。'
+      + '留空則由模型自行譜寫'],
+  'cfg.generate-audio.cot': ['',
+      '规划方式："full"（旋律加和弦，默认）、"melody"（仅旋律——翻唱时推荐）、'
+      + '"off"（不写乐谱）',
+      '規劃方式："full"（旋律加和弦，預設）、"melody"（僅旋律——翻唱時建議）、'
+      + '"off"（不寫樂譜）'],
+  'cfg.generate-audio.seed': ['',
+      'token 采样与流匹配噪声的随机种子',
+      'token 取樣與流匹配雜訊的隨機種子'],
+  'cfg.generate-audio.cfg_scale': ['',
+      '歌曲阶段的文本引导强度；< 0 表示沿用协议默认值（full/melody 为 1.0，of'
+      + 'f 为 1.01）。大于 1 时歌曲阶段的解码开销加倍',
+      '歌曲階段的文字引導強度；< 0 表示沿用協定預設值（full/melody 為 1.0，of'
+      + 'f 為 1.01）。大於 1 時歌曲階段的解碼成本加倍'],
+  'cfg.generate-audio.ode_steps': ['',
+      '流匹配中点法步数（每步两次模型前向）；发布协议为 32',
+      '流匹配中點法步數（每步兩次模型前向）；發布協定為 32'],
+  'cfg.generate-audio.max_seconds': ['',
+      '歌曲长度上限（秒）；0 = 协议上限（9000 个 token，即 6 分钟）。模型会在'
+      + '此之前自行结束歌曲',
+      '歌曲長度上限（秒）；0 = 協定上限（9000 個 token，即 6 分鐘）。模型會在'
+      + '此之前自行結束歌曲'],
+  'cfg.generate-audio.abc_temperature': ['', '乐谱采样温度', '樂譜取樣溫度'],
+  'cfg.generate-audio.abc_top_p': ['',
+      '乐谱的 nucleus（top-p）概率质量',
+      '樂譜的 nucleus（top-p）機率質量'],
+  'cfg.generate-audio.abc_top_k': ['', '乐谱的 top-k', '樂譜的 top-k'],
+  'cfg.generate-audio.abc_repetition_penalty': ['',
+      '乐谱的重复惩罚，作用于最近 100 个 token',
+      '樂譜的重複懲罰，作用於最近 100 個 token'],
+  'cfg.generate-audio.song_temperature': ['',
+      '歌曲 token 的采样温度',
+      '歌曲 token 的取樣溫度'],
+  'cfg.generate-audio.song_top_p': ['',
+      '歌曲 token 的 nucleus（top-p）概率质量',
+      '歌曲 token 的 nucleus（top-p）機率質量'],
+  'cfg.generate-audio.song_top_k': ['',
+      '歌曲 token 的 top-k',
+      '歌曲 token 的 top-k'],
+  'cfg.generate-audio.song_repetition_penalty': ['',
+      '歌曲 token 的重复惩罚，作用于最近 50 个 token',
+      '歌曲 token 的重複懲罰，作用於最近 50 個 token'],
+  'cfg.generate-audio.lm_quant': ['',
+      '自回归部分（写乐谱和歌曲 token 的那一半）如何驻留："w8"（默认）在载入'
+      + '时于内存中把它的投影量化为仿射 8 位 group-64——少占 1.26 GB，歌曲阶段'
+      + '也更快（每个 token 都要读一遍全部权重），与参考实现的 fp32 结果的接近'
+      + '程度和 bf16 相同；"bf16" 保持官方原样。流匹配部分始终是 bf16',
+      '自迴歸部分（寫樂譜和歌曲 token 的那一半）如何駐留："w8"（預設）在載入'
+      + '時於記憶體中把它的投影量化為仿射 8 位元 group-64——少佔 1.26 GB，歌曲'
+      + '階段也更快（每個 token 都要讀一遍全部權重），與參考實作的 fp32 結果的'
+      + '接近程度和 bf16 相同；"bf16" 保持官方原樣。流匹配部分始終是 bf16'],
+  'cfg.generate-audio.i8_gemm': ['',
+      '加速模式（有损）：流匹配中的大 GEMM 用动态 int8 的 matmul2d 计算，每个'
+      + ' GEMM 约 1e-2 的误差。仅限矩阵核心——这是 M5 的路径；其他机器保持稠密'
+      + '。环境变量 VPIPE_I8_GEMM 可覆盖',
+      '加速模式（有損）：流匹配中的大 GEMM 以動態 int8 的 matmul2d 計算，每個'
+      + ' GEMM 約 1e-2 的誤差。僅限矩陣核心——這是 M5 的路徑；其他機器維持稠密'
+      + '。環境變數 VPIPE_I8_GEMM 可覆蓋'],
+  'cfg.generate-audio.ane_ffn': ['',
+      '加速前馈（fp16）：把流匹配阶段 SwiGLU 的各行在 Apple 神经网络引擎与 GP'
+      + 'U 之间拆分并发运行——除 ANE 的 fp16 精度外完全等价（实测与参考 fp32 '
+      + '的偏差 0.0206，GPU 为 0.0191）。面向没有 GPU 矩阵核心的 M4 系列。模'
+      + '块大小固定，与歌曲长度无关；是否装得下由资源规划决定',
+      '加速前饋（fp16）：把流匹配階段 SwiGLU 的各行在 Apple 神經網路引擎與 GP'
+      + 'U 之間拆分並行執行——除 ANE 的 fp16 精度外完全等價（實測與參考 fp32 '
+      + '的偏差 0.0206，GPU 為 0.0191）。面向沒有 GPU 矩陣核心的 M4 系列。模'
+      + '組大小固定，與歌曲長度無關；是否容得下由資源規劃決定'],
+  'cfg.generate-audio.ane_rows': ['',
+      '交给 ANE 的前馈行比例；0（默认）按两个引擎实测的耗时自动平衡',
+      '交給 ANE 的前饋行比例；0（預設）依兩個引擎實測的耗時自動平衡'],
+  'cfg.generate-audio.ane_layers': ['',
+      '最多拆分 28 层中的多少层；0（默认）= 全部',
+      '最多拆分 28 層中的多少層；0（預設）= 全部'],
+  'cfg.generate-audio.sage_attn': ['',
+      '加速注意力（有损）：流匹配的 QK^T 用 INT8 计算，K 先减去均值。仅限矩阵'
+      + '核心——这是 M5 的指令；其他机器会提示一次并保持稠密计算',
+      '加速注意力（有損）：流匹配的 QK^T 以 INT8 計算，K 先減去平均值。僅限矩'
+      + '陣核心——這是 M5 的指令；其他機器會提示一次並維持稠密計算'],
+  'cfg.generate-audio.sage_dense_layers': ['',
+      'sage_attn 保持原数据类型的前几层',
+      'sage_attn 維持原資料型別的前幾層'],
+  'cfg.generate-audio.sol_attn': ['',
+      '加速注意力（有损）：Sol-Attn 在流匹配注意力（[文本前缀 ; 歌曲 token ; '
+      + '潜变量]）上按整块路由键：代理分数保留的块精确计算，其余用质心代替。'
+      + '文本前缀（指令、风格、歌词、乐谱）始终精确计算',
+      '加速注意力（有損）：Sol-Attn 在流匹配注意力（[文字前綴 ; 歌曲 token ; '
+      + '潛變數]）上按整塊路由鍵：代理分數保留的塊精確計算，其餘以質心代替。'
+      + '文字前綴（指令、風格、歌詞、樂譜）始終精確計算'],
+  'cfg.generate-audio.sol_tau': ['',
+      'Sol-Attn 阈值，以查询块自身代理分数分布的标准差为单位；越高保留的块越'
+      + '少。0 并非稠密：低于平均的块仍会被丢弃',
+      'Sol-Attn 閾值，以查詢塊自身代理分數分布的標準差為單位；越高保留的塊越'
+      + '少。0 並非稠密：低於平均的塊仍會被捨棄'],
+  'cfg.generate-audio.sol_dense_layers': ['',
+      'sol_attn 保持稠密的前几层',
+      'sol_attn 維持稠密的前幾層'],
+  'cfg.generate-audio.sol_key_block': ['',
+      '每个 Sol 质心汇总的键数：32 或 64；0（默认）取 64',
+      '每個 Sol 質心彙總的鍵數：32 或 64；0（預設）取 64'],
+  'cfg.generate-audio.sol_local_radius': ['',
+      '查询所在块两侧始终精确计算的键块数',
+      '查詢所在塊兩側始終精確計算的鍵塊數'],
+  'port.generate-audio.prompt': ['',
+      '可选 FlexData：字符串（即歌词），或包含 style / tags、lyrics、abc、cot'
+      + '、seed、cfg_scale 中任意键的对象；缺少的键回退到配置。每个节拍生成一'
+      + '首歌。未连接时，本阶段按配置生成一首歌',
+      '選用 FlexData：字串（即歌詞），或包含 style / tags、lyrics、abc、cot、'
+      + 'seed、cfg_scale 中任意鍵的物件；缺少的鍵回退到設定。每個節拍生成一首'
+      + '歌。未連接時，本階段依設定生成一首歌'],
+  'port.generate-audio.audio_latent': ['',
+      'f32 潜空间音频 [1, 64, frames]，每秒 25 帧（sideband 中的 latents_per_'
+      + 'second）；用 audio-vae-decode 解码',
+      'f32 潛空間音訊 [1, 64, frames]，每秒 25 幀（sideband 中的 latents_per_'
+      + 'second）；用 audio-vae-decode 解碼'],
+  'port.generate-audio.score': ['',
+      'FlexData 字符串：歌曲的 ABC 乐谱（模型规划的，或输入提供的）。cot=off '
+      + '时不输出',
+      'FlexData 字串：歌曲的 ABC 樂譜（模型規劃的，或輸入提供的）。cot=off 時'
+      + '不輸出'],
+  'stage.generate-image.name': ['', '生成图片', '生成影像'],
+  'stage.generate-image.doc': ['',
+      '扩散 DiT 去噪器：条件（来自 diffusion-conditioner 阶段）-> 模型族的 '
+      + 'MMDiT -> FlowMatchEuler -> 潜变量，运行在 metal-compute 后端。这是'
+      + '拆分出来的去噪器一半（下游接 vae-decode）。',
+      '擴散 DiT 去噪器：條件（來自 diffusion-conditioner 階段）-> 模型族的 '
+      + 'MMDiT -> FlowMatchEuler -> 潛變數，執行在 metal-compute 後端。這是'
+      + '拆分出來的去噪器一半（下游接 vae-decode）。'],
+  'cfg.generate-image.hf_dir': ['',
+      'Krea-2-Turbo / FLUX.2 模型目录（text_encoder/、transformer/、'
+      + 'tokenizer/）；可以是原版管道，也可以是经 model-quantize 处理过的自'
+      + '包含管道。可选：model 输入端口上的 model-select 源会覆盖它',
+      'Krea-2-Turbo / FLUX.2 模型目錄（text_encoder/、transformer/、'
+      + 'tokenizer/）；可以是原版管道，也可以是經 model-quantize 處理過的自'
+      + '包含管道。可選：model 輸入埠上的 model-select 來源會覆寫它'],
+  'cfg.generate-image.dit_dir': ['',
+      '覆盖 DiT 目录（例如一个量化过的 4/8 位 DiT）；否则取 <hf_dir>/'
+      + 'transformer。Krea-2 也接受 Krea 自有布局的单个 .safetensors 文件'
+      + '——社区微调模型，包括 FP8；Qwen-Image-2.1 也接受以 diffusers 名称'
+      + '存放的单文件 DiT（unsloth 的 FP8）——均按原样读取，无需转换',
+      '覆寫 DiT 目錄（例如一個量化過的 4/8 位元 DiT）；否則取 <hf_dir>/'
+      + 'transformer。Krea-2 也接受 Krea 自有佈局的單個 .safetensors 檔案'
+      + '——社群微調模型，包括 FP8；Qwen-Image-2.1 也接受以 diffusers 名稱'
+      + '存放的單檔 DiT（unsloth 的 FP8）——均按原樣讀取，無需轉換'],
+  'cfg.generate-image.strength': ['',
+      '图生图强度，取值 [0,1]；0（默认）表示从噪声开始的文生图（初始潜变量'
+      + '由 vae-encode 从 `latent` 输入端口送入）',
+      '圖生圖強度，取值 [0,1]；0（預設）表示從雜訊開始的文生圖（初始潛變數'
+      + '由 vae-encode 從 `latent` 輸入埠送入）'],
+  'cfg.generate-image.height': ['',
+      '输出高度，须为 16 的倍数。与 width 一同留空 = 按该模型族的 VAE 缩放'
+      + '比例从 ref_latent0（5 号输入端口）推断；若也没有参考图，则为 256',
+      '輸出高度，須為 16 的倍數。與 width 一同留空 = 按該模型族的 VAE 縮放'
+      + '比例從 ref_latent0（5 號輸入埠）推斷；若也沒有參考影像，則為 256'],
+  'cfg.generate-image.width': ['',
+      '输出宽度，须为 16 的倍数。与 height 一同留空 = 从 ref_latent0（5 号'
+      + '输入端口）推断；若也没有参考图，则为 256',
+      '輸出寬度，須為 16 的倍數。與 height 一同留空 = 從 ref_latent0（5 號'
+      + '輸入埠）推斷；若也沒有參考影像，則為 256'],
+  'cfg.generate-image.steps': ['',
+      'turbo 采样器步数（默认 8）',
+      'turbo 取樣器步數（預設 8）'],
+  'cfg.generate-image.seed': ['',
+      '初始噪声的随机种子（默认 0）。一次运行的第一张图用它；之后各张用什么，'
+      + '由 `seed_sequence` 决定',
+      '初始雜訊的隨機種子（預設 0）。一次執行的第一張影像用它；之後各張用什麼，'
+      + '由 `seed_sequence` 決定'],
+  'cfg.generate-image.seed_sequence': ['',
+      '一次运行生成多张图时（每个节拍一条提示词、一个文件夹的参考图）每一张的'
+      + '种子。“increment”（默认）：依生成顺序取 `seed`、`seed`+1、`seed`+2……'
+      + '，任何一张都能单独重跑，只要把它的号码填回 `seed`。“randomize”：忽略'
+      + ' `seed`，每张都由时钟取一个；用过的每个种子都会记入日志，且都能填回 '
+      + '`seed` 重跑。“keep”：每张都用 `seed`，适合在同一份噪声上比较提示词',
+      '一次執行產生多張影像時（每個節拍一條提示詞、一個資料夾的參考影像）每一張'
+      + '的種子。「increment」（預設）：依產生順序取 `seed`、`seed`+1、`seed`+2'
+      + '……，任何一張都能單獨重跑，只要把它的號碼填回 `seed`。「randomize」：'
+      + '忽略 `seed`，每張都由時鐘取一個；用過的每個種子都會記入日誌，且都能填'
+      + '回 `seed` 重跑。「keep」：每張都用 `seed`，適合在同一份雜訊上比較提示詞'],
+  'cfg.generate-image.guidance_scale': ['',
+      '无分类器引导强度；1（默认）表示关闭 CFG。大于 1 且 1 号输入端口接了'
+      + '负向提示词时，每一步会多跑一次 DiT 前向',
+      '無分類器引導強度；1（預設）表示關閉 CFG。大於 1 且 1 號輸入埠接了負'
+      + '向提示詞時，每一步會多跑一次 DiT 前向'],
+  'cfg.generate-image.init_latents': ['',
+      '调试用：原始 f32 打包初始潜变量 [img_seq, 64]（用于复现/黄金样本）',
+      '偵錯用：原始 f32 打包初始潛變數 [img_seq, 64]（用於重現/黃金樣本）'],
+  'cfg.generate-image.ane_ffn': ['',
+      '加速前馈（有损，fp16）：把 block 的前馈放到 Apple 神经引擎上执行——在 '
+      + 'M4 上它是芯片上唯一闲置的算力：GPU 的 f16 GEMM 已经处在 roofline 的 '
+      + '84-92%，而它的整数 MAD 只有 f16 速率的四分之一，所以那边没有 int8 可'
+      + '挖。行在两个引擎之间切分并发执行。ANE 只跑一个共享模块，其权重是运行'
+      + '时输入，按 block 暂存进 IOSurface 缓冲：它的内存是固定的（Krea-2 约 '
+      + '1.4 GB，无论多少 block 用它），按形状编译一次之后即被缓存，在 Krea-2 '
+      + '的前馈上实测 10.4 TOPS。该模块是否放得下由资源计划决定。4/8 位仿射检'
+      + '查点会按 block 反量化进这些缓冲。不实现它的模型族会忽略该项——它们会'
+      + '在日志里说明',
+      '加速前饋（失真，fp16）：把 block 的前饋放到 Apple 神經引擎上執行——在 '
+      + 'M4 上它是晶片上唯一閒置的算力：GPU 的 f16 GEMM 已經處在 roofline 的 '
+      + '84-92%，而它的整數 MAD 只有 f16 速率的四分之一，所以那邊沒有 int8 可'
+      + '挖。行在兩個引擎之間切分並行執行。ANE 只跑一個共享模組，其權重是執行'
+      + '階段輸入，按 block 暫存進 IOSurface 緩衝：它的記憶體是固定的（Krea-2 '
+      + '約 1.4 GB，無論多少 block 用它），按形狀編譯一次之後即被快取，在 '
+      + 'Krea-2 的前饋上實測 10.4 TOPS。該模組是否放得下由資源計畫決定。4/8 '
+      + '位元仿射檢查點會按 block 反量化進這些緩衝。不實作它的模型族會忽略該'
+      + '項——它們會在日誌裡說明'],
+  'cfg.generate-image.ane_qkv': ['',
+      '把融合的 q|k|v 投影也放到 ANE 上，作为前馈模块之外的第二个模块，切分方'
+      + '式相同，并共用同一个 ANE worker。需要 ane_ffn：资源计划把两个模块作为'
+      + '一个整体来预订，要给就一起给。它在前馈之外还要占用自己的权重槽位和暂'
+      + '存，因此在只有前馈时会被批准的场合，成对申请仍可能被拒。已由 Krea-2'
+      + '（q|k|v|gate）、FLUX.2（double block 的图像 q|k|v）、Qwen-Image-2.1 '
+      + '与 Z-Image（每个主 block 的 q|k|v）实现。在 M4 Pro 上以 1024^2、前馈'
+      + '已在 ANE 的前提下实测：Qwen-Image-2.1 每次前向再快 1.08 倍。环境变量 '
+      + 'VPIPE_KREA2_ANE_QKV=1 / VPIPE_FLUX2_ANE_QKV=1 / '
+      + 'VPIPE_QWEN_IMAGE21_ANE_QKV=1 / VPIPE_Z_IMAGE_ANE_QKV=1 同样可以打开',
+      '把融合的 q|k|v 投影也放到 ANE 上，作為前饋模組之外的第二個模組，切分方'
+      + '式相同，並共用同一個 ANE worker。需要 ane_ffn：資源計畫把兩個模組作為'
+      + '一個整體來預訂，要給就一起給。它在前饋之外還要占用自己的權重槽位與暫'
+      + '存，因此在只有前饋時會被核准的場合，成對申請仍可能被拒。已由 Krea-2'
+      + '（q|k|v|gate）、FLUX.2（double block 的影像 q|k|v）、Qwen-Image-2.1 '
+      + '與 Z-Image（每個主 block 的 q|k|v）實作。在 M4 Pro 上以 1024^2、前饋'
+      + '已在 ANE 的前提下實測：Qwen-Image-2.1 每次前向再快 1.08 倍。環境變數 '
+      + 'VPIPE_KREA2_ANE_QKV=1 / VPIPE_FLUX2_ANE_QKV=1 / '
+      + 'VPIPE_QWEN_IMAGE21_ANE_QKV=1 / VPIPE_Z_IMAGE_ANE_QKV=1 同樣可以開啟'],
+  'cfg.generate-image.ane_rows': ['',
+      '前馈中分给 ANE 的行的比例，其余由 GPU 并发承担（前馈里各行相互独立，所'
+      + '以这个切分是精确的——没有部分和，也没有接缝）。0（默认）让模型族按两'
+      + '个引擎的实测速率自行平衡；ANE 约 12.6 TOPS 对 GPU 约 7 TFLOP/s，会落'
+      + '在 0.64 附近。填 1 表示整个前馈交给 ANE，并在这段时间内让 GPU 闲置。'
+      + '跨引擎本身是免费的：在提交次数相同的纯 GPU 对照下实测为 -0.3 到 -1.0 '
+      + '毫秒，也就是说 ANE 这一段与 GPU 的提交/等待重叠，而不是排在它后面',
+      '前饋中分給 ANE 的行的比例，其餘由 GPU 並行承擔（前饋裡各行相互獨立，所'
+      + '以這個切分是精確的——沒有部分和，也沒有接縫）。0（預設）讓模型族按兩'
+      + '個引擎的實測速率自行平衡；ANE 約 12.6 TOPS 對 GPU 約 7 TFLOP/s，會落'
+      + '在 0.64 附近。填 1 表示整個前饋交給 ANE，並在這段時間內讓 GPU 閒置。'
+      + '跨引擎本身是免費的：在提交次數相同的純 GPU 對照下實測為 -0.3 到 -1.0 '
+      + '毫秒，也就是說 ANE 這一段與 GPU 的提交/等待重疊，而不是排在它後面'],
+  'cfg.generate-image.ane_templates': ['',
+      '预编译 ANE 模块模板所在的目录。运行时权重的前馈用不到它——那条路径自己'
+      + '生成图；保留该项是为了让既有的流水线仍能加载',
+      '預先編譯 ANE 模組範本所在的目錄。執行階段權重的前饋用不到它——那條路徑'
+      + '自己產生圖；保留該項是為了讓既有的處理管線仍能載入'],
+  'cfg.generate-image.ane_layers': ['',
+      '限制有多少个 block 使用 ANE 前馈；0（默认）表示每个 dense block 都用。'
+      + '这不是内存设置——这些 block 共用一个成本固定的模块——所以只有在你有意'
+      + '只覆盖一部分 block 时才设它，例如做基准测试',
+      '限制有多少個 block 使用 ANE 前饋；0（預設）表示每個 dense block 都用。'
+      + '這不是記憶體設定——這些 block 共用一個成本固定的模組——所以只有在你有'
+      + '意只涵蓋一部分 block 時才設它，例如做基準測試'],
+  'cfg.generate-image.sage_attn': ['',
+      '加速注意力（有损）：SageAttention 把 flash 内核里的 QK^T 乘积放到 INT8 '
+      + '上做，每个注意力 block 一个 scale，且 K 以 K - mean(K)（沿 token 求'
+      + '均值）量化——这一步是精确的而非近似，因为按通道的平移会把一行里的每个'
+      + '分数移动同样的量，softmax 看不见它。P*V 仍留在张量原本的 dtype。在 M5 '
+      + '上实测，8 头 x 20036 行 x 128：156.6 -> 130.6 毫秒（含量化前导，'
+      + '1.20 倍），对双精度参考的余弦为 0.99992，而 f16 内核同样是 0.99992。'
+      + '仅限矩阵核心——int8 片段 MMA 是 M5 指令，没有 ALU 回退路径，所以没有'
+      + '矩阵核心的机器会说明一次并走 dense。flux2、krea2 与 qwen-image 支持'
+      + '它；与 i8_gemm 相互独立，可以同时设置。默认关闭：它是一个近似，而它'
+      + '在哪些图像上安全，是关于模型的判断，不是关于内核的判断',
+      '加速注意力（失真）：SageAttention 把 flash 核心裡的 QK^T 乘積放到 INT8 '
+      + '上做，每個注意力 block 一個 scale，且 K 以 K - mean(K)（沿 token 求'
+      + '平均）量化——這一步是精確的而非近似，因為按通道的平移會把一列裡的每個'
+      + '分數移動同樣的量，softmax 看不見它。P*V 仍留在張量原本的 dtype。在 M5 '
+      + '上實測，8 頭 x 20036 行 x 128：156.6 -> 130.6 毫秒（含量化前導，'
+      + '1.20 倍），對雙精度參考的餘弦為 0.99992，而 f16 核心同樣是 0.99992。'
+      + '僅限矩陣核心——int8 片段 MMA 是 M5 指令，沒有 ALU 回退路徑，所以沒有'
+      + '矩陣核心的機器會說明一次並走 dense。flux2、krea2 與 qwen-image 支援'
+      + '它；與 i8_gemm 相互獨立，可以同時設定。預設關閉：它是一個近似，而它'
+      + '在哪些影像上安全，是關於模型的判斷，不是關於核心的判斷'],
+  'cfg.generate-image.sage_dense_layers': ['',
+      '开头有多少个 transformer block 保持张量原本的 dtype，不被 '
+      + 'SageAttention 触碰。0——默认值——表示每个 block 都量化',
+      '開頭有多少個 transformer block 保持張量原本的 dtype，不被 '
+      + 'SageAttention 觸碰。0——預設值——表示每個 block 都量化'],
+  'cfg.generate-image.i8_gemm': ['',
+      '加速模式（有损）：DiT 大块矩阵乘改用动态 int8 GEMM，速率约为 f16 的 '
+      + '2 倍，精度即 int8 水平；没有 NAX matmul2d（矩阵核心 GPU + 相应内核'
+      + '）时会被忽略。默认 false；环境变量 VPIPE_I8_GEMM 可覆盖',
+      '加速模式（失真）：DiT 大塊矩陣乘改用動態 int8 GEMM，速率約為 f16 的 '
+      + '2 倍，精度即 int8 水準；沒有 NAX matmul2d（矩陣核心 GPU + 相應核心'
+      + '）時會被忽略。預設 false；環境變數 VPIPE_I8_GEMM 可覆寫'],
+  'cfg.generate-image.sol_attn': ['',
+      '加速注意力（有损）：Sol-Attn 在在线 softmax 的过程中按整块 key 做路由，'
+      + '只对代理分数保留下来的那些块做注意力，其余的则用每块 key 的质心与 '
+      + 'value 之和来顶替。开销随保留下来的块的比例下降，而这个比例是数据的'
+      + '性质，每次运行都会报告。内置图像模型族中由 KREA-2 采用，作用在它的 '
+      + '[text; image] 联合自注意力上：文本前缀是精确参与的，因为对提示词 '
+      + 'token 取质心等于把提示词读了一半；并且在少于 16 个路由块时——大约 '
+      + '512x512 以下——该档位会拒绝启用，此时局部带、sink 与始终精确的尾部'
+      + '已经覆盖了整个序列。FLUX.2 同样采用它，作用在同一种联合自注意力上——'
+      + '包括带参考图的编辑，参考图的 token 就在序列里。FLUX.2 唯一会被拒绝的'
+      + '形状是 `klein_kv`：它的 cached step 让实时 query 去看“序列 + 拼接进来'
+      + '的参考 key”，而 fill step 会跑第二组 query——此时 key 不再是 query，'
+      + '质心会概括错的序列。这些 step 会自动保持 dense——把关的是几何形状，'
+      + '不是那个开关。qwen-image-edit 与 boogu-image 会忽略它，设置了它时'
+      + '本阶段会说明一次。已注册的模型族从加速参数包中读取它（见 '
+      + 'generative-models/image-model-registry.h）。在 M4 Pro 上于采用它的'
+      + '视频模型族中实测（minimax-h3，20036 行）：一个被路由的 block，其注意'
+      + '力从 3480 -> 1348 毫秒（2.58 倍），保留 26.1% 的 key 块。KREA-2 自身'
+      + '的速度没有测过；它的正确性测过（关闭路由与每层都 dense 两者逐字节'
+      + '相同）。图像 DiT 的序列比视频短，所以预期收益更小。与 i8_gemm 和 '
+      + 'sage_attn 相互独立，可与任一同时设置：i8_gemm 决定 block 的 GEMM '
+      + '怎么算，sage_attn 决定保留下来的块的 QK 乘积怎么算，而这一项决定'
+      + '哪些 key 块要算。默认关闭——它是一个近似，而它在哪些图像上安全，'
+      + '是关于模型的判断，不是关于内核的判断',
+      '加速注意力（失真）：Sol-Attn 在線上 softmax 的過程中按整塊 key 做路由，'
+      + '只對代理分數保留下來的那些塊做注意力，其餘的則用每塊 key 的質心與 '
+      + 'value 之和來頂替。開銷隨保留下來的塊的比例下降，而這個比例是資料的'
+      + '性質，每次執行都會報告。內建影像模型族中由 KREA-2 採用，作用在它的 '
+      + '[text; image] 聯合自注意力上：文字前綴是精確參與的，因為對提示詞 '
+      + 'token 取質心等於把提示詞讀了一半；並且在少於 16 個路由塊時——大約 '
+      + '512x512 以下——該檔位會拒絕啟用，此時區域帶、sink 與始終精確的尾部'
+      + '已經涵蓋了整個序列。FLUX.2 同樣採用它，作用在同一種聯合自注意力上——'
+      + '包括帶參考影像的編輯，參考影像的 token 就在序列裡。FLUX.2 唯一會被'
+      + '拒絕的形狀是 `klein_kv`：它的 cached step 讓即時 query 去看「序列 + '
+      + '拼接進來的參考 key」，而 fill step 會跑第二組 query——此時 key 不再是 '
+      + 'query，質心會概括錯的序列。這些 step 會自動保持 dense——把關的是幾何'
+      + '形狀，不是那個開關。qwen-image-edit 與 boogu-image 會忽略它，設定了'
+      + '它時本階段會說明一次。已註冊的模型族從加速參數包中讀取它（見 '
+      + 'generative-models/image-model-registry.h）。在 M4 Pro 上於採用它的'
+      + '影片模型族中實測（minimax-h3，20036 行）：一個被路由的 block，其注意'
+      + '力從 3480 -> 1348 毫秒（2.58 倍），保留 26.1% 的 key 塊。KREA-2 自身'
+      + '的速度沒有測過；它的正確性測過（關閉路由與每層都 dense 兩者逐位元組'
+      + '相同）。影像 DiT 的序列比影片短，所以預期收益更小。與 i8_gemm 和 '
+      + 'sage_attn 相互獨立，可與任一同時設定：i8_gemm 決定 block 的 GEMM '
+      + '怎麼算，sage_attn 決定保留下來的塊的 QK 乘積怎麼算，而這一項決定'
+      + '哪些 key 塊要算。預設關閉——它是一個近似，而它在哪些影像上安全，'
+      + '是關於模型的判斷，不是關於核心的判斷'],
+  'cfg.generate-image.sol_tau': ['',
+      'Sol-Attn 的路由阈值，单位是该 query 块自身代理分数分布的标准差。阈'
+      + '值为 mean + tau * sd，因此调高会保留更少的块：质量下降、速度上升。\n'
+      + '这里的默认值是 0（generate-video 为 1.0），因为本阶段原先的较高取'
+      + '值在实际图像图中被反馈会出现伪影。0 是仍会路由的最精确的点。\n'
+      + 'tau 0 并不等于 dense：阈值在均值处，低于均值的块仍会被丢弃。它只能'
+      + '减轻伪影，要完全不近似请将 sol_attn 设为 false。\n'
+      + '任何 tau 能省下多少，取决于分辨率而不是 tau 本身：注意力是'
+      + ' O(seq^2)，而 GEMM 是线性的，所以 Sol 在一步中的占比——以及整个层'
+      + '的价值——随图像增大而增长。在常见的图像尺寸上，无论 tau 怎么设都'
+      + '没有多少可分；它是在大尺寸上才划算的。在能够接受的图上把 tau 调到'
+      + ' 0.5-0.8，速度就在那里。\n'
+      + 'generate-video 保持 1.0：它的序列要长上数倍，那也是它已发布的配方'
+      + '被实测的地方，而本阶段的这次反馈尚未在那个长度上复核。',
+      'Sol-Attn 的路由閾值，單位是該 query 塊自身代理分數分布的標準差。閾'
+      + '值為 mean + tau * sd，因此調高會保留更少的塊：品質下降、速度上升。\n'
+      + '這裡的預設值是 0（generate-video 為 1.0），因為本階段原先的較高取'
+      + '值在實際影像圖中被回報會出現偽影。0 是仍會路由的最精確的點。\n'
+      + 'tau 0 並不等於 dense：閾值在均值處，低於均值的塊仍會被丟棄。它只能'
+      + '減輕偽影，要完全不近似請將 sol_attn 設為 false。\n'
+      + '任何 tau 能省下多少，取決於解析度而不是 tau 本身：注意力是'
+      + ' O(seq^2)，而 GEMM 是線性的，所以 Sol 在一步中的佔比——以及整個層'
+      + '的價值——隨影像增大而增長。在常見的影像尺寸上，無論 tau 怎麼設都'
+      + '沒有多少可分；它是在大尺寸上才划算的。在能夠接受的圖上把 tau 調到'
+      + ' 0.5-0.8，速度就在那裡。\n'
+      + 'generate-video 保持 1.0：它的序列要長上數倍，那也是它已發布的配方'
+      + '被實測的地方，而本階段的這次回報尚未在那個長度上複核。'],
+  'cfg.generate-image.sol_dense_layers': ['',
+      '开头有多少个 transformer block 保持 DENSE，不被 Sol-Attn 触碰。最前面'
+      + '的几个 block 正是残差流冗余最少的地方。0 表示每个 block 都路由',
+      '開頭有多少個 transformer block 保持 DENSE，不被 Sol-Attn 觸碰。最前面'
+      + '的幾個 block 正是殘差流冗餘最少的地方。0 表示每個 block 都路由'],
+  'cfg.generate-image.sol_key_block': ['',
+      '由一个质心概括多少个 key，也就是路由所依据的单位。只能是 32 或 64；'
+      + '0（默认）取 64。两者是相互权衡而不是一方压倒另一方，这正是两个都提供'
+      + '的原因。在 M4 Pro 上以 56 头 x 20036 行对 dense steel 实测：64 保留 '
+      + '19.1% 的 key 块、跑出 3.54 倍，32 保留 22.9-26.0%、跑出 2.79 倍——'
+      + '也就是说 32 做了更多的精确计算、更慢，同时也是两者中更准确的那个，'
+      + '因为一个质心概括 32 个 key 比概括 64 个更贴切。64 是速度的选择，32 '
+      + '是保真度的选择。更大的块测过，两项都更差，所以不提供',
+      '由一個質心概括多少個 key，也就是路由所依據的單位。只能是 32 或 64；'
+      + '0（預設）取 64。兩者是相互權衡而不是一方壓倒另一方，這正是兩個都提供'
+      + '的原因。在 M4 Pro 上以 56 頭 x 20036 行對 dense steel 實測：64 保留 '
+      + '19.1% 的 key 塊、跑出 3.54 倍，32 保留 22.9-26.0%、跑出 2.79 倍——'
+      + '也就是說 32 做了更多的精確計算、更慢，同時也是兩者中更準確的那個，'
+      + '因為一個質心概括 32 個 key 比概括 64 個更貼切。64 是速度的選擇，32 '
+      + '是保真度的選擇。更大的塊測過，兩項都更差，所以不提供'],
+  'cfg.generate-image.sol_local_radius': ['',
+      '在 query 自身所在块的两侧，各有多少个 key 块始终精确、从不被路由。块'
+      + '质心最不具代表性的地方，恰恰就是 query 区分度最高的地方，所以对角线'
+      + '附近不拿去投票。-1 连 query 自己所在的块也路由，那是一个消融实验，'
+      + '而不是一个设置',
+      '在 query 自身所在塊的兩側，各有多少個 key 塊始終精確、從不被路由。塊'
+      + '質心最不具代表性的地方，恰恰就是 query 區分度最高的地方，所以對角線'
+      + '附近不拿去投票。-1 連 query 自己所在的塊也路由，那是一個消融實驗，'
+      + '而不是一個設定'],
+  'cfg.generate-image.lora': ['',
+      '在运行时生效的 LoRA——每个被适配的投影计算 W x + scale * B (A x)，而'
+      + '不是把增量折进权重里；对 4 位基座而言，这就是“保住一个小修正”和“把'
+      + '它四舍五入抹掉”的区别。可以是一个已注册的模型、一个含单个 '
+      + '.safetensors 的目录，或指向该文件的路径。支持 Krea-2、FLUX.2、'
+      + 'Z-Image 与 Qwen-Image-2.1。加载时生效：它决定各 block 如何构建，因此 DiT 起来之后再改的节拍'
+      + '只会被报告并忽略。模型族 model-config 节拍上的 `lora` 会覆盖这里的'
+      + '设置',
+      '在執行階段生效的 LoRA——每個被套用的投影計算 W x + scale * B (A x)，'
+      + '而不是把增量摺進權重裡；對 4 位元基座而言，這就是「保住一個小修正'
+      + '」和「把它四捨五入抹掉」的差別。可以是一個已註冊的模型、一個含單個'
+      + ' .safetensors 的目錄，或指向該檔案的路徑。支援 Krea-2、FLUX.2、'
+      + 'Z-Image 與 Qwen-Image-2.1。載入時生效：它決定各 block 如何建構，因此 DiT 起來之後再改的節拍'
+      + '只會被報告並忽略。模型族 model-config 節拍上的 `lora` 會覆寫這裡的'
+      + '設定'],
+  'cfg.generate-image.lora_scale': ['',
+      '适配器强度，按每次前向生效。可实时调整：它作为常数随 GEMM 一起计算，'
+      + '因此无需重新加载即可扫参。1.0 = 与训练时一致；0 会跳过两个适配器 '
+      + 'GEMM，所以关掉就是真的关掉',
+      '轉接器強度，按每次前向生效。可即時調整：它作為常數隨 GEMM 一起計算，'
+      + '因此無需重新載入即可掃參。1.0 = 與訓練時一致；0 會跳過兩個轉接器 '
+      + 'GEMM，所以關掉就是真的關掉'],
+  'cfg.generate-image.lora2': ['',
+      '第二个运行时 LoRA，与第一个同时生效：每个被适配的投影计算 W x + s1 '
+      + 'B1 (A1 x) + s2 B2 (A2 x)。它存在的意义在于这种搭配：`lora` 放蒸馏'
+      + '或身份适配器，这里放风格适配器，也就是真正需要调节的那一个——但两个'
+      + '槽位本身并无区别：谁放哪个都行，单独用 `lora2` 也完全正常。可接受'
+      + '的写法与 `lora` 相同，加载时机也一样；模型族 model-config 节拍上的'
+      + ' `lora2` 会覆盖这里的设置。代价是多一对细长 GEMM；基础权重仍然只读'
+      + '一次。与 `lora` 一样在加载时生效',
+      '第二個執行階段 LoRA，與第一個同時生效：每個被套用的投影計算 W x + s1'
+      + ' B1 (A1 x) + s2 B2 (A2 x)。它存在的意義在於這種搭配：`lora` 放蒸餾'
+      + '或身分轉接器，這裡放風格轉接器，也就是真正需要調節的那一個——但兩個'
+      + '槽位本身並無區別：誰放哪個都行，單獨用 `lora2` 也完全正常。可接受'
+      + '的寫法與 `lora` 相同，載入時機也一樣；模型族 model-config 節拍上的'
+      + ' `lora2` 會覆寫這裡的設定。代價是多一對細長 GEMM；基礎權重仍然只讀'
+      + '一次。與 `lora` 一樣在載入時生效'],
+  'cfg.generate-image.lora2_scale': ['',
+      '`lora2` 的强度，按每次前向生效，且与 `lora_scale` 相互独立——这正是第'
+      + '二个槽位的意义所在：一个适配器保持它训练时的强度，另一个则可随意扫'
+      + '参。填 0 会跳过它的两个 GEMM',
+      '`lora2` 的強度，按每次前向生效，且與 `lora_scale` 相互獨立——這正是第'
+      + '二個槽位的意義所在：一個轉接器保持它訓練時的強度，另一個則可隨意掃'
+      + '參。填 0 會跳過它的兩個 GEMM'],
+  'cfg.generate-image.reference_mode': ['',
+      '参考潜变量与条件节拍如何配对。“auto”（默认）即本阶段每个输入都遵循的'
+      + '规则：来源只发一个节拍就结束的参考图，用于每一次生成（一张源图，多条'
+      + '提示词）；持续发送的，则每次生成取用一个节拍（一个要修复或编辑的文件'
+      + '夹）。“latch”即使来源一直不结束，也在整段运行中保持第一张参考图——例如'
+      + '永远不会结束数据流的实时输入。“per_beat”要求每次生成都有一张新的参考'
+      + '图，参考图一停就结束运行，哪怕只来过一张',
+      '參考潛變數與條件節拍如何配對。「auto」（預設）即本階段每個輸入都遵循的'
+      + '規則：來源只發一個節拍就結束的參考影像，用於每一次產生（一張來源影像，'
+      + '多條提示詞）；持續發送的，則每次產生取用一個節拍（一個要修復或編輯的'
+      + '資料夾）。「latch」即使來源一直不結束，也在整段執行中保持第一張參考影像'
+      + '——例如永遠不會結束資料流的即時輸入。「per_beat」要求每次產生都有一張'
+      + '新的參考影像，參考影像一停就結束執行，哪怕只來過一張'],
+  'port.generate-image.conditioning': ['',
+      '来自 diffusion-conditioner 阶段的条件张量（形状与类型随模型族而定）',
+      '來自 diffusion-conditioner 階段的條件張量（形狀與型別隨模型族而定）'],
+  'port.generate-image.neg_conditioning': ['',
+      '可选的负向条件（条件生成阶段的 1 号输出端口），用于无分类器引导',
+      '可選的負向條件（條件產生階段的 1 號輸出埠），用於無分類器引導'],
+  'port.generate-image.model': ['',
+      '可选的共享模型引用，来自 model-select 源；覆盖 hf_dir 配置',
+      '可選的共享模型參照，來自 model-select 來源；覆寫 hf_dir 設定'],
+  'port.generate-image.sampler': ['',
+      '可选的采样器配置 FlexData（diffusion-sampler-select）',
+      '可選的取樣器組態 FlexData（diffusion-sampler-select）'],
+  'port.generate-image.scheduler': ['',
+      '可选的噪声计划配置 FlexData（scheduler-select）',
+      '可選的雜訊排程組態 FlexData（scheduler-select）'],
+  'port.generate-image.ref_latent0': ['',
+      '可选的参考潜变量 0（来自 vae-encode 的通道优先 f32）；用于 FLUX.2/'
+      + 'QIE 的条件，或 Krea-2 的图生图初值',
+      '可選的參考潛變數 0（來自 vae-encode 的通道優先 f32）；用於 FLUX.2/'
+      + 'QIE 的條件，或 Krea-2 的圖生圖初值'],
+  'port.generate-image.ref_latent1': ['',
+      '可选的参考潜变量 1（来自 vae-encode 的通道优先 f32）；FLUX.2/QIE 的'
+      + '第二个参考（RoPE 位置不同）；Krea-2 会忽略它',
+      '可選的參考潛變數 1（來自 vae-encode 的通道優先 f32）；FLUX.2/QIE 的'
+      + '第二個參考（RoPE 位置不同）；Krea-2 會忽略它'],
+  'port.generate-image.model_config': ['',
+      '可选的模型专属参数，来自常驻模型族自己的配置源——flux2-model-config（'
+      + 'klein-kv 配方及其 `lora`），或 krea2-model-config（它的 `lora`）。'
+      + '树外模型族自己的配置源也接在这里。这些参数原样传给该族自己的参数'
+      + '结构，本阶段不解读，因此这里不设任何该类旋钮。接上它会把 DiT 的加'
+      + '载推迟到第一个节拍，因为像 klein_kv 这样的配方——或者决定各 block '
+      + '如何构建的适配器——必须在读取权重之前就确定。适配器相关的键只在这里'
+      + '读取，别无他处：只接到 diffusion-conditioner 的 krea2-model-config'
+      + ' 会送达它的 `vl_*` 各键，而它的 `lora` 则悄无声息地无处生效',
+      '可選的模型專屬參數，來自常駐模型族自己的組態來源——flux2-model-config'
+      + '（klein-kv 配方及其 `lora`），或 krea2-model-config（它的 `lora`）'
+      + '。樹外模型族自己的組態來源也接在這裡。這些參數原樣傳給該族自己'
+      + '的參數結構，本階段不解讀，因此這裡不設任何該類旋鈕。接上它會把 DiT'
+      + ' 的載入延後到第一個節拍，因為像 klein_kv 這樣的配方——或者決定各 '
+      + 'block 如何建構的轉接器——必須在讀取權重之前就確定。轉接器相關的鍵只'
+      + '在這裡讀取，別無他處：只接到 diffusion-conditioner 的 '
+      + 'krea2-model-config 會送達它的 `vl_*` 各鍵，而它的 `lora` 則悄無聲'
+      + '息地無處生效'],
+  'port.generate-image.ref_latents': ['',
+      '可选：以一个列表传入的参考潜变量（vae-encode 的 `latents`），数量不'
+      + '限，各自保持原尺寸，供多参考模型族使用。它们按列表顺序排在 '
+      + 'ref_latent0 / ref_latent1 之后，模型族会把它们全部当作参考；支持数量'
+      + '较少的模型族只取前几个并给出提示',
+      '可選：以一個列表傳入的參考潛變數（vae-encode 的 `latents`），數量不'
+      + '限，各自保持原尺寸，供多參考模型族使用。它們按列表順序排在 '
+      + 'ref_latent0 / ref_latent1 之後，模型族會把它們全部當作參考；支援數量'
+      + '較少的模型族只取前幾個並給出提示'],
+  'port.generate-image.latent': ['',
+      'f32 潜变量 [z_dim, H/8, W/8]（未打包，已白化）',
+      'f32 潛變數 [z_dim, H/8, W/8]（未打包，已白化）'],
+  'port.generate-image.step_latent': ['',
+      '可选的逐步潜变量（每个采样步一个节拍，格式与 `latent` 相同）——在这里'
+      + '接一个 vae-decode 即可把去噪过程可视化，便于调试。只有接上时才发出'
+      + '。',
+      '可選的逐步潛變數（每個取樣步一個節拍，格式與 `latent` 相同）——在這裡'
+      + '接一個 vae-decode 即可把去噪過程視覺化，便於偵錯。只有接上時才發出'
+      + '。'],
+  'port.generate-image.preview': ['',
+      '可选：图像去噪进行中的实时预览——平面 U8 RGB [3, H, W]，每渲染一步'
+      + '发出一拍：模型对成图的干净估计，由模型族配置源指定的小型自编码器'
+      + '（`preview_vae`）解码。接到 `preview` 阶段。推送式（DropOldest，只'
+      + '接一个消费者）：没人读取的预览会被丢弃，绝不等待。未接时不做任何'
+      + '解码。比把 `step_latent` 接到完整 VAE 便宜得多，而且显示的是模型正'
+      + '在趋向的图像，而不是带噪的中间状态',
+      '可選：影像去噪進行中的即時預覽——平面 U8 RGB [3, H, W]，每渲染一步'
+      + '發出一拍：模型對成圖的乾淨估計，由模型族設定來源指定的小型自編碼器'
+      + '（`preview_vae`）解碼。接到 `preview` 階段。推送式（DropOldest，只'
+      + '接一個消費者）：沒人讀取的預覽會被丟棄，絕不等待。未接時不做任何'
+      + '解碼。比把 `step_latent` 接到完整 VAE 便宜得多，而且顯示的是模型正'
+      + '在趨向的影像，而不是帶噪的中間狀態'],
+
+  // ---- Generate Video (generative) ----
+  'stage.generate-video.name': ['', '生成视频', '生成影片'],
+  'stage.generate-video.doc': ['',
+      '视频 DiT 去噪器：条件（外加可选的关键帧或参考潜变量）-> 常驻模型族在'
+      + '其 transformer 上的采样器 -> 一段潜在视频；对会生成配乐的模型族，'
+      + '还会输出一段潜在音轨。运行在 metal-compute 后端。下游接 vae-decode'
+      + '（以及 audio-vae-decode）。',
+      '影片 DiT 去噪器：條件（外加可選的關鍵影格或參考潛變數）-> 常駐模型族'
+      + '在其 transformer 上的取樣器 -> 一段潛在影片；對會產生配樂的模型族'
+      + '，還會輸出一段潛在音軌。執行在 metal-compute 後端。下游接 '
+      + 'vae-decode（以及 audio-vae-decode）。'],
+  'cfg.generate-video.hf_dir': ['',
+      '视频模型根目录。目录结构由常驻模型族自己决定——可能是上游那套按组件分'
+      + '目录的树，也可能是命名不同的重打包版本——每个已注册的模型族会认领它'
+      + '能识别的根目录，因此这里只要给出检查点根目录，由认领它的模型族决定'
+      + '其余细节。可选：model 输入端口上的 model-select 源会覆盖它',
+      '影片模型根目錄。目錄結構由常駐模型族自己決定——可能是上游那套按元件分'
+      + '目錄的樹，也可能是命名不同的重新打包版本——每個已註冊的模型族會認領'
+      + '它能辨識的根目錄，因此這裡只要給出檢查點根目錄，由認領它的模型族決'
+      + '定其餘細節。可選：model 輸入埠上的 model-select 來源會覆寫它'],
+  'cfg.generate-video.dit_dir': ['',
+      '仅限 MiniMax-H3：用来替代 hf_dir 下那份 DiT 运行的检查点，hf_dir 的'
+      + '文本编码器和 VAE 仍照常使用——可以是单个 .safetensors（Comfy-Org 重'
+      + '打包，或 diffusers 命名，例如 lightx2v 的 FP8 turbo DiT，按原样读取，'
+      + 'FP8 保持为 FP8），也可以是 transformer 目录。留空：使用 hf_dir 自带'
+      + '的那份',
+      '僅限 MiniMax-H3：用來替代 hf_dir 下那份 DiT 執行的檢查點，hf_dir 的'
+      + '文字編碼器和 VAE 仍照常使用——可以是單個 .safetensors（Comfy-Org 重'
+      + '新打包，或 diffusers 命名，例如 lightx2v 的 FP8 turbo DiT，按原樣讀'
+      + '取，FP8 保持為 FP8），也可以是 transformer 目錄。留空：使用 hf_dir '
+      + '自帶的那份'],
+  'cfg.generate-video.height': ['',
+      '视频高度（像素）。会向上取整到常驻模型族的 VAE 步幅乘以其 DiT patch '
+      + '的倍数，各族不同，因此任何正值都接受，阶段会记录实际使用的值',
+      '影片高度（像素）。會向上取整到常駐模型族的 VAE 步幅乘以其 DiT patch '
+      + '的倍數，各族不同，因此任何正值都接受，階段會記錄實際使用的值'],
+  'cfg.generate-video.width': ['',
+      '视频宽度（像素）；倍数规则与高度相同',
+      '影片寬度（像素）；倍數規則與高度相同'],
+  'cfg.generate-video.frames': ['',
+      '视频帧数。会向上取整到常驻模型 VAE 能分块处理的最近帧数，各族不同，'
+      + '因此这里接受任何正数',
+      '影片影格數。會向上取整到常駐模型 VAE 能分塊處理的最近影格數，各族不'
+      + '同，因此這裡接受任何正數'],
+  'cfg.generate-video.fps': ['',
+      '打在输出潜变量上的帧率，供下游的解码器与编码器使用。本阶段不做重采样'
+      + '：该值描述的是模型族生成出来的片段，因此以其他帧率训练的模型族需要'
+      + '显式设置它',
+      '打在輸出潛變數上的影格率，供下游的解碼器與編碼器使用。本階段不做重新'
+      + '取樣：該值描述的是模型族產生出來的片段，因此以其他影格率訓練的模型'
+      + '族需要明確設定它'],
+  'cfg.generate-video.steps': ['',
+      '去噪步数，每步是模型的一次前向（开启无分类器引导 CFG 时是两次）——'
+      + '与 diffusers 的 num_inference_steps 和 ComfyUI 的 steps 计数方式相'
+      + '同。自带网格的模型族（flow-map 适配器）按它自己的网格运行',
+      '去噪步數，每步是模型的一次前向（開啟無分類器引導 CFG 時是兩次）——'
+      + '與 diffusers 的 num_inference_steps 和 ComfyUI 的 steps 計數方式相'
+      + '同。自帶網格的模型族（flow-map 適配器）按它自己的網格執行'],
+  'cfg.generate-video.seed': ['',
+      '初始噪声的随机种子（默认 0）。一次运行的第一段视频用它；之后各段用什么，'
+      + '由 `seed_sequence` 决定',
+      '初始雜訊的隨機種子（預設 0）。一次執行的第一段影片用它；之後各段用什麼，'
+      + '由 `seed_sequence` 決定'],
+  'cfg.generate-video.seed_sequence': ['',
+      '一次运行生成多段视频时（每个节拍一条提示词、一组首帧）每一段的种子。'
+      + '“increment”（默认）：依生成顺序取 `seed`、`seed`+1、`seed`+2……，任何'
+      + '一段都能单独重跑，只要把它的号码填回 `seed`。“randomize”：忽略 `seed`'
+      + '，每段都由时钟取一个；用过的每个种子都会记入日志，且都能填回 `seed` '
+      + '重跑。“keep”：每段都用 `seed`，适合在同一份噪声上比较提示词',
+      '一次執行產生多段影片時（每個節拍一條提示詞、一組首幀）每一段的種子。'
+      + '「increment」（預設）：依產生順序取 `seed`、`seed`+1、`seed`+2……，任何'
+      + '一段都能單獨重跑，只要把它的號碼填回 `seed`。「randomize」：忽略 `seed`'
+      + '，每段都由時鐘取一個；用過的每個種子都會記入日誌，且都能填回 `seed` '
+      + '重跑。「keep」：每段都用 `seed`，適合在同一份雜訊上比較提示詞'],
+  'cfg.generate-video.i8_gemm': ['',
+      '加速模式（有损）：DiT 大块矩阵乘改用动态 int8 GEMM 代替 bf16，精度即'
+      + ' int8 水平。只有前向会为矩阵核心物化稠密权重的模型族才会采用；纯 '
+      + 'steel 的模型族会忽略它，没有 NAX matmul2d 的机器同样忽略。它还会按'
+      + '行数自门控（>= 1024），因此短片段无论如何都保持 bf16 分块；也会按'
+      + '投影为凑齐一个完整 int8 分块需要补多少零来判断（额外 MAC 超过 10% '
+      + '即拒绝）。实测：minimax-h3，生产分辨率下的 2 个 block，2.02-2.11 '
+      + '秒/步 -> 1.52-1.55 秒（1.35 倍），该步的速度场 rms 变化 0.11%。默'
+      + '认 false；环境变量 VPIPE_I8_GEMM 可覆盖',
+      '加速模式（失真）：DiT 大塊矩陣乘改用動態 int8 GEMM 取代 bf16，精度即'
+      + ' int8 水準。只有前向會為矩陣核心具現稠密權重的模型族才會採用；純 '
+      + 'steel 的模型族會忽略它，沒有 NAX matmul2d 的機器同樣忽略。它還會按'
+      + '列數自我把關（>= 1024），因此短片段無論如何都保持 bf16 分塊；也會'
+      + '按投影為湊齊一個完整 int8 分塊需要補多少零來判斷（額外 MAC 超過 10'
+      + '% 即拒絕）。實測：minimax-h3，生產解析度下的 2 個 block，2.02-2.11'
+      + ' 秒/步 -> 1.52-1.55 秒（1.35 倍），該步的速度場 rms 變化 0.11%。預'
+      + '設 false；環境變數 VPIPE_I8_GEMM 可覆寫'],
+  'cfg.generate-video.ane_ffn': ['',
+      '加速前馈（有损，fp16）：把 block 的前馈放到 Apple 神经引擎上执行——在 '
+      + 'M4 上它是芯片上唯一闲置的算力：GPU 的 f16 GEMM 已经处在 roofline 的 '
+      + '84-92%，而它的整数 MAD 只有 f16 速率的四分之一，所以那边没有 int8 可'
+      + '挖。行在两个引擎之间切分并发执行。ANE 只跑一个共享模块，其权重是运行'
+      + '时输入，按 block 暂存进 IOSurface 缓冲：它的内存是固定的（MiniMax-H3 '
+      + '约 1.2-1.5 GB，随片段长度而定，且与多少 block 用它无关），按形状编译'
+      + '一次之后即被缓存。该模块是否放得下由资源计划决定。4/8 位仿射检查点会'
+      + '按 block 反量化进这些缓冲，前馈上的运行时 LoRA 也会被合并进去。由 '
+      + 'MiniMax-H3 实现；其余模型族会忽略它',
+      '加速前饋（失真，fp16）：把 block 的前饋放到 Apple 神經引擎上執行——在 '
+      + 'M4 上它是晶片上唯一閒置的算力：GPU 的 f16 GEMM 已經處在 roofline 的 '
+      + '84-92%，而它的整數 MAD 只有 f16 速率的四分之一，所以那邊沒有 int8 可'
+      + '挖。行在兩個引擎之間切分並行執行。ANE 只跑一個共享模組，其權重是執行'
+      + '階段輸入，按 block 暫存進 IOSurface 緩衝：它的記憶體是固定的'
+      + '（MiniMax-H3 約 1.2-1.5 GB，隨片段長度而定，且與多少 block 用它無關）'
+      + '，按形狀編譯一次之後即被快取。該模組是否放得下由資源計畫決定。4/8 位'
+      + '元仿射檢查點會按 block 反量化進這些緩衝，前饋上的執行階段 LoRA 也會被'
+      + '合併進去。由 MiniMax-H3 實作；其餘模型族會忽略它'],
+  'cfg.generate-video.ane_qkv': ['',
+      '把融合的 q|k|v 投影也放到 ANE 上，作为前馈模块之外的第二个模块，切分方'
+      + '式相同，并共用同一个 ANE worker。需要 ane_ffn：资源计划把两个模块作为'
+      + '一个整体来预订，要给就一起给。它在前馈之外还要占用自己的权重槽位和暂'
+      + '存，因此在只有前馈时会被批准的场合，成对申请仍可能被拒。由 MiniMax-H3 '
+      + '实现；环境变量 VPIPE_H3_ANE_QKV=1 同样可以打开',
+      '把融合的 q|k|v 投影也放到 ANE 上，作為前饋模組之外的第二個模組，切分方'
+      + '式相同，並共用同一個 ANE worker。需要 ane_ffn：資源計畫把兩個模組作為'
+      + '一個整體來預訂，要給就一起給。它在前饋之外還要占用自己的權重槽位與暫'
+      + '存，因此在只有前饋時會被核准的場合，成對申請仍可能被拒。由 MiniMax-H3 '
+      + '實作；環境變數 VPIPE_H3_ANE_QKV=1 同樣可以開啟'],
+  'cfg.generate-video.ane_rows': ['',
+      '前馈中分给 ANE 的行的比例，其余由 GPU 并发承担（前馈里各行相互独立，所'
+      + '以这个切分是精确的——没有部分和，也没有接缝）。0（默认）让模型族按两'
+      + '个引擎的实测速率自行平衡；ANE 约 12.6 TOPS 对 GPU 约 7 TFLOP/s，会落'
+      + '在 0.64 附近。填 1 表示整个前馈交给 ANE，并在这段时间内让 GPU 闲置。'
+      + '跨引擎本身是免费的：在提交次数相同的纯 GPU 对照下实测为 -0.3 到 -1.0 '
+      + '毫秒，也就是说 ANE 这一段与 GPU 的提交/等待重叠，而不是排在它后面',
+      '前饋中分給 ANE 的行的比例，其餘由 GPU 並行承擔（前饋裡各行相互獨立，所'
+      + '以這個切分是精確的——沒有部分和，也沒有接縫）。0（預設）讓模型族按兩'
+      + '個引擎的實測速率自行平衡；ANE 約 12.6 TOPS 對 GPU 約 7 TFLOP/s，會落'
+      + '在 0.64 附近。填 1 表示整個前饋交給 ANE，並在這段時間內讓 GPU 閒置。'
+      + '跨引擎本身是免費的：在提交次數相同的純 GPU 對照下實測為 -0.3 到 -1.0 '
+      + '毫秒，也就是說 ANE 這一段與 GPU 的提交/等待重疊，而不是排在它後面'],
+  'cfg.generate-video.ane_templates': ['',
+      '预编译 ANE 模块模板所在的目录。运行时权重的前馈用不到它——那条路径自己'
+      + '生成图；保留该项是为了让既有的流水线仍能加载',
+      '預先編譯 ANE 模組範本所在的目錄。執行階段權重的前饋用不到它——那條路徑'
+      + '自己產生圖；保留該項是為了讓既有的處理管線仍能載入'],
+  'cfg.generate-video.ane_layers': ['',
+      '限制有多少个 block 使用 ANE 前馈；0（默认）表示每个 dense block 都用。'
+      + '这不是内存设置——这些 block 共用一个成本固定的模块——所以只有在你有意'
+      + '只覆盖一部分 block 时才设它，例如做基准测试',
+      '限制有多少個 block 使用 ANE 前饋；0（預設）表示每個 dense block 都用。'
+      + '這不是記憶體設定——這些 block 共用一個成本固定的模組——所以只有在你有'
+      + '意只涵蓋一部分 block 時才設它，例如做基準測試'],
+  'cfg.generate-video.sage_attn': ['',
+      '加速注意力（有损）：SageAttention 把 flash 内核里的 QK^T 乘积放到 INT8 '
+      + '上做，每个注意力 block 一个 scale——Q 按 query 块、K 按 key 块，这正是'
+      + '内核本来就分块的粒度，所以反量化一个分数分块只是一个标量。P*V 仍留在'
+      + '张量原本的 dtype：P 是概率，本身条件就好，量化它换来同样的收益却要付'
+      + '出差得多的误差。K 以 K - mean(K)（沿 token 求均值）量化，这一步是精确'
+      + '的而非近似——按通道的平移会把一行里的每个分数移动同样的量，softmax 看'
+      + '不见它。在 M5 上实测，8 头 x 20036 行 x 128：156.6 -> 130.6 毫秒（含'
+      + '量化前导，1.20 倍），对双精度参考的余弦为 0.99992，而 f16 内核同样是 '
+      + '0.99992。仅限矩阵核心——int8 片段 MMA 是 M5 指令，没有 ALU 回退路径，'
+      + '所以没有矩阵核心的机器会说明一次并走 dense，而不是拒绝运行。与 '
+      + 'i8_gemm 和 sol_attn 相互独立，可与任一同时设置：i8_gemm 决定 block 的 '
+      + 'GEMM 怎么算，sol_attn 决定哪些 key 块参与注意力，而这一项决定参与的那'
+      + '些怎么相乘。默认关闭——它是一个近似，而它在哪些片段上安全，是关于模型'
+      + '的判断',
+      '加速注意力（失真）：SageAttention 把 flash 核心裡的 QK^T 乘積放到 INT8 '
+      + '上做，每個注意力 block 一個 scale——Q 按 query 塊、K 按 key 塊，這正是'
+      + '核心本來就分塊的粒度，所以反量化一個分數分塊只是一個純量。P*V 仍留在'
+      + '張量原本的 dtype：P 是機率，本身條件就好，量化它換來同樣的收益卻要付'
+      + '出差得多的誤差。K 以 K - mean(K)（沿 token 求平均）量化，這一步是精確'
+      + '的而非近似——按通道的平移會把一列裡的每個分數移動同樣的量，softmax 看'
+      + '不見它。在 M5 上實測，8 頭 x 20036 行 x 128：156.6 -> 130.6 毫秒（含'
+      + '量化前導，1.20 倍），對雙精度參考的餘弦為 0.99992，而 f16 核心同樣是 '
+      + '0.99992。僅限矩陣核心——int8 片段 MMA 是 M5 指令，沒有 ALU 回退路徑，'
+      + '所以沒有矩陣核心的機器會說明一次並走 dense，而不是拒絕執行。與 '
+      + 'i8_gemm 和 sol_attn 相互獨立，可與任一同時設定：i8_gemm 決定 block 的 '
+      + 'GEMM 怎麼算，sol_attn 決定哪些 key 塊參與注意力，而這一項決定參與的那'
+      + '些怎麼相乘。預設關閉——它是一個近似，而它在哪些片段上安全，是關於模型'
+      + '的判斷'],
+  'cfg.generate-video.sage_dense_layers': ['',
+      '开头有多少个 transformer block 保持张量原本的 dtype，不被 '
+      + 'SageAttention 触碰。0——默认值——表示每个 block 都量化。这里取零而不是'
+      + '像 sol_dense_layers 那样取一，是因为两者的近似方式不同：Sol 会丢弃 '
+      + 'key，所以靠前 block 冗余更少的残差流是把它留着不动的理由；而 Sage 每'
+      + '个 key、每个 query 都照算，只是改用 int8 算。目前没有哪个已发布的档位'
+      + '需要在这里留 dense 前缀；这个键存在，是为了让测量结果可以据此调整',
+      '開頭有多少個 transformer block 保持張量原本的 dtype，不被 '
+      + 'SageAttention 觸碰。0——預設值——表示每個 block 都量化。這裡取零而不是'
+      + '像 sol_dense_layers 那樣取一，是因為兩者的近似方式不同：Sol 會丟棄 '
+      + 'key，所以靠前 block 冗餘更少的殘差流是把它留著不動的理由；而 Sage 每'
+      + '個 key、每個 query 都照算，只是改用 int8 算。目前沒有哪個已發布的檔位'
+      + '需要在這裡留 dense 前綴；這個鍵存在，是為了讓測量結果可以據此調整'],
+  'cfg.generate-video.sol_attn': ['',
+      '加速注意力（有损）：Sol-Attn 在在线 softmax 的过程中按整块 64 个 key 做'
+      + '路由，只对代理分数保留下来的那些块做注意力，其余的则用每块 key 的质心'
+      + '与 value 之和来顶替。开销随保留下来的块的比例下降，而这个比例是数据的'
+      + '性质，每次运行都会报告。由 minimax-h3 采用；其余模型族会忽略它。不能'
+      + '与 VDN 线性分支同用——VDN 的窗口 softmax 与它的线性补充把 key 分给了'
+      + '彼此，近似其中一半就会丢掉另一半以为已经覆盖的东西；对那些 block '
+      + 'Sol 会自行关闭并说明。被路由保留下来的块，仍由 dense 路径所用的那个'
+      + '矩阵核心 steel flash 内核来跑，只是只走列出的那些块；只有摘要、路由'
+      + '与近似的那一半才是 Sol 自己的代码。在 M4 Pro 上于模型中实测'
+      + '（minimax-h3，20036 行）：一个被路由的 block，其注意力从 3480 -> '
+      + '1348 毫秒（2.58 倍），保留 26.1% 的 key 块；据此外推，当除第一个以外'
+      + '的每个 block 都被路由时，整个 DiT 约为 2.1 倍。与 i8_gemm 相互独立且'
+      + '可同时设置：那一项决定 block 的 GEMM 怎么算，这一项决定它们之间的注意'
+      + '力怎么算，两者互不读取对方。仍然默认关闭——它是一个近似，而它在哪些片'
+      + '段上安全，是关于模型的判断，不是关于内核的判断',
+      '加速注意力（失真）：Sol-Attn 在線上 softmax 的過程中按整塊 64 個 key 做'
+      + '路由，只對代理分數保留下來的那些塊做注意力，其餘的則用每塊 key 的質心'
+      + '與 value 之和來頂替。開銷隨保留下來的塊的比例下降，而這個比例是資料的'
+      + '性質，每次執行都會報告。由 minimax-h3 採用；其餘模型族會忽略它。不能'
+      + '與 VDN 線性分支同用——VDN 的視窗 softmax 與它的線性補充把 key 分給了'
+      + '彼此，近似其中一半就會丟掉另一半以為已經涵蓋的東西；對那些 block '
+      + 'Sol 會自行關閉並說明。被路由保留下來的塊，仍由 dense 路徑所用的那個'
+      + '矩陣核心 steel flash 核心來跑，只是只走列出的那些塊；只有摘要、路由'
+      + '與近似的那一半才是 Sol 自己的程式碼。在 M4 Pro 上於模型中實測'
+      + '（minimax-h3，20036 行）：一個被路由的 block，其注意力從 3480 -> '
+      + '1348 毫秒（2.58 倍），保留 26.1% 的 key 塊；據此外推，當除第一個以外'
+      + '的每個 block 都被路由時，整個 DiT 約為 2.1 倍。與 i8_gemm 相互獨立且'
+      + '可同時設定：那一項決定 block 的 GEMM 怎麼算，這一項決定它們之間的注意'
+      + '力怎麼算，兩者互不讀取對方。仍然預設關閉——它是一個近似，而它在哪些片'
+      + '段上安全，是關於模型的判斷，不是關於核心的判斷'],
+  'cfg.generate-video.sol_tau': ['',
+      'Sol-Attn 的路由阈值，单位是该 query 块自身代理分数分布的标准差——正是'
+      + '这一点让同一个数字能服务于所有的头、层与片段长度，而固定的块数做不到'
+      + '。调高会保留更少的块：质量下降、速度上升，两者都是单调的。已发布的档'
+      + '位在它的三个步骤上依次取 1.0 / 1.25 / 1.5；这里默认 1.0，因为单独一'
+      + '个取值只能取保守的那个',
+      'Sol-Attn 的路由閾值，單位是該 query 塊自身代理分數分布的標準差——正是'
+      + '這一點讓同一個數字能服務於所有的頭、層與片段長度，而固定的塊數做不到'
+      + '。調高會保留更少的塊：品質下降、速度上升，兩者都是單調的。已發布的檔'
+      + '位在它的三個步驟上依次取 1.0 / 1.25 / 1.5；這裡預設 1.0，因為單獨一'
+      + '個取值只能取保守的那個'],
+  'cfg.generate-video.sol_dense_layers': ['',
+      '开头有多少个 transformer block 保持 DENSE，不被 Sol-Attn 触碰。最前面'
+      + '的几个 block 正是残差流冗余最少的地方；已发布的档位在 48 个里留 1 个'
+      + '。0 表示每个 block 都路由',
+      '開頭有多少個 transformer block 保持 DENSE，不被 Sol-Attn 觸碰。最前面'
+      + '的幾個 block 正是殘差流冗餘最少的地方；已發布的檔位在 48 個裡留 1 個'
+      + '。0 表示每個 block 都路由'],
+  'cfg.generate-video.sol_dense_steps': ['',
+      '开头有多少个去噪步保持 DENSE，不被 Sol-Attn 触碰——sol_dense_layers 在'
+      + '时间轴上的对应项。最前面的几步决定片段的大致结构，路由近似在这里代价'
+      + '最大。0（默认）表示每一步都路由。HyperFlow 为它的 8 步网格发布的 Sol '
+      + '配方是这里取 2，配合 sol_dense_layers 2 与 sol_tau 1.0。仅 minimax-h3',
+      '開頭有多少個去噪步保持 DENSE，不被 Sol-Attn 觸碰——sol_dense_layers 在'
+      + '時間軸上的對應項。最前面的幾步決定片段的大致結構，路由近似在這裡代價'
+      + '最大。0（預設）表示每一步都路由。HyperFlow 為它的 8 步網格發布的 Sol '
+      + '配方是這裡取 2，配合 sol_dense_layers 2 與 sol_tau 1.0。僅 minimax-h3'],
+  'cfg.generate-video.sol_key_block': ['',
+      '由一个质心概括多少个 key，也就是路由所依据的单位。只能是 32 或 64；'
+      + '0（默认）取 64，也就是已发布的取值。两者是相互权衡而不是一方压倒另一'
+      + '方，这正是两个都提供的原因。在 M4 Pro 上以 56 头 x 20036 行对 dense '
+      + 'steel 实测：64 保留 19.1% 的 key 块、跑出 3.54 倍，32 保留 '
+      + '22.9-26.0%、跑出 2.79 倍——也就是说 32 做了更多的精确计算、更慢，同时'
+      + '也是两者中更准确的那个（在三种序列长度上 rel-L2 为 0.0070-0.0077，对'
+      + '另一个的 0.0082-0.0091），因为一个质心概括 32 个 key 比概括 64 个更贴'
+      + '切。64 是速度的选择，32 是保真度的选择。更大的块测过，两项都更差'
+      + '（128 -> 3.33 倍，256 -> 2.47 倍，且都保留得更多），所以不提供',
+      '由一個質心概括多少個 key，也就是路由所依據的單位。只能是 32 或 64；'
+      + '0（預設）取 64，也就是已發布的取值。兩者是相互權衡而不是一方壓倒另一'
+      + '方，這正是兩個都提供的原因。在 M4 Pro 上以 56 頭 x 20036 行對 dense '
+      + 'steel 實測：64 保留 19.1% 的 key 塊、跑出 3.54 倍，32 保留 '
+      + '22.9-26.0%、跑出 2.79 倍——也就是說 32 做了更多的精確計算、更慢，同時'
+      + '也是兩者中更準確的那個（在三種序列長度上 rel-L2 為 0.0070-0.0077，對'
+      + '另一個的 0.0082-0.0091），因為一個質心概括 32 個 key 比概括 64 個更貼'
+      + '切。64 是速度的選擇，32 是保真度的選擇。更大的塊測過，兩項都更差'
+      + '（128 -> 3.33 倍，256 -> 2.47 倍，且都保留得更多），所以不提供'],
+  'cfg.generate-video.sol_local_radius': ['',
+      '在 query 自身所在块的两侧，各有多少个 key 块始终精确、从不被路由。块'
+      + '质心最不具代表性的地方，恰恰就是 query 区分度最高的地方，所以对角线'
+      + '附近不拿去投票。-1 连 query 自己所在的块也路由，那是一个消融实验，'
+      + '而不是一个设置',
+      '在 query 自身所在塊的兩側，各有多少個 key 塊始終精確、從不被路由。塊'
+      + '質心最不具代表性的地方，恰恰就是 query 區分度最高的地方，所以對角線'
+      + '附近不拿去投票。-1 連 query 自己所在的塊也路由，那是一個消融實驗，'
+      + '而不是一個設定'],
+  'cfg.generate-video.motion_cache': ['',
+      '加速采样（有损）：MotionCache 跳过整次去噪前向。预热之后，每一步都'
+      + '预测模型输出自上一次实际运行的前向以来移动了多少——用最近两次计算出'
+      + '的前向之间测得的增益，乘以输入自那以后移动的幅度，再除以输出的大小'
+      + '——并按片段在每个潜变量位置上的运动程度加权，运动程度取自模型自身干'
+      + '净估计的帧间差异。只要这个预测在连续跳过的步上累加后仍低于 '
+      + 'motion_cache_threshold，该步就复用上一次前向的残差（输出减输入，带'
+      + '到新的输入上），而不运行前向。它省下的是整次前向，而不是让一次前向'
+      + '更便宜，因此可与 i8_gemm、sage_attn、sol_attn 和 ane_ffn 叠加；判'
+      + '定是在潜变量的一个子采样上做的主机端计算，每步几毫秒。少步数的调度'
+      + '（Turbo LoRA、HyperFlow）在预热跑完后已所剩无几可跳。由 minimax-h3'
+      + ' 采用；其他模型族忽略它。默认关闭——它是一种近似，脸、手、快速运动'
+      + '和口型同步是最先显出问题的地方',
+      '加速取樣（有損）：MotionCache 跳過整次去噪前向。預熱之後，每一步都'
+      + '預測模型輸出自上一次實際執行的前向以來移動了多少——用最近兩次計算出'
+      + '的前向之間測得的增益，乘以輸入自那以後移動的幅度，再除以輸出的大小'
+      + '——並按片段在每個潛變數位置上的運動程度加權，運動程度取自模型自身乾'
+      + '淨估計的影格間差異。只要這個預測在連續跳過的步上累加後仍低於 '
+      + 'motion_cache_threshold，該步就重用上一次前向的殘差（輸出減輸入，帶'
+      + '到新的輸入上），而不執行前向。它省下的是整次前向，而不是讓一次前向'
+      + '更便宜，因此可與 i8_gemm、sage_attn、sol_attn 和 ane_ffn 疊加；判'
+      + '定是在潛變數的一個子取樣上做的主機端計算，每步幾毫秒。少步數的排程'
+      + '（Turbo LoRA、HyperFlow）在預熱跑完後已所剩無幾可跳。由 minimax-h3'
+      + ' 採用；其他模型族忽略它。預設關閉——它是一種近似，臉、手、快速運動'
+      + '和口型同步是最先顯出問題的地方'],
+  'cfg.generate-video.motion_cache_threshold': ['',
+      'MotionCache 的预算：输出的预测相对变化累加值，低于它时该步复用而不'
+      + '运行。越高跳得越多、漂移也越大。0.15 是参考节点的默认值；它附带的'
+      + '示例工作流用的是 0.2。如果脸、手、快速运动、口型同步或音效变得不稳'
+      + '定，就调低它',
+      'MotionCache 的預算：輸出的預測相對變化累加值，低於它時該步重用而不'
+      + '執行。越高跳得越多、漂移也越大。0.15 是參考節點的預設值；它附帶的'
+      + '範例工作流程用的是 0.2。如果臉、手、快速運動、口型同步或音效變得不'
+      + '穩定，就調低它'],
+  'cfg.generate-video.motion_cache_strength': ['',
+      '运动在 MotionCache 变化度量中的权重：一个潜变量位置计为 1 + '
+      + 'strength x 它的帧间运动（归一化到均值 1），因此片段在运动处的漂移'
+      + '比静止背景上同样的漂移代价更高。0 表示所有位置同等对待',
+      '運動在 MotionCache 變化度量中的權重：一個潛變數位置計為 1 + '
+      + 'strength x 它的影格間運動（正規化到平均值 1），因此片段在運動處的'
+      + '漂移比靜止背景上同樣的漂移代價更高。0 表示所有位置同等對待'],
+  'cfg.generate-video.motion_cache_warmup': ['',
+      'MotionCache 开头总是运行的前向数——最初几步决定片段的大致结构。无论'
+      + '这里设多少，前两次都会运行：预测所需的增益要在两次计算出的前向之间'
+      + '测得',
+      'MotionCache 開頭總是執行的前向數——最初幾步決定片段的大致結構。無論'
+      + '這裡設多少，前兩次都會執行：預測所需的增益要在兩次計算出的前向之間'
+      + '測得'],
+  'cfg.generate-video.motion_cache_max_skips': ['',
+      'MotionCache 在强制运行一次前向之前最多连续复用的步数，用来限制残差'
+      + '能变得多陈旧。至少为 1',
+      'MotionCache 在強制執行一次前向之前最多連續重用的步數，用來限制殘差'
+      + '能變得多陳舊。至少為 1'],
+  'cfg.generate-video.motion_cache_start': ['',
+      'MotionCache 在调度中从哪里开始被参考，以采样范围的比例表示：0 是纯'
+      + '噪声，1 是干净。按参考实现的做法，经模型族自己的视频 shift 映射成 '
+      + 'sigma——所以在 minimax-h3 的 shift 12 下，0.15 对应 sigma 0.986。窗'
+      + '口之外的步总是运行',
+      'MotionCache 在排程中從哪裡開始被參考，以取樣範圍的比例表示：0 是純'
+      + '雜訊，1 是乾淨。按參考實作的做法，經模型族自己的視訊 shift 映射成 '
+      + 'sigma——所以在 minimax-h3 的 shift 12 下，0.15 對應 sigma 0.986。視'
+      + '窗之外的步總是執行'],
+  'cfg.generate-video.motion_cache_end': ['',
+      'MotionCache 在哪里停止被参考，与 motion_cache_start 同一刻度且须大'
+      + '于它。最后几步是细节，所以 0.95 让它们保持完整计算',
+      'MotionCache 在哪裡停止被參考，與 motion_cache_start 同一刻度且須大'
+      + '於它。最後幾步是細節，所以 0.95 讓它們保持完整計算'],
+  'cfg.generate-video.motion_cache_subsample': ['',
+      'MotionCache 用来做判定的样本的步长，沿潜变量的高、宽两个方向（以及'
+      + '音频潜变量的时间方向）。被复用的步仍然复用每个元素；只有估计是子采'
+      + '样的。1 表示全部读取',
+      'MotionCache 用來做判定的樣本的步長，沿潛變數的高、寬兩個方向（以及'
+      + '音訊潛變數的時間方向）。被重用的步仍然重用每個元素；只有估計是子取'
+      + '樣的。1 表示全部讀取'],
+  'cfg.generate-video.unload_when_idle': ['',
+      '每生成完一个片段就释放常驻模型的权重，下一个片段再重新加载。"auto"（'
+      + '默认）根据物理内存与流水线权重字节数自行判断；"always" / "never" '
+      + '可强制',
+      '每產生完一個片段就釋放常駐模型的權重，下一個片段再重新載入。"auto"（'
+      + '預設）根據實體記憶體與管線權重位元組數自行判斷；"always" / "never"'
+      + ' 可強制'],
+  'port.generate-video.conditioning': ['',
+      '来自 diffusion-conditioner 的文本隐状态：bf16 [text_seq, dim]，宽度'
+      + '即常驻模型族自身编码器的宽度。条件生成阶段解析的是同一个检查点，因'
+      + '此宽度是构造上就一致的，不需要配置',
+      '來自 diffusion-conditioner 的文字隱狀態：bf16 [text_seq, dim]，寬度'
+      + '即常駐模型族自身編碼器的寬度。條件產生階段解析的是同一個檢查點，因'
+      + '此寬度是結構上就一致的，不需要設定'],
+  'port.generate-video.neg_conditioning': ['',
+      '可选的负向条件（条件生成阶段的 1 号输出端口），用于无分类器引导。未'
+      + '经引导蒸馏的模型族需要它：没有它，引导强度会被强制为 1。经过引导蒸'
+      + '馏的模型族每步只做一次前向，会忽略它',
+      '可選的負向條件（條件產生階段的 1 號輸出埠），用於無分類器引導。未經'
+      + '引導蒸餾的模型族需要它：沒有它，引導強度會被強制為 1。經過引導蒸餾'
+      + '的模型族每步只做一次前向，會忽略它'],
+  'port.generate-video.model': ['',
+      '可选的共享模型引用，来自 model-select 源；覆盖 hf_dir 配置',
+      '可選的共享模型參照，來自 model-select 來源；覆寫 hf_dir 設定'],
+  'port.generate-video.sampler': ['',
+      '可选的采样器配置 FlexData（diffusion-sampler-select）。由“按配置采样'
+      + '”的模型族读取，用来替换它自带的采样器；对自带采样器和自带噪声计划'
+      + '的模型族无效——那类模型族改用它自己的 model-config 源来调整',
+      '可選的取樣器組態 FlexData（diffusion-sampler-select）。由「按組態取'
+      + '樣」的模型族讀取，用來取代它自帶的取樣器；對自帶取樣器和自帶雜訊排'
+      + '程的模型族無效——那類模型族改用它自己的 model-config 來源來調整'],
+  'port.generate-video.scheduler': ['',
+      '可选的噪声计划配置 FlexData（scheduler-select）。对 sampler 端口无效'
+      + '的那些模型族同样无效',
+      '可選的雜訊排程組態 FlexData（scheduler-select）。對 sampler 埠無效的'
+      + '那些模型族同樣無效'],
+  'port.generate-video.ref_latent0': ['',
+      '可选的图生视频条件潜变量，来自 vae-encode，采用常驻模型族自身的潜空'
+      + '间几何。具体形状取决于该族如何施加条件：可能是片段形状的张量（条件'
+      + '图像后接空白帧），也可能是单张首帧关键帧锚点。接上它即表示图生视频',
+      '可選的圖生影片條件潛變數，來自 vae-encode，採用常駐模型族自身的潛空'
+      + '間幾何。具體形狀取決於該族如何施加條件：可能是片段形狀的張量（條件'
+      + '影像後接空白影格），也可能是單張首格關鍵影格錨點。接上它即表示圖生'
+      + '影片'],
+  'port.generate-video.ref_latent1': ['',
+      '可选的末帧关键帧锚点，来自第二个 vae-encode，供以关键帧（而非单个片'
+      + '段形状潜变量）作锚点的模型族使用。与 ref_latent0 一起构成首尾帧模'
+      + '式',
+      '可選的末格關鍵影格錨點，來自第二個 vae-encode，供以關鍵影格（而非單'
+      + '個片段形狀潛變數）作錨點的模型族使用。與 ref_latent0 一起構成首尾'
+      + '格模式'],
+  'port.generate-video.ref_video_rows': ['',
+      '可选的参考视频行，来自 video-ref-encoder：f32 [rows, 96]，供带参考条'
+      + '件分区的模型族使用。它们已经打包成 DiT 的行并按参考顺序拼接，因为'
+      + '每个参考都以各自的分辨率编码，行是它们唯一共有的形状。接上它就把本'
+      + '阶段切换到参考条件模式；这些行所属的几何信息随条件节拍的边带一起传'
+      + '来',
+      '可選的參考影片列，來自 video-ref-encoder：f32 [rows, 96]，供帶參考條'
+      + '件分區的模型族使用。它們已經打包成 DiT 的列並按參考順序串接，因為'
+      + '每個參考都以各自的解析度編碼，列是它們唯一共有的形狀。接上它就把本'
+      + '階段切換到參考條件模式；這些列所屬的幾何資訊隨條件節拍的邊帶一起傳'
+      + '來'],
+  'port.generate-video.ref_audio_rows': ['',
+      '可选的参考音频行，来自同一个 video-ref-encoder：f32 [rows, 32]，单个'
+      + '参考内部按声道优先排列。它们以干净时间步随行，永远不参与去噪',
+      '可選的參考音訊列，來自同一個 video-ref-encoder：f32 [rows, 32]，單個'
+      + '參考內部按聲道優先排列。它們以乾淨時間步隨行，永遠不參與去噪'],
+  'port.generate-video.model_config': ['',
+      '可选的模型专属参数，来自常驻模型族自己的配置源——每个模型族都带一个，'
+      + '承载只有它才需要说明的内容（引导强度与专家切换边界、sigma shift、'
+      + '条件时间步、音频时长）。这些参数原样传给该族的 GenerationParams，'
+      + '本阶段不解读，因此这里不设任何该类旋钮。未接时模型族按其文档默认值'
+      + '运行',
+      '可選的模型專屬參數，來自常駐模型族自己的組態來源——每個模型族都帶一個'
+      + '，承載只有它才需要說明的內容（引導強度與專家切換邊界、sigma shift'
+      + '、條件時間步、音訊長度）。這些參數原樣傳給該族的 GenerationParams'
+      + '，本階段不解讀，因此這裡不設任何該類旋鈕。未接時模型族按其文件預設'
+      + '值執行'],
+  'port.generate-video.audio_conditioning': ['',
+      '可选的第二模态条件，供那些用自己对提示词的另一路投影来生成配乐的模型'
+      + '族使用：与 0 号输入端口上的视频条件并列的一路音频条件，宽度自成一'
+      + '套。之所以单列一个端口，是因为它来自不同的投影、宽度也不同，把两者'
+      + '塞进同一个节拍会让这种拆分沦为约定而非类型。未接时，这类模型族只生'
+      + '成视频并明确说明；它绝不能自行编造一个全零的条件——那等于在说“静音”'
+      + '，而不是“没有”。不接受第二路条件的模型族会忽略它',
+      '可選的第二模態條件，供那些用自己對提示詞的另一路投影來產生配樂的模型'
+      + '族使用：與 0 號輸入埠上的影片條件並列的一路音訊條件，寬度自成一套'
+      + '。之所以單列一個埠，是因為它來自不同的投影、寬度也不同，把兩者塞進'
+      + '同一個節拍會讓這種拆分淪為約定而非型別。未接時，這類模型族只產生影'
+      + '片並明確說明；它絕不能自行編造一個全零的條件——那等於在說「靜音」，'
+      + '而不是「沒有」。不接受第二路條件的模型族會忽略它'],
+  'port.generate-video.latent': ['',
+      'f32 潜在视频 [z, T, H/r, W/r]（已白化），边带 {fps, frames}。z/r 即'
+      + '常驻模型族的 VAE 几何参数',
+      'f32 潛在影片 [z, T, H/r, W/r]（已白化），邊帶 {fps, frames}。z/r 即'
+      + '常駐模型族的 VAE 幾何參數'],
+  'port.generate-video.audio_latent': ['',
+      'f32 潜在音频 [audio_channels, audio_latents]，来自会生成配乐的模型族'
+      + '——不生成配乐的模型族永远不会写它',
+      'f32 潛在音訊 [audio_channels, audio_latents]，來自會產生配樂的模型族'
+      + '——不產生配樂的模型族永遠不會寫它'],
+  'port.generate-video.preview': ['',
+      '可选：去噪进行中片段的实时预览——平面 U8 RGB [F, 3, H, W]，每渲染'
+      + '一步发出一拍，由模型族配置源指定的小型自编码器（`preview_vae`）解'
+      + '码。接到 `preview` 阶段，它会循环播放每一段，直到下一段到来。推送式'
+      + '（DropOldest，只接一个消费者）：没人读取的预览会被丢弃，绝不等待。'
+      + '未接时不做任何解码',
+      '可選：去噪進行中片段的即時預覽——平面 U8 RGB [F, 3, H, W]，每渲染'
+      + '一步發出一拍，由模型族設定來源指定的小型自編碼器（`preview_vae`）解'
+      + '碼。接到 `preview` 階段，它會循環播放每一段，直到下一段到來。推送式'
+      + '（DropOldest，只接一個消費者）：沒人讀取的預覽會被丟棄，絕不等待。'
+      + '未接時不做任何解碼'],
+
+  // ---- Model Select (generative) ----
+  'stage.model-select.name': ['', '模型选择', '模型選擇'],
+  'stage.model-select.doc': ['',
+      '选定一个扩散模型目录，作为 FlexData 节拍发出，供 '
+      + 'diffusion-conditioner / generate-image / generate-video / '
+      + 'vae-encode / vae-decode / audio-vae-decode 共用——各阶段的 model 输'
+      + '入端口会覆盖其自身的 hf_dir 配置。0 入 / 1 出（只发一次）。',
+      '選定一個擴散模型目錄，作為 FlexData 節拍發出，供 '
+      + 'diffusion-conditioner / generate-image / generate-video / '
+      + 'vae-encode / vae-decode / audio-vae-decode 共用——各階段的 model 輸'
+      + '入埠會覆寫其自身的 hf_dir 設定。0 入 / 1 出（只發一次）。'],
+  'cfg.model-select.hf_dir': ['',
+      '由 diffusion-conditioner、generate-image / generate-video（DiT）、'
+      + 'vae-encode、vae-decode 与 audio-vae-decode 共用的模型目录/注册键；'
+      + '以节拍形式发出，覆盖它们各自的 hf_dir 配置项',
+      '由 diffusion-conditioner、generate-image / generate-video（DiT）、'
+      + 'vae-encode、vae-decode 與 audio-vae-decode 共用的模型目錄/註冊鍵；'
+      + '以節拍形式發出，覆寫它們各自的 hf_dir 設定項'],
+  'port.model-select.model': ['',
+      '共享模型引用 { hf_dir }，作为 FlexData 节拍供扩散类阶段的 model 输入'
+      + '端口锁存',
+      '共享模型參照 { hf_dir }，作為 FlexData 節拍供擴散類階段的 model 輸入'
+      + '埠鎖存'],
+
+  // ---- Sampler (generative) ----
+  'stage.sampler-select.name': ['', '采样器', '取樣器'],
+  'stage.sampler-select.doc': ['',
+      '设定语言模型的 token 采样器（temperature / top_k / top_p / min_p / '
+      + '各类惩罚 / seed），把配置作为 FlexData 节拍发出，供 text-chat、'
+      + 'visual-qa、realtime-vqa、audio-transcribe 或 text-to-speech 阶段锁'
+      + '存。所有旋钮都取默认值即等于 argmax，因此至少要设置 temperature 才'
+      + '会真正采样。扩散积分器请改用 diffusion-sampler-select。0 入 / 1 出'
+      + '（只发一次）。',
+      '設定語言模型的 token 取樣器（temperature / top_k / top_p / min_p / '
+      + '各類懲罰 / seed），把組態作為 FlexData 節拍發出，供 text-chat、'
+      + 'visual-qa、realtime-vqa、audio-transcribe 或 text-to-speech 階段鎖'
+      + '存。所有旋鈕都取預設值即等於 argmax，因此至少要設定 temperature 才'
+      + '會真正取樣。擴散積分器請改用 diffusion-sampler-select。0 入 / 1 出'
+      + '（只發一次）。'],
+  'cfg.sampler-select.temperature': ['',
+      'softmax 温度；<= 0 时强制取最大值（贪心）',
+      'softmax 溫度；<= 0 時強制取最大值（貪婪）'],
+  'cfg.sampler-select.top_k': ['',
+      '仅保留前 k 个 logits；0 = 禁用',
+      '僅保留前 k 個 logits；0 = 停用'],
+  'cfg.sampler-select.top_p': ['',
+      '核采样：累积概率达到 p 的最短前缀；1.0 = 禁用',
+      '核取樣：累積機率達到 p 的最短前綴；1.0 = 停用'],
+  'cfg.sampler-select.min_p': ['',
+      '丢弃低于 min_p * 最大概率的 token；0 = 禁用',
+      '丟棄低於 min_p * 最大機率的 token；0 = 停用'],
+  'cfg.sampler-select.repetition_penalty': ['',
+      '对已出现的 token 施加惩罚；1.0 = 禁用',
+      '對已出現的 token 施加懲罰；1.0 = 停用'],
+  'cfg.sampler-select.presence_penalty': ['',
+      '对已出现 token 的固定惩罚；0.0 = 禁用',
+      '對已出現 token 的固定懲罰；0.0 = 停用'],
+  'cfg.sampler-select.seed': ['',
+      '采样随机数种子；0 = 每次重新随机',
+      '取樣隨機數種子；0 = 每次重新隨機'],
+  'port.sampler-select.sampler': ['',
+      'token 采样器配置 {sampler:"token",temperature,top_k,top_p,min_p,'
+      + 'repetition_penalty,presence_penalty,seed}',
+      'token 取樣器組態 {sampler:"token",temperature,top_k,top_p,min_p,'
+      + 'repetition_penalty,presence_penalty,seed}'],
+
+  // ---- Scheduler Select (generative) ----
+  'stage.scheduler-select.name': ['', '噪声计划表', '雜訊排程器'],
+  'stage.scheduler-select.doc': ['',
+      '选择扩散的 sigma 计划（simple | karras | exponential | boogu_v1）以'
+      + '及步数/shift，把配置作为 FlexData 节拍发出，供 generate-image 阶段'
+      + '锁存。与模型无关（原样转发用户的选择）；这里的配置项会覆盖 turbo '
+      + '默认值。与 diffusion-sampler-select 配套。0 入 / 1 出（只发一次）'
+      + '。',
+      '選擇擴散的 sigma 排程（simple | karras | exponential | boogu_v1）以'
+      + '及步數/shift，把組態作為 FlexData 節拍發出，供 generate-image 階段'
+      + '鎖存。與模型無關（原樣轉發使用者的選擇）；這裡的設定項會覆寫 turbo'
+      + ' 預設值。與 diffusion-sampler-select 配套。0 入 / 1 出（只發一次）'
+      + '。'],
+  'cfg.scheduler-select.type': ['',
+      '计划类型：simple（默认）| karras | exponential | boogu_v1（'
+      + 'Boogu-Image 的 logistic 时间偏移；它的 sigma 是递增的——0 是噪声，1'
+      + ' 是干净——因此只适用于 Boogu 的 DiT）',
+      '排程類型：simple（預設）| karras | exponential | boogu_v1（'
+      + 'Boogu-Image 的 logistic 時間偏移；它的 sigma 是遞增的——0 是雜訊，1'
+      + ' 是乾淨——因此只適用於 Boogu 的 DiT）'],
+  'cfg.scheduler-select.steps': ['',
+      '覆盖去噪步数（默认 8）',
+      '覆寫去噪步數（預設 8）'],
+  'cfg.scheduler-select.shift': ['',
+      '覆盖 mu / 时间偏移强度（默认 1.15）',
+      '覆寫 mu / 時間偏移強度（預設 1.15）'],
+  'cfg.scheduler-select.shift_type': ['',
+      '时间偏移形式：exponential（默认）| linear',
+      '時間偏移形式：exponential（預設）| linear'],
+  'cfg.scheduler-select.rho': ['',
+      'karras 曲率（默认 7）',
+      'karras 曲率（預設 7）'],
+  'cfg.scheduler-select.seq_len': ['',
+      '仅 boogu_v1：据以读取 mu 的静态 token 数，即检查点 scheduler_config '
+      + '中的 seq_len（默认 4096 = 1K 方图）',
+      '僅 boogu_v1：據以讀取 mu 的靜態 token 數，即檢查點 scheduler_config '
+      + '中的 seq_len（預設 4096 = 1K 方圖）'],
+  'cfg.scheduler-select.base_shift': ['',
+      '仅 boogu_v1：base_seq 个 token 处的 mu（默认 0.5）',
+      '僅 boogu_v1：base_seq 個 token 處的 mu（預設 0.5）'],
+  'cfg.scheduler-select.max_shift': ['',
+      '仅 boogu_v1：max_seq 个 token 处的 mu（默认 1.15）',
+      '僅 boogu_v1：max_seq 個 token 處的 mu（預設 1.15）'],
+  'port.scheduler-select.scheduler': ['',
+      '噪声计划配置 {scheduler,type,steps,shift,shift_type,rho}（boogu_v1 '
+      + '另加 base_shift/max_shift/seq_len）',
+      '雜訊排程組態 {scheduler,type,steps,shift,shift_type,rho}（boogu_v1 '
+      + '另加 base_shift/max_shift/seq_len）'],
+
+  // ---- Speak (generative) ----
+  'stage.text-to-speech.name': ['', '语音合成', '文字轉語音'],
+  'stage.text-to-speech.doc': ['',
+      '文本转语音（MOSS-TTS，metal）：把每个输入文本节拍合成为 PCM 波形并作'
+      + '为 TensorBeat 发出。具体变体由语言模型目录 config.json 中的 '
+      + 'model_type 决定："moss_tts_delay" / "moss_tts"（MOSS-TTS 8B 与 '
+      + 'MOSS-TTS-v1.5，延迟模式 -> 24 kHz 单声道）、"moss_tts_local"（'
+      + 'Local-v1.5 深度解码器 -> 48 kHz 立体声）或 "moss_tts_realtime"（'
+      + '24 kHz 单声道）。',
+      '文字轉語音（MOSS-TTS，metal）：把每個輸入文字節拍合成為 PCM 波形並作'
+      + '為 TensorBeat 發出。具體變體由語言模型目錄 config.json 中的 '
+      + 'model_type 決定："moss_tts_delay" / "moss_tts"（MOSS-TTS 8B 與 '
+      + 'MOSS-TTS-v1.5，延遲模式 -> 24 kHz 單聲道）、"moss_tts_local"（'
+      + 'Local-v1.5 深度解碼器 -> 48 kHz 立體聲）或 "moss_tts_realtime"（'
+      + '24 kHz 單聲道）。'],
+  'cfg.text-to-speech.hf_dir': ['',
+      'MOSS-TTS 语言模型：models 数据库中的键（由 model-fetch / '
+      + 'model-quantize 注册）或 HF 风格的模型目录；同名时数据库键优先于路'
+      + '径。延迟模式的 MOSS-TTS 8B / MOSS-TTS-v1.5（moss-tts；可直接用官方 '
+      + 'bf16，或 model-quantize 量化后的目录）、Local-v1.5（moss-tts-local'
+      + '）或实时版（moss-tts-realtime）。',
+      'MOSS-TTS 語言模型：models 資料庫中的鍵（由 model-fetch / '
+      + 'model-quantize 註冊）或 HF 風格的模型目錄；同名時資料庫鍵優先於路'
+      + '徑。延遲模式的 MOSS-TTS 8B / MOSS-TTS-v1.5（moss-tts；可直接用官方 '
+      + 'bf16，或 model-quantize 量化後的目錄）、Local-v1.5（moss-tts-local'
+      + '）或即時版（moss-tts-realtime）。'],
+  'cfg.text-to-speech.codec_dir': ['',
+      'MOSS-Audio-Tokenizer（编解码器）模型：models 数据库中的键或文件系统'
+      + '路径；同名时数据库键优先于路径。需与语言模型变体匹配：moss-codec（'
+      + 'MOSS-TTS 8B / v1.5、实时版）或 moss-codec-v2（Local-v1.5）。',
+      'MOSS-Audio-Tokenizer（編解碼器）模型：models 資料庫中的鍵或檔案系統'
+      + '路徑；同名時資料庫鍵優先於路徑。需與語言模型變體相符：moss-codec（'
+      + 'MOSS-TTS 8B / v1.5、即時版）或 moss-codec-v2（Local-v1.5）。'],
+  'cfg.text-to-speech.codec_quant': ['',
+      '编解码器权重精度："int8" 表示把编解码器 transformer 的 GEMM 权重存成'
+      + ' int8 分组 32 的仿射量化（常驻占用约减半，音质代价很小）；默认/留'
+      + '空 = f16',
+      '編解碼器權重精度："int8" 表示把編解碼器 transformer 的 GEMM 權重存成'
+      + ' int8 分組 32 的仿射量化（常駐占用約減半，音質代價很小）；預設/留'
+      + '空 = f16'],
+  'cfg.text-to-speech.max_new_tokens': ['',
+      '仅限延迟模式变体（MOSS-TTS 8B、MOSS-TTS-v1.5）：每个节拍的生成预算，'
+      + '以行计（>= 1；12.5 行约 1 秒音频，另加 32 行延迟尾部）',
+      '僅限延遲模式變體（MOSS-TTS 8B、MOSS-TTS-v1.5）：每個節拍的生成預算，'
+      + '以列計（>= 1；12.5 列約 1 秒音訊，另加 32 列延遲尾端）'],
+  'cfg.text-to-speech.stream_chunk_frames': ['',
+      '每生成 N 个编解码帧就发出一段 PCM（准实时流式）；0 = 一次性（单个节'
+      + '拍）。每帧约 80 毫秒音频。',
+      '每產生 N 個編解碼影格就發出一段 PCM（準即時串流）；0 = 一次性（單個'
+      + '節拍）。每格約 80 毫秒音訊。'],
+  'cfg.text-to-speech.interrupt_on_new_text': ['',
+      '新文本一到就中止正在合成的这句话（先把已产生的部分冲刷出去），然后朗'
+      + '读新文本；false = 每句话都完整念完再念下一句',
+      '新文字一到就中止正在合成的這句話（先把已產生的部分沖出），然後朗讀新'
+      + '文字；false = 每句話都完整念完再念下一句'],
+  'cfg.text-to-speech.max_frames': ['',
+      '仅限 Local-v1.5 / 实时版：每个节拍的帧预算（每帧约 80 毫秒）；>= 1',
+      '僅限 Local-v1.5 / 即時版：每個節拍的影格預算（每格約 80 毫秒）；>= 1'],
+  'cfg.text-to-speech.instruction': ['',
+      '可选的风格指令（prompt 字段；MOSS-TTS / v1.5 与 Local-v1.5）。"None" '
+      + '= 不设置',
+      '可選的風格指令（prompt 欄位；MOSS-TTS / v1.5 與 Local-v1.5）。"None" '
+      + '= 不設定'],
+  'cfg.text-to-speech.language': ['',
+      '文本的语言，用英文名称："English"、"Chinese"、"French"……（prompt '
+      + '字段；MOSS-TTS / v1.5 与 Local-v1.5）。设置后 MOSS-TTS-v1.5 在几乎'
+      + '所有语言上都明显更好。"None" = 不设置',
+      '文字的語言，用英文名稱："English"、"Chinese"、"French"……（prompt '
+      + '欄位；MOSS-TTS / v1.5 與 Local-v1.5）。設定後 MOSS-TTS-v1.5 在幾乎'
+      + '所有語言上都明顯更好。"None" = 不設定'],
+  'cfg.text-to-speech.duration_tokens': ['',
+      '仅限延迟模式变体：语音的期望长度，以音频 token 计（12.5 个约 1 秒），'
+      + '即 prompt 的时长控制。0 = 由模型决定',
+      '僅限延遲模式變體：語音的期望長度，以音訊 token 計（12.5 個約 1 秒），'
+      + '即 prompt 的時長控制。0 = 由模型決定'],
+  'cfg.text-to-speech.lm_quant': ['',
+      '未量化的语言模型 checkpoint 的主干如何驻留："w8"（默认）在载入时于内存'
+      + '中量化为仿射 8 位 group-64——约为 bf16 字节的 53%，精度接近 bf16，而'
+      + '且每个 token 都要读一遍全部权重，所以解码也更快；"bf16" 保持官方原样'
+      + '。在延迟模式模型上，"w8" 还会把文本嵌入表与文本输出头也按 w8 驻留（其'
+      + '槽位 token 的行保持精确）。model-quantize 量化过的或 MLX 8 位模型无论'
+      + '如何都按原样载入。若连这样也放不下，主干会流式读取各层（在载入前根据内'
+      + '存规划决定），并让机器能容纳的层尽量常驻；8 位量化包每层流式读取的字节'
+      + '只有 bf16 checkpoint 的一半，所以在小内存机器上请把 hf_dir 指向这样的'
+      + '包（model-quantize，bits 8）',
+      '未量化的語言模型 checkpoint 的主幹如何駐留："w8"（預設）在載入時於記憶'
+      + '體中量化為仿射 8 位元 group-64——約為 bf16 位元組的 53%，精度接近 '
+      + 'bf16，而且每個 token 都要讀一遍全部權重，所以解碼也更快；"bf16" 保持'
+      + '官方原樣。在延遲模式模型上，"w8" 還會把文字嵌入表與文字輸出頭也按 w8 '
+      + '駐留（其槽位 token 的列保持精確）。model-quantize 量化過的或 MLX 8 位元'
+      + '模型無論如何都按原樣載入。若連這樣也放不下，主幹會串流讀取各層（在載入'
+      + '前依記憶體規劃決定），並讓機器能容納的層盡量常駐；8 位元量化包每層串流'
+      + '讀取的位元組只有 bf16 checkpoint 的一半，所以在小記憶體機器上請把 '
+      + 'hf_dir 指向這樣的包（model-quantize，bits 8）'],
+  'cfg.text-to-speech.text_normalizer': ['',
+      '构建 prompt 前的文本清理："robust" = MOSS-TTS-v1.5 自带的规范化器（换'
+      + '行变为句子边界、中英文之间的空格、括号、箭头、重复标点；保护网址、电'
+      + '子邮件与文件名），"basic" = 去掉控制字符并合并空白，"auto"（默认）= '
+      + '仅当语言模型目录附带 v1.5 的规范化脚本时用 robust，与其 processor 一'
+      + '致',
+      '建構 prompt 前的文字清理："robust" = MOSS-TTS-v1.5 內建的正規化器（換'
+      + '行變為句子邊界、中英文之間的空格、括號、箭頭、重複標點；保護網址、電'
+      + '子郵件與檔名），"basic" = 去除控制字元並合併空白，"auto"（預設）= '
+      + '僅當語言模型目錄附帶 v1.5 的正規化腳本時用 robust，與其 processor 一'
+      + '致'],
+  'cfg.text-to-speech.voice_lock': ['',
+      '一次定音：缓存第一次生成出来的音色，并在之后每个节拍都把它当作克隆参'
+      + '考，使不同文本之间音色保持一致（第一次的音色由音频采样器的种子决定'
+      + '）。audio 输入端口上的参考会覆盖它。不需要任何音频输入。',
+      '一次定音：快取第一次產生出來的音色，並在之後每個節拍都把它當作複製參'
+      + '考，使不同文字之間音色保持一致（第一次的音色由音訊取樣器的種子決定'
+      + '）。audio 輸入埠上的參考會覆寫它。不需要任何音訊輸入。'],
+  'cfg.text-to-speech.voice_ref_seconds': ['',
+      '用于克隆的参考音频最多保留多少秒（越长每个节拍的提示开销越大）；对输'
+      + '入端口的参考和 voice_lock 都适用。小于等于 0 表示保留整段。',
+      '用於複製的參考音訊最多保留多少秒（越長每個節拍的提示開銷越大）；對輸'
+      + '入埠的參考和 voice_lock 都適用。小於等於 0 表示保留整段。'],
+  'port.text-to-speech.text': ['',
+      'FlexData 字符串（或带 "text" 键的对象）：要合成的文本。对象还可以携'
+      + '带 "end_of_response"（布尔）；只有当前这句话的 end_of_response 为 '
+      + 'true（或缺失，默认视为 true）时，新节拍才会打断它。来自 text-chat '
+      + '流式输出端口的中途片段（false）总是被完整朗读',
+      'FlexData 字串（或帶 "text" 鍵的物件）：要合成的文字。物件還可以攜帶 '
+      + '"end_of_response"（布林）；只有當前這句話的 end_of_response 為 '
+      + 'true（或缺少，預設視為 true）時，新節拍才會打斷它。來自 text-chat '
+      + '串流輸出埠的中途片段（false）總是被完整朗讀'],
+  'port.text-to-speech.audio-ref': ['',
+      '可选的单声道 f32 PCM TensorBeat（采样率不限；sideband.sample_rate 会'
+      + '被采用）：要克隆的参考声音。最新的节拍具有粘性（在被替换之前对之后'
+      + '所有句子都生效）。它自成一个时钟组——它的到来独立于文本流与 PCM 输'
+      + '出，并不与它们锁定速率。',
+      '可選的單聲道 f32 PCM TensorBeat（取樣率不限；sideband.sample_rate 會'
+      + '被採用）：要複製的參考聲音。最新的節拍具有黏性（在被取代之前對之後'
+      + '所有句子都生效）。它自成一個時脈組——它的到來獨立於文字串流與 PCM '
+      + '輸出，並不與它們鎖定速率。'],
+  'port.text-to-speech.audio-sampler': ['',
+      '可选的 token 采样器配置 FlexData（sampler-select），用于音频码通道；'
+      + '它的 seed 同时也是音色种子。在第一个节拍时锁存。未接线则沿用 MOSS '
+      + '自己推荐的采样设置（不是贪心——贪心的音频会退化成无声的循环）',
+      '可選的 token 取樣器組態 FlexData（sampler-select），用於音訊碼通道；'
+      + '它的 seed 同時也是音色種子。在第一個節拍時鎖存。未接線則沿用 MOSS '
+      + '自己建議的取樣設定（不是貪婪——貪婪的音訊會退化成無聲的迴圈）'],
+  'port.text-to-speech.text-sampler': ['',
+      '可选的 token 采样器配置 FlexData（sampler-select），用于自由文本通道'
+      + '。在第一个节拍时锁存；未接线 = 贪心，而这里贪心正是合适的默认（文'
+      + '本通道由 vpipe 生成，它必须紧跟转写内容才能到达 audio_end）',
+      '可選的 token 取樣器組態 FlexData（sampler-select），用於自由文字通道'
+      + '。在第一個節拍時鎖存；未接線 = 貪婪，而這裡貪婪正是合適的預設（文'
+      + '字通道由 vpipe 產生，它必須緊跟轉寫內容才能抵達 audio_end）'],
+  'port.text-to-speech.pcm': ['',
+      'f32 PCM 的 TensorBeat（已设置 sideband.sample_rate）；下游可选。延迟'
+      + '模式变体：秩为 1 的 [采样数] 单声道 @ 24 kHz。Local-v1.5：秩为 2 的 '
+      + '[2, 采样数] 立体声 @ 48 kHz。实时版：[1, 采样数] 单声道 @ 24 kHz。',
+      'f32 PCM 的 TensorBeat（已設定 sideband.sample_rate）；下游可選。延遲'
+      + '模式變體：秩為 1 的 [取樣數] 單聲道 @ 24 kHz。Local-v1.5：秩為 2 的 '
+      + '[2, 取樣數] 立體聲 @ 48 kHz。即時版：[1, 取樣數] 單聲道 @ 24 kHz。'],
+
+  // ---- VAE Decode (generative) ----
+  'stage.vae-decode.name': ['', 'VAE 解码', 'VAE 解碼'],
+  'stage.vae-decode.doc': ['',
+      '在 metal-compute 后端把 VAE 潜变量解码为平面 U8 RGB——生成/解码拆分中'
+      + '的后半段，图像和视频都适用。图像潜变量产生一个节拍；视频潜变量则每'
+      + '帧一个节拍，好让下游沿用已有的逐帧机制（save-image、rgb-to-video -'
+      + '> save-video、预览），也可以在 1 号输出端口以单个节拍取回整段片段'
+      + '。具体运行哪个解码器取决于常驻模型族；由插件注册的模型族自行解码。',
+      '在 metal-compute 後端把 VAE 潛變數解碼為平面 U8 RGB——生成/解碼拆分中'
+      + '的後半段，影像和影片都適用。影像潛變數產生一個節拍；影片潛變數則每'
+      + '格一個節拍，好讓下游沿用既有的逐格機制（save-image、rgb-to-video -'
+      + '> save-video、預覽），也可以在 1 號輸出埠以單個節拍取回整段片段。'
+      + '具體執行哪個解碼器取決於常駐模型族；由外掛註冊的模型族自行解碼。'],
+  'cfg.vae-decode.dtype': ['',
+      'u8 | f16：发出的图片格式。u8（默认）把解码器的样本量化为 8 位，是多数'
+      + '消费端读取的格式。f16 保留它们（0..1）——用于 16 位 PNG/TIFF、'
+      + 'OpenEXR 或 10 位视频（save-image、avf-save-video），在这里不损失任何'
+      + '精度',
+      'u8 | f16：發出的影像格式。u8（預設）把解碼器的樣本量化為 8 位元，是多數'
+      + '消費端讀取的格式。f16 保留它們（0..1）——用於 16 位元 PNG/TIFF、'
+      + 'OpenEXR 或 10 位元影片（save-image、avf-save-video），在這裡不損失任何'
+      + '精度'],
+  'cfg.vae-decode.hf_dir': ['',
+      '要解码其 VAE 的模型根目录；常驻模型族会在其中定位 VAE（惯例是 <'
+      + 'hf_dir>/vae）。可选：model 输入端口上的 model-select 源会覆盖它',
+      '要解碼其 VAE 的模型根目錄；常駐模型族會在其中定位 VAE（慣例是 <'
+      + 'hf_dir>/vae）。可選：model 輸入埠上的 model-select 來源會覆寫它'],
+  'cfg.vae-decode.fps': ['',
+      '当潜变量本身没有携带帧率时，打在每个解码出的视频帧边带上的帧率。来自'
+      + ' generate-video 的潜变量是携带的，因此这只是从别处读入时的后备值。'
+      + '潜变量是图像时忽略',
+      '當潛變數本身沒有攜帶影格率時，打在每個解碼出的影片影格邊帶上的影格率'
+      + '。來自 generate-video 的潛變數是攜帶的，因此這只是從別處讀入時的後'
+      + '備值。潛變數是影像時忽略'],
+  'cfg.vae-decode.unload_when_idle': ['',
+      '每个节拍处理完就释放 VAE 权重，下一个节拍再重新加载。本阶段在整个去'
+      + '噪过程中都空闲，因此在内存吃紧的机器上，把它（权重以及解码工作集）'
+      + '释放掉，正是让一个大 DiT 能在同一台机器上跑起来的关键。"auto"（默'
+      + '认）根据物理内存与流水线的权重字节数自行判断；"always" / "never" '
+      + '可强制',
+      '每個節拍處理完就釋放 VAE 權重，下一個節拍再重新載入。本階段在整個去'
+      + '噪過程中都閒置，因此在記憶體吃緊的機器上，把它（權重以及解碼工作集'
+      + '）釋放掉，正是讓一個大 DiT 能在同一台機器上跑起來的關鍵。"auto"（'
+      + '預設）根據實體記憶體與管線的權重位元組數自行判斷；"always" / "'
+      + 'never" 可強制'],
+  'cfg.vae-decode.i8_gemm': ['',
+      '加速模式（有损）：编解码器的大块矩阵乘改用动态 int8 GEMM。默认关闭，而'
+      + '且是出于质量上的理由，不是因为没实现：编解码器是潜变量与人眼所见像素'
+      + '之间的最后一环，它里面的近似没有地方可以被吸收——而 DiT 内部同样的取'
+      + '舍，后面还跟着几十个 block 和一次解码。之所以可设，是为了让这个取舍能'
+      + '被测量。只有已注册的模型族会读取它；内置的编解码器会忽略。环境变量 '
+      + 'VPIPE_I8_GEMM 可覆盖',
+      '加速模式（失真）：編解碼器的大塊矩陣乘改用動態 int8 GEMM。預設關閉，而'
+      + '且是出於品質上的理由，不是因為沒實作：編解碼器是潛變數與人眼所見像素'
+      + '之間的最後一環，它裡面的近似沒有地方可以被吸收——而 DiT 內部同樣的取'
+      + '捨，後面還跟著幾十個 block 和一次解碼。之所以可設，是為了讓這個取捨能'
+      + '被測量。只有已註冊的模型族會讀取它；內建的編解碼器會忽略。環境變數 '
+      + 'VPIPE_I8_GEMM 可覆寫'],
+  'cfg.vae-decode.ane_ffn': ['',
+      '加速解码（有损，fp16）：把解码器各 block 的前馈按行切分给 GPU 与 Apple '
+      + '神经引擎并发执行。仅 MiniMax-H3 的视频 VAE：它的解码器是一个 ViT，前'
+      + '馈约占解码的 70%，而注意力仍留在 GPU 上。共用一个运行时权重模块（约 '
+      + '0.3 GB），从资源计划中申请，并按每个 tile、每个 block 暂存。其余模型'
+      + '族会忽略它',
+      '加速解碼（失真，fp16）：把解碼器各 block 的前饋按行切分給 GPU 與 Apple '
+      + '神經引擎並行執行。僅 MiniMax-H3 的影片 VAE：它的解碼器是一個 ViT，前'
+      + '饋約占解碼的 70%，而注意力仍留在 GPU 上。共用一個執行階段權重模組（約'
+      + ' 0.3 GB），從資源計畫中申請，並按每個 tile、每個 block 暫存。其餘模型'
+      + '族會忽略它'],
+  'cfg.vae-decode.ane_rows': ['',
+      'ANE 在每个前馈的行中所占的比例，按整块取整；0（默认）按两个引擎的实测'
+      + '耗时来平衡',
+      'ANE 在每個前饋的行中所占的比例，按整塊取整；0（預設）按兩個引擎的實測'
+      + '耗時來平衡'],
+  'cfg.vae-decode.ane_layers': ['',
+      '限制有多少个解码器 block 使用 ANE 前馈；0（默认）表示全部。这不是内存'
+      + '设置——这些 block 共用一个模块——所以只有在你有意只覆盖一部分 block 时'
+      + '才设它',
+      '限制有多少個解碼器 block 使用 ANE 前饋；0（預設）表示全部。這不是記憶'
+      + '體設定——這些 block 共用一個模組——所以只有在你有意只涵蓋一部分 block '
+      + '時才設它'],
+  'port.vae-decode.latent': ['',
+      'f32 潜变量，已解包并白化：图像为 [z, H/r, W/r]，片段为 [z, T, H/r, W'
+      + '/r]。z 与空间步幅 r 即常驻模型族的 VAE 几何参数',
+      'f32 潛變數，已解包並白化：影像為 [z, H/r, W/r]，片段為 [z, T, H/r, W'
+      + '/r]。z 與空間步幅 r 即常駐模型族的 VAE 幾何參數'],
+  'port.vae-decode.model': ['',
+      '可选的共享模型引用，来自 model-select 源；覆盖 hf_dir 配置',
+      '可選的共享模型參照，來自 model-select 來源；覆寫 hf_dir 設定'],
+  'port.vae-decode.image': ['',
+      '解码出的平面 U8 RGB TensorBeat [3, H, W]。视频潜变量按帧逐个发出节拍'
+      + '，而不是发一个片段形状的张量，每个节拍的边带都带有 {frame, frames,'
+      + ' fps}，让消费者知道它位于片段中的什么位置、后面还有多少',
+      '解碼出的平面 U8 RGB TensorBeat [3, H, W]。影片潛變數按格逐個發出節拍'
+      + '，而不是發一個片段形狀的張量，每個節拍的邊帶都帶有 {frame, frames,'
+      + ' fps}，讓消費者知道它位於片段中的什麼位置、後面還有多少'],
+  'port.vae-decode.clip': ['',
+      '可选：同样的像素以单个节拍给出，平面 U8 RGB [frames, 3, H, W]，边带'
+      + '带 {frames, fps}——正是 temporal-stack 构建的那种形状，也是参考条件'
+      + '模型所需要的。只对视频潜变量、且只在接了消费者时才写出，因为构建它'
+      + '要复制整段片段。0 号输出端口不受影响，因此需要逐帧的图无需再拆包',
+      '可選：同樣的像素以單個節拍給出，平面 U8 RGB [frames, 3, H, W]，邊帶'
+      + '帶 {frames, fps}——正是 temporal-stack 建構的那種形狀，也是參考條件'
+      + '模型所需要的。只對影片潛變數、且只在接了消費者時才寫出，因為建構它'
+      + '要複製整段片段。0 號輸出埠不受影響，因此需要逐格的圖無需再拆包'],
+
+  // ---- VAE Encode (generative) ----
+  'stage.vae-encode.name': ['', 'VAE 编码', 'VAE 編碼'],
+  'stage.vae-encode.doc': ['',
+      '在 metal-compute 后端把 RGB 图像编码为 Krea-2-Turbo（Qwen-Image VAE'
+      + '）的白化潜变量。它是 vae-decode 的镜像；下游接 generate-image 的 `'
+      + 'latent` 端口（图生图）。',
+      '在 metal-compute 後端把 RGB 影像編碼為 Krea-2-Turbo（Qwen-Image VAE'
+      + '）的白化潛變數。它是 vae-decode 的鏡像；下游接 generate-image 的 `'
+      + 'latent` 埠（圖生圖）。'],
+  'cfg.vae-encode.input_range': ['',
+      '仅对 F32 输入有效（U8 恒为 0..255，F16 恒为 0..1）：采样值代表什么。"unit"（默认）'
+      + '是 [0,1]——即 video-to-rgb 打开 `normalize` 时发出的范围，也是预览'
+      + '阶段所说的归一化；"byte" 是 [0,255]，即 video-to-rgb 关闭 `'
+      + 'normalize` 时；"signed" 是 [-1,1]，VAE 自身的约定，供已经完成映射'
+      + '的生产者使用。设错不会报错——它只会让每个潜变量整体偏移，取回的画面'
+      + '看起来不过是发白而已',
+      '僅對 F32 輸入有效（U8 恆為 0..255，F16 恆為 0..1）：取樣值代表什麼。"unit"（預設）'
+      + '是 [0,1]——即 video-to-rgb 開啟 `normalize` 時發出的範圍，也是預覽'
+      + '階段所說的正規化；"byte" 是 [0,255]，即 video-to-rgb 關閉 `'
+      + 'normalize` 時；"signed" 是 [-1,1]，VAE 自身的約定，供已經完成映射'
+      + '的生產者使用。設錯不會報錯——它只會讓每個潛變數整體偏移，取回的畫面'
+      + '看起來不過是發白而已'],
+  'cfg.vae-encode.frames': ['',
+      '仅 WAN，且仅对单张图片的节拍有效：图生视频的条件片段跨越多少帧。该潜'
+      + '变量编码的是“条件图像后接这个数目减一的空白帧”，而不是单张图像——因'
+      + '为 VAE 的时间卷积会混合相邻帧，所以 1 帧的编码结果是另一个张量。它'
+      + '必须与 generate-video 阶段的 `frames` 一致；两者向上取整的方式相同'
+      + '，所以填同一个数就够了。若送入的是堆叠片段，则前面的帧用真实帧而非'
+      + '空白帧填充，并截断到这个长度，因为它所条件化的潜变量形状取自 DiT '
+      + '阶段的 `frames`，而不是取自参考素材',
+      '僅 WAN，且僅對單張圖片的節拍有效：圖生影片的條件片段跨越多少影格。該'
+      + '潛變數編碼的是「條件影像後接這個數目減一的空白影格」，而不是單張影'
+      + '像——因為 VAE 的時間卷積會混合相鄰影格，所以 1 格的編碼結果是另一個'
+      + '張量。它必須與 generate-video 階段的 `frames` 一致；兩者向上取整的'
+      + '方式相同，所以填同一個數就夠了。若送入的是堆疊片段，則前面的影格用'
+      + '真實影格而非空白影格填充，並截斷到這個長度，因為它所條件化的潛變數'
+      + '形狀取自 DiT 階段的 `frames`，而不是取自參考素材'],
+  'cfg.vae-encode.hf_dir': ['',
+      'Krea-2-Turbo / FLUX.2 / Qwen-Image-Edit 模型目录，或本阶段能读取其 '
+      + 'VAE 的其他模型目录（VAE 从 <hf_dir>/vae 读取）。可选：model 输入端口上的 model-select 源会覆'
+      + '盖它',
+      'Krea-2-Turbo / FLUX.2 / Qwen-Image-Edit 模型目錄，或本階段能讀取其 '
+      + 'VAE 的其他模型目錄（VAE 從 <hf_dir>/vae 讀取）。可選：model 輸入埠上的 model-select 來源會覆'
+      + '寫它'],
+  'cfg.vae-encode.target_width': ['',
+      '编码前先把输入按信箱模式缩放到这个宽度（须为 8 的倍数；需同时设置 '
+      + 'target_height）。0/未设置 = 按原始尺寸编码',
+      '編碼前先把輸入按信箱模式縮放到這個寬度（須為 8 的倍數；需同時設定 '
+      + 'target_height）。0/未設定 = 按原始尺寸編碼'],
+  'cfg.vae-encode.target_height': ['',
+      '信箱模式缩放的目标高度（须为 8 的倍数；需同时设置 target_width）',
+      '信箱模式縮放的目標高度（須為 8 的倍數；需同時設定 target_width）'],
+  'cfg.vae-encode.pad_color': ['',
+      '信箱模式的填充色：[r,g,b] 0..255、颜色名（black/white/gray），或单个'
+      + '灰度值。默认黑色',
+      '信箱模式的填充色：[r,g,b] 0..255、顏色名（black/white/gray），或單個'
+      + '灰階值。預設黑色'],
+  'cfg.vae-encode.unload_when_idle': ['',
+      '每个节拍处理完就释放 VAE 权重，下一个节拍再重新加载。本阶段在整个去'
+      + '噪过程中都空闲，因此在内存吃紧的机器上，把它（权重以及解码工作集）'
+      + '释放掉，正是让一个大 DiT 能在同一台机器上跑起来的关键。"auto"（默'
+      + '认）根据物理内存与流水线的权重字节数自行判断；"always" / "never" '
+      + '可强制',
+      '每個節拍處理完就釋放 VAE 權重，下一個節拍再重新載入。本階段在整個去'
+      + '噪過程中都閒置，因此在記憶體吃緊的機器上，把它（權重以及解碼工作集'
+      + '）釋放掉，正是讓一個大 DiT 能在同一台機器上跑起來的關鍵。"auto"（'
+      + '預設）根據實體記憶體與管線的權重位元組數自行判斷；"always" / "'
+      + 'never" 可強制'],
+  'cfg.vae-encode.i8_gemm': ['',
+      '加速模式（有损）：编解码器的大块矩阵乘改用动态 int8 GEMM。默认关闭，而'
+      + '且是出于质量上的理由，不是因为没实现：编解码器是潜变量与人眼所见像素'
+      + '之间的最后一环，它里面的近似没有地方可以被吸收——而 DiT 内部同样的取'
+      + '舍，后面还跟着几十个 block 和一次解码。之所以可设，是为了让这个取舍能'
+      + '被测量。只有已注册的模型族会读取它；内置的编解码器会忽略。环境变量 '
+      + 'VPIPE_I8_GEMM 可覆盖',
+      '加速模式（失真）：編解碼器的大塊矩陣乘改用動態 int8 GEMM。預設關閉，而'
+      + '且是出於品質上的理由，不是因為沒實作：編解碼器是潛變數與人眼所見像素'
+      + '之間的最後一環，它裡面的近似沒有地方可以被吸收——而 DiT 內部同樣的取'
+      + '捨，後面還跟著幾十個 block 和一次解碼。之所以可設，是為了讓這個取捨能'
+      + '被測量。只有已註冊的模型族會讀取它；內建的編解碼器會忽略。環境變數 '
+      + 'VPIPE_I8_GEMM 可覆寫'],
+  'port.vae-encode.image': ['',
+      'U8、f16 或 f32 RGB，通道优先（U8 为 0..255；f16 为 0..1；f32 按 `input_range` 解读，默'
+      + '认 [0,1]）。由秩决定含义：[3,H,W] 是一张图片，[frames,3,H,W] 是一'
+      + '段片段——即 temporal-stack 发出的形状，也是视频 VAE 一次调用就能编'
+      + '码的形状，因为它是因果的。图像 VAE 遇到片段会拒绝，而不是只取它的'
+      + '第一帧',
+      'U8、f16 或 f32 RGB，通道優先（U8 為 0..255；f16 為 0..1；f32 按 `input_range` 解讀，預'
+      + '設 [0,1]）。由秩決定含義：[3,H,W] 是一張圖片，[frames,3,H,W] 是一'
+      + '段片段——即 temporal-stack 發出的形狀，也是影片 VAE 一次呼叫就能編'
+      + '碼的形狀，因為它是因果的。影像 VAE 遇到片段會拒絕，而不是只取它的'
+      + '第一格'],
+  'port.vae-encode.model': ['',
+      '可选的共享模型引用，来自 model-select 源；覆盖 hf_dir 配置',
+      '可選的共享模型參照，來自 model-select 來源；覆寫 hf_dir 設定'],
+  'port.vae-encode.images': ['',
+      '可选：以一个列表传入的图片（load-image 的 `images`），格式与 `image` '
+      + '端口相同，各自保持原尺寸——多参考模型的参考。按顺序逐张编码，输出到 '
+      + '`latents`。列表中只要有一张无法编码，就不输出任何结果，而不是输出一'
+      + '个与条件编码器所见图片对不上的短列表',
+      '可選：以一個列表傳入的影像（load-image 的 `images`），格式與 `image` '
+      + '埠相同，各自保持原尺寸——多參考模型的參考。按順序逐張編碼，輸出到 '
+      + '`latents`。列表中只要有一張無法編碼，就不輸出任何結果，而不是輸出一'
+      + '個與條件編碼器所見影像對不上的短列表'],
+  'port.vae-encode.latent': ['',
+      'f32 白化潜变量 [z_dim, H/8, W/8]（未打包）',
+      'f32 白化潛變數 [z_dim, H/8, W/8]（未打包）'],
+  'port.vae-encode.latents': ['',
+      '编码后的 `images` 列表：每张图片一个潜变量，保持顺序（接到 '
+      + 'generate-image 的 `ref_latents`）',
+      '編碼後的 `images` 列表：每張影像一個潛變數，保持順序（接到 '
+      + 'generate-image 的 `ref_latents`）'],
+
+  // ---- Video Reference Encoder (generative) ----
+  'stage.video-ref-encoder.name': ['', '视频参考编码器', '影片參考編碼器'],
+  'stage.video-ref-encoder.doc': ['',
+      'MiniMax-H3 ref2va 参考编码器：一组参考图像、片段与音轨（外加一条提示'
+      + '词）-> 视频 DiT 据以去噪的条件与参考潜变量行。之所以用列表而不是每'
+      + '个参考一个端口作为输入，是因为一次请求会带上数量不定的十来个参考；'
+      + '每一个都在这里解码，好让它的帧率和采样率传达给负责重采样到 24 fps '
+      + '的模型。请与同一个 hf_dir、同样 `frames` 的 generate-video 阶段配'
+      + '对使用。两个分区都可以：参考是 Ref2VA 训练过的任务，而 FL2VA 权重'
+      + '同样能接收参考，即上游的 Ref2VA-like 模式——在那里只用图片，而且短'
+      + '边取 768 而不是 2048。',
+      'MiniMax-H3 ref2va 參考編碼器：一組參考影像、片段與音軌（外加一條提示'
+      + '詞）-> 影片 DiT 據以去噪的條件與參考潛變數列。之所以用清單而不是每'
+      + '個參考一個埠作為輸入，是因為一次請求會帶上數量不定的十來個參考；每'
+      + '一個都在這裡解碼，好讓它的影格率和取樣率傳達給負責重新取樣到 24 '
+      + 'fps 的模型。請與同一個 hf_dir、同樣 `frames` 的 generate-video 階'
+      + '段配對使用。兩個分割都可以：參考是 Ref2VA 訓練過的任務，而 FL2VA '
+      + '權重同樣能接收參考，即上游的 Ref2VA-like 模式——在那裡只用圖片，而'
+      + '且短邊取 768 而不是 2048。'],
+  'cfg.video-ref-encoder.references': ['',
+      '参考文件，按模型应当读取的顺序给出：一个路径，或一个路径数组。顺序决'
+      + '定它们在呈现中的标号（<Picture 1>、<Video 2>…），也决定它们在共享'
+      + '旋转时钟上的排布，因此顺序不同就是另一个请求。每个文件是什么种类——'
+      + '图像、视频还是音频——从文件内容而不是文件名读出：只有一帧的容器算图'
+      + '像参考，没有视频流的 .mp4 算音频参考。最多 9 个图像、3 个视频、3 '
+      + '个音频，总计 12 个，且音频不能是唯一的种类。空列表 `[]` 表示只用'
+      + '提示词的请求：条件只有提示词本身，不打包任何参考行——与文生视频构建'
+      + '的序列相同，由当前驻留的分区执行。省略这个键则不同：如果也没有接任'
+      + '何参考输入端口，该请求会被当作未接线的图而跳过',
+      '參考檔案，按模型應當讀取的順序給出：一個路徑，或一個路徑陣列。順序決'
+      + '定它們在呈現中的標號（<Picture 1>、<Video 2>…），也決定它們在共享'
+      + '旋轉時鐘上的排布，因此順序不同就是另一個請求。每個檔案是什麼種類——'
+      + '影像、影片還是音訊——從檔案內容而不是檔名讀出：只有一格的容器算影像'
+      + '參考，沒有視訊串流的 .mp4 算音訊參考。最多 9 個影像、3 個影片、3 '
+      + '個音訊，總計 12 個，且音訊不能是唯一的種類。空列表 `[]` 表示只用'
+      + '提示詞的請求：條件只有提示詞本身，不打包任何參考列——與文生影片建構'
+      + '的序列相同，由目前駐留的分區執行。省略這個鍵則不同：如果也沒有接任'
+      + '何參考輸入埠，該請求會被當作未接線的圖而略過'],
+  'cfg.video-ref-encoder.hf_dir': ['',
+      'MiniMax-H3 模型目录（text_encoder/、video_vae/、audio_vae/）。可选：'
+      + 'model 输入端口上的 model-select 源会覆盖它',
+      'MiniMax-H3 模型目錄（text_encoder/、video_vae/、audio_vae/）。可選：'
+      + 'model 輸入埠上的 model-select 來源會覆寫它'],
+  'cfg.video-ref-encoder.frames': ['',
+      '以 24 fps 计的生成帧数，向上取整到下一个 17n+5。必须与 '
+      + 'generate-video 阶段的 `frames` 一致：所有参考都会被截断到这个时长'
+      + '，DiT 构建的布局也是按同一个数字定尺寸的',
+      '以 24 fps 計的生成影格數，向上取整到下一個 17n+5。必須與 '
+      + 'generate-video 階段的 `frames` 一致：所有參考都會被截斷到這個長度'
+      + '，DiT 建構的版面也是按同一個數字定尺寸的'],
+  'cfg.video-ref-encoder.reference_image_short_edge': ['',
+      '图像参考的短边被缩放到多少（发布的 Ref2VA 检查点为 2048）。与目标画'
+      + '布不同，这一项没有面积上限，且会放大小图——图像参考是按高细节读取的'
+      + '，永远不会限定所生成的画面几何。在 FL2VA 分区上若不设置，取的是 '
+      + '768 而非 2048：在 FL2VA 权重上使用参考即上游的 Ref2VA-like 模式，'
+      + '其公布的配方就是 768，而 2048 会让每个参考的 token 数变成四倍，且'
+      + '这些行在 DiT 每一步都要重读一遍。一旦设置就以设置为准',
+      '影像參考的短邊被縮放到多少（發布的 Ref2VA 檢查點為 2048）。與目標畫'
+      + '布不同，這一項沒有面積上限，且會放大小圖——影像參考是按高細節讀取的'
+      + '，永遠不會限定所產生的畫面幾何。在 FL2VA 分割上若不設定，取的是 '
+      + '768 而非 2048：在 FL2VA 權重上使用參考即上游的 Ref2VA-like 模式，'
+      + '其公布的配方就是 768，而 2048 會讓每個參考的 token 數變成四倍，且'
+      + '這些列在 DiT 每一步都要重讀一遍。一旦設定就以設定為準'],
+  'cfg.video-ref-encoder.reference_image_max_pixels': ['',
+      '图像参考的面积上限，单位像素。0（默认）表示不限，这正是发布检查点的'
+      + '规则——图像按高细节读取，`reference_image_short_edge` 是它唯一的界'
+      + '限。可一旦短边设为 0，表示按送来的尺寸取图，那道界限就不复存在，因'
+      + '此把原始图片直接送进参考输入端口的图应当设置这一项：一张不限尺寸的'
+      + ' 4K 静态图约合 220 个 VAE 分块和 8160 个 DiT 行，相当于一次典型请'
+      + '求打包序列的一半，另外还要加上相应的视觉 token',
+      '影像參考的面積上限，單位像素。0（預設）表示不限，這正是發布檢查點的'
+      + '規則——影像按高細節讀取，`reference_image_short_edge` 是它唯一的界'
+      + '限。可一旦短邊設為 0，表示按送來的尺寸取圖，那道界限就不復存在，因'
+      + '此把原始圖片直接送進參考輸入埠的圖應當設定這一項：一張不限尺寸的 '
+      + '4K 靜態圖約合 220 個 VAE 分塊和 8160 個 DiT 列，相當於一次典型請求'
+      + '打包序列的一半，另外還要加上相應的視覺 token'],
+  'cfg.video-ref-encoder.reference_video_short_edge': ['',
+      '视频参考在编码前其短边被缩放到多少（发布检查点为 768），并受 `'
+      + 'reference_video_max_pixels` 限制。0 表示用片段自身的短边——同一条规'
+      + '则，只是从文件本身的尺寸出发，因此片段永远不会被放大。设为 768 时'
+      + '，一段 960x544 的参考会落到 1344x768 的画布上，像素数是原来的 1.98'
+      + ' 倍，而信息量并没有增加。调低它会同时影响三处：VAE 编码、DiT 每一'
+      + '步都要注意的参考行，以及最容易被忽略的条件生成——因为视觉塔拿到的正'
+      + '是这些像素，于是该片段贡献的 token 也随之减少。在双参考示例上实测'
+      + '，768 -> 0：参考行 13120 -> 7144，条件行 3115 -> 2119，耗时 23 分 '
+      + '07 秒 -> 14 分 17 秒。这是一个同时影响两条通路的保真度取舍，而不是'
+      + '白捡的提速，因此定下来之前请先对比效果',
+      '影片參考在編碼前其短邊被縮放到多少（發布檢查點為 768），並受 `'
+      + 'reference_video_max_pixels` 限制。0 表示用片段自身的短邊——同一條規'
+      + '則，只是從檔案本身的尺寸出發，因此片段永遠不會被放大。設為 768 時'
+      + '，一段 960x544 的參考會落到 1344x768 的畫布上，像素數是原來的 1.98'
+      + ' 倍，而資訊量並沒有增加。調低它會同時影響三處：VAE 編碼、DiT 每一'
+      + '步都要注意的參考列，以及最容易被忽略的條件產生——因為視覺塔拿到的正'
+      + '是這些像素，於是該片段貢獻的 token 也隨之減少。在雙參考範例上實測'
+      + '，768 -> 0：參考列 13120 -> 7144，條件列 3115 -> 2119，耗時 23 分 '
+      + '07 秒 -> 14 分 17 秒。這是一個同時影響兩條通路的保真度取捨，而不是'
+      + '白撿的提速，因此定下來之前請先對比效果'],
+  'cfg.video-ref-encoder.reference_video_max_pixels': ['',
+      '视频参考的画布所受的面积上限，单位像素（发布检查点为 768 * 1344）。'
+      + '它在短边缩放之后、取整之前生效，因此无论 `'
+      + 'reference_video_short_edge` 取何值，比画布更大的参考都由它来约束',
+      '影片參考的畫布所受的面積上限，單位像素（發布檢查點為 768 * 1344）。'
+      + '它在短邊縮放之後、取整之前生效，因此無論 `'
+      + 'reference_video_short_edge` 取何值，比畫布更大的參考都由它來約束'],
+  'cfg.video-ref-encoder.attach_audio': ['',
+      '参考输入端口编号（1..6），表示这些端口上的音频是前一个参考的配乐，而'
+      + '不是独立的参考——这样一段被解复用成画面与 PCM 的片段虽然从两个端口'
+      + '送入，却仍算一个参考，一并标为 <Video k> 与 <Audio j>，与带配乐的'
+      + '文件完全一致。它是位置相关的：附加到紧邻其前的那个参考上，而那个参'
+      + '考也可能来自 `references` 列表，因为列表是先读的。之所以逐端口设置'
+      + '而不是一个总开关，是因为一次请求完全可能既带随片配乐、又带一段独立'
+      + '音乐。节拍自身的 `attach` 边带可针对该节拍覆盖此项',
+      '參考輸入埠編號（1..6），表示這些埠上的音訊是前一個參考的配樂，而不是'
+      + '獨立的參考——這樣一段被解多工成畫面與 PCM 的片段雖然從兩個埠送入，'
+      + '卻仍算一個參考，一併標為 <Video k> 與 <Audio j>，與帶配樂的檔案完'
+      + '全一致。它是位置相關的：附加到緊鄰其前的那個參考上，而那個參考也可'
+      + '能來自 `references` 清單，因為清單是先讀的。之所以逐埠設定而不是一'
+      + '個總開關，是因為一次請求完全可能既帶隨片配樂、又帶一段獨立音樂。節'
+      + '拍自身的 `attach` 邊帶可針對該節拍覆寫此項'],
+  'cfg.video-ref-encoder.video_sample_fps': ['',
+      '条件生成读取视频参考所用的速率——每 24/该值 帧取一帧，两两合并成带时'
+      + '间戳的视觉块。它不是 VAE 编码所用的速率，后者是完整的 24',
+      '條件產生讀取影片參考所用的速率——每 24/該值 格取一格，兩兩合併成帶時'
+      + '間戳記的視覺區塊。它不是 VAE 編碼所用的速率，後者是完整的 24'],
+  'cfg.video-ref-encoder.condition_noise_aug': ['',
+      '视频条件行中被保留下来的比例：一行按 该值*z + (1-该值)*噪声 打包。'
+      + '该检查点在训练时锚帧就带有极轻微的噪声，因此把它们完全干净地交给'
+      + '模型反而偏离了训练分布——参考实现都会加噪，用的正是 0.999。设为 '
+      + '1.0 则关闭。它与去噪侧的 `condition_timestep` 是同一个量（放在时'
+      + '刻 t 的行也要按相应程度加噪），所以两者必须一致；之所以分成两个'
+      + '配置项，只是因为打包与去噪分属不同的 stage',
+      '影片條件列中被保留下來的比例：一列按 該值*z + (1-該值)*雜訊 打包。'
+      + '該檢查點在訓練時錨影格就帶有極輕微的雜訊，因此把它們完全乾淨地交'
+      + '給模型反而偏離了訓練分布——參考實作都會加雜訊，用的正是 0.999。設'
+      + '為 1.0 則關閉。它與去雜訊側的 `condition_timestep` 是同一個量（放'
+      + '在時刻 t 的列也要按相應程度加雜訊），所以兩者必須一致；之所以分成'
+      + '兩個設定項，只是因為打包與去雜訊分屬不同的 stage'],
+  'cfg.video-ref-encoder.max_prompt_tokens': ['',
+      '条件生成的序列池大小。ref2va 的呈现比纯文本提示词长得多——单个短边 '
+      + '2048 的图像参考就会贡献数千个视觉 token——因此文本路径默认的 4096 '
+      + '连一个都装不下。它要占 KV：被抽取的 50 层每个 token 约 200 KB，所'
+      + '以 16384 意味着条件生成常驻期间约占 3.3 GB。参考图像很多的请求可以'
+      + '调高；机器内存小则调低',
+      '條件產生的序列池大小。ref2va 的呈現比純文字提示詞長得多——單個短邊 '
+      + '2048 的影像參考就會貢獻數千個視覺 token——因此文字路徑預設的 4096 '
+      + '連一個都裝不下。它要占 KV：被抽取的 50 層每個 token 約 200 KB，所'
+      + '以 16384 意味著條件產生常駐期間約占 3.3 GB。參考影像很多的請求可以'
+      + '調高；機器記憶體小則調低'],
+  'cfg.video-ref-encoder.unload_when_idle': ['',
+      '参考编码完成后释放条件生成器与各 VAE，下一次请求再重新加载。32B 的条'
+      + '件生成器是 ref2va 图中最大的常驻块，而它在整个去噪过程中都空闲，在'
+      + '本模型上那是好几分钟。"auto"（默认）根据物理内存与流水线的权重字节'
+      + '数自行判断；"always" / "never" 可强制',
+      '參考編碼完成後釋放條件產生器與各 VAE，下一次請求再重新載入。32B 的條'
+      + '件產生器是 ref2va 圖中最大的常駐區塊，而它在整個去噪過程中都閒置，'
+      + '在本模型上那是好幾分鐘。"auto"（預設）根據實體記憶體與管線的權重位'
+      + '元組數自行判斷；"always" / "never" 可強制'],
+  'port.video-ref-encoder.prompt': ['',
+      '提示词文本（FlexData 字符串或 {text: ...}），按原文使用——不套聊天模'
+      + '板，也不加特殊 token',
+      '提示詞文字（FlexData 字串或 {text: ...}），按原文使用——不套聊天範本'
+      + '，也不加特殊 token'],
+  'port.video-ref-encoder.model': ['',
+      '可选的共享模型引用，来自 model-select 源；覆盖 hf_dir 配置',
+      '可選的共享模型參照，來自 model-select 來源；覆寫 hf_dir 設定'],
+  'port.video-ref-encoder.ref1': ['',
+      '可选的张量形式参考素材，每个参考一个节拍，编号排在 `references` 列表'
+      + '之后。种类由张量的秩决定：[N] 或 [声道数, N] 的 f32 是音频，[3, H,'
+      + ' W] 的 u8 是图片，[frames, 3, H, W] 的 u8 是片段——这也解决了文件本'
+      + '身无法表达的情形，因为单帧片段是 [1, 3, H, W]，而静态图是 [3, H, W'
+      + ']。边带携带各种速率，缺少它们是错误而不是走默认值：片段需要 `fps`'
+      + '，音频需要 `sr`（或 `sample_rate`）——采样率与音频 VAE 不一致的音轨'
+      + '会被重采样到 VAE 的采样率，这正是要求标明采样率的原因，所以请把生'
+      + '产者的采样率设成 VAE 的（发布检查点为 32000），以免重采样两次。可'
+      + '选的边带键：`short_edge` 指定这一个参考的画布（此处默认 0，表示按'
+      + '送来的尺寸编码）；音频节拍上的 `attach` 可针对该节拍覆盖本阶段的 `'
+      + 'attach_audio`——true 表示把它作为前一个参考的配乐，false 表示拒绝配'
+      + '置中提出的附加。已接线的端口每次请求都必须发节拍——空张量就是“本次'
+      + '没有内容”的说法，因为一个沉默的端口会让其后所有参考重新编号，从而'
+      + '悄悄改变整个请求',
+      '可選的張量形式參考素材，每個參考一個節拍，編號排在 `references` 清單'
+      + '之後。種類由張量的秩決定：[N] 或 [聲道數, N] 的 f32 是音訊，[3, H,'
+      + ' W] 的 u8 是圖片，[frames, 3, H, W] 的 u8 是片段——這也解決了檔案本'
+      + '身無法表達的情形，因為單格片段是 [1, 3, H, W]，而靜態圖是 [3, H, W'
+      + ']。邊帶攜帶各種速率，缺少它們是錯誤而不是走預設值：片段需要 `fps`'
+      + '，音訊需要 `sr`（或 `sample_rate`）——取樣率與音訊 VAE 不一致的音軌'
+      + '會被重新取樣到 VAE 的取樣率，這正是要求標明取樣率的原因，所以請把'
+      + '生產者的取樣率設成 VAE 的（發布檢查點為 32000），以免重新取樣兩次'
+      + '。可選的邊帶鍵：`short_edge` 指定這一個參考的畫布（此處預設 0，表'
+      + '示按送來的尺寸編碼）；音訊節拍上的 `attach` 可針對該節拍覆寫本階段'
+      + '的 `attach_audio`——true 表示把它作為前一個參考的配樂，false 表示拒'
+      + '絕設定中提出的附加。已接線的埠每次請求都必須發節拍——空張量就是「本'
+      + '次沒有內容」的說法，因為一個沉默的埠會讓其後所有參考重新編號，從而'
+      + '悄悄改變整個請求'],
+  'port.video-ref-encoder.ref2': ['',
+      '可选的张量形式参考素材，每个参考一个节拍，编号排在 `references` 列表'
+      + '之后。种类由张量的秩决定：[N] 或 [声道数, N] 的 f32 是音频，[3, H,'
+      + ' W] 的 u8 是图片，[frames, 3, H, W] 的 u8 是片段——这也解决了文件本'
+      + '身无法表达的情形，因为单帧片段是 [1, 3, H, W]，而静态图是 [3, H, W'
+      + ']。边带携带各种速率，缺少它们是错误而不是走默认值：片段需要 `fps`'
+      + '，音频需要 `sr`（或 `sample_rate`）——采样率与音频 VAE 不一致的音轨'
+      + '会被重采样到 VAE 的采样率，这正是要求标明采样率的原因，所以请把生'
+      + '产者的采样率设成 VAE 的（发布检查点为 32000），以免重采样两次。可'
+      + '选的边带键：`short_edge` 指定这一个参考的画布（此处默认 0，表示按'
+      + '送来的尺寸编码）；音频节拍上的 `attach` 可针对该节拍覆盖本阶段的 `'
+      + 'attach_audio`——true 表示把它作为前一个参考的配乐，false 表示拒绝配'
+      + '置中提出的附加。已接线的端口每次请求都必须发节拍——空张量就是“本次'
+      + '没有内容”的说法，因为一个沉默的端口会让其后所有参考重新编号，从而'
+      + '悄悄改变整个请求',
+      '可選的張量形式參考素材，每個參考一個節拍，編號排在 `references` 清單'
+      + '之後。種類由張量的秩決定：[N] 或 [聲道數, N] 的 f32 是音訊，[3, H,'
+      + ' W] 的 u8 是圖片，[frames, 3, H, W] 的 u8 是片段——這也解決了檔案本'
+      + '身無法表達的情形，因為單格片段是 [1, 3, H, W]，而靜態圖是 [3, H, W'
+      + ']。邊帶攜帶各種速率，缺少它們是錯誤而不是走預設值：片段需要 `fps`'
+      + '，音訊需要 `sr`（或 `sample_rate`）——取樣率與音訊 VAE 不一致的音軌'
+      + '會被重新取樣到 VAE 的取樣率，這正是要求標明取樣率的原因，所以請把'
+      + '生產者的取樣率設成 VAE 的（發布檢查點為 32000），以免重新取樣兩次'
+      + '。可選的邊帶鍵：`short_edge` 指定這一個參考的畫布（此處預設 0，表'
+      + '示按送來的尺寸編碼）；音訊節拍上的 `attach` 可針對該節拍覆寫本階段'
+      + '的 `attach_audio`——true 表示把它作為前一個參考的配樂，false 表示拒'
+      + '絕設定中提出的附加。已接線的埠每次請求都必須發節拍——空張量就是「本'
+      + '次沒有內容」的說法，因為一個沉默的埠會讓其後所有參考重新編號，從而'
+      + '悄悄改變整個請求'],
+  'port.video-ref-encoder.ref3': ['',
+      '可选的张量形式参考素材，每个参考一个节拍，编号排在 `references` 列表'
+      + '之后。种类由张量的秩决定：[N] 或 [声道数, N] 的 f32 是音频，[3, H,'
+      + ' W] 的 u8 是图片，[frames, 3, H, W] 的 u8 是片段——这也解决了文件本'
+      + '身无法表达的情形，因为单帧片段是 [1, 3, H, W]，而静态图是 [3, H, W'
+      + ']。边带携带各种速率，缺少它们是错误而不是走默认值：片段需要 `fps`'
+      + '，音频需要 `sr`（或 `sample_rate`）——采样率与音频 VAE 不一致的音轨'
+      + '会被重采样到 VAE 的采样率，这正是要求标明采样率的原因，所以请把生'
+      + '产者的采样率设成 VAE 的（发布检查点为 32000），以免重采样两次。可'
+      + '选的边带键：`short_edge` 指定这一个参考的画布（此处默认 0，表示按'
+      + '送来的尺寸编码）；音频节拍上的 `attach` 可针对该节拍覆盖本阶段的 `'
+      + 'attach_audio`——true 表示把它作为前一个参考的配乐，false 表示拒绝配'
+      + '置中提出的附加。已接线的端口每次请求都必须发节拍——空张量就是“本次'
+      + '没有内容”的说法，因为一个沉默的端口会让其后所有参考重新编号，从而'
+      + '悄悄改变整个请求',
+      '可選的張量形式參考素材，每個參考一個節拍，編號排在 `references` 清單'
+      + '之後。種類由張量的秩決定：[N] 或 [聲道數, N] 的 f32 是音訊，[3, H,'
+      + ' W] 的 u8 是圖片，[frames, 3, H, W] 的 u8 是片段——這也解決了檔案本'
+      + '身無法表達的情形，因為單格片段是 [1, 3, H, W]，而靜態圖是 [3, H, W'
+      + ']。邊帶攜帶各種速率，缺少它們是錯誤而不是走預設值：片段需要 `fps`'
+      + '，音訊需要 `sr`（或 `sample_rate`）——取樣率與音訊 VAE 不一致的音軌'
+      + '會被重新取樣到 VAE 的取樣率，這正是要求標明取樣率的原因，所以請把'
+      + '生產者的取樣率設成 VAE 的（發布檢查點為 32000），以免重新取樣兩次'
+      + '。可選的邊帶鍵：`short_edge` 指定這一個參考的畫布（此處預設 0，表'
+      + '示按送來的尺寸編碼）；音訊節拍上的 `attach` 可針對該節拍覆寫本階段'
+      + '的 `attach_audio`——true 表示把它作為前一個參考的配樂，false 表示拒'
+      + '絕設定中提出的附加。已接線的埠每次請求都必須發節拍——空張量就是「本'
+      + '次沒有內容」的說法，因為一個沉默的埠會讓其後所有參考重新編號，從而'
+      + '悄悄改變整個請求'],
+  'port.video-ref-encoder.ref4': ['',
+      '可选的张量形式参考素材，每个参考一个节拍，编号排在 `references` 列表'
+      + '之后。种类由张量的秩决定：[N] 或 [声道数, N] 的 f32 是音频，[3, H,'
+      + ' W] 的 u8 是图片，[frames, 3, H, W] 的 u8 是片段——这也解决了文件本'
+      + '身无法表达的情形，因为单帧片段是 [1, 3, H, W]，而静态图是 [3, H, W'
+      + ']。边带携带各种速率，缺少它们是错误而不是走默认值：片段需要 `fps`'
+      + '，音频需要 `sr`（或 `sample_rate`）——采样率与音频 VAE 不一致的音轨'
+      + '会被重采样到 VAE 的采样率，这正是要求标明采样率的原因，所以请把生'
+      + '产者的采样率设成 VAE 的（发布检查点为 32000），以免重采样两次。可'
+      + '选的边带键：`short_edge` 指定这一个参考的画布（此处默认 0，表示按'
+      + '送来的尺寸编码）；音频节拍上的 `attach` 可针对该节拍覆盖本阶段的 `'
+      + 'attach_audio`——true 表示把它作为前一个参考的配乐，false 表示拒绝配'
+      + '置中提出的附加。已接线的端口每次请求都必须发节拍——空张量就是“本次'
+      + '没有内容”的说法，因为一个沉默的端口会让其后所有参考重新编号，从而'
+      + '悄悄改变整个请求',
+      '可選的張量形式參考素材，每個參考一個節拍，編號排在 `references` 清單'
+      + '之後。種類由張量的秩決定：[N] 或 [聲道數, N] 的 f32 是音訊，[3, H,'
+      + ' W] 的 u8 是圖片，[frames, 3, H, W] 的 u8 是片段——這也解決了檔案本'
+      + '身無法表達的情形，因為單格片段是 [1, 3, H, W]，而靜態圖是 [3, H, W'
+      + ']。邊帶攜帶各種速率，缺少它們是錯誤而不是走預設值：片段需要 `fps`'
+      + '，音訊需要 `sr`（或 `sample_rate`）——取樣率與音訊 VAE 不一致的音軌'
+      + '會被重新取樣到 VAE 的取樣率，這正是要求標明取樣率的原因，所以請把'
+      + '生產者的取樣率設成 VAE 的（發布檢查點為 32000），以免重新取樣兩次'
+      + '。可選的邊帶鍵：`short_edge` 指定這一個參考的畫布（此處預設 0，表'
+      + '示按送來的尺寸編碼）；音訊節拍上的 `attach` 可針對該節拍覆寫本階段'
+      + '的 `attach_audio`——true 表示把它作為前一個參考的配樂，false 表示拒'
+      + '絕設定中提出的附加。已接線的埠每次請求都必須發節拍——空張量就是「本'
+      + '次沒有內容」的說法，因為一個沉默的埠會讓其後所有參考重新編號，從而'
+      + '悄悄改變整個請求'],
+  'port.video-ref-encoder.ref5': ['',
+      '可选的张量形式参考素材，每个参考一个节拍，编号排在 `references` 列表'
+      + '之后。种类由张量的秩决定：[N] 或 [声道数, N] 的 f32 是音频，[3, H,'
+      + ' W] 的 u8 是图片，[frames, 3, H, W] 的 u8 是片段——这也解决了文件本'
+      + '身无法表达的情形，因为单帧片段是 [1, 3, H, W]，而静态图是 [3, H, W'
+      + ']。边带携带各种速率，缺少它们是错误而不是走默认值：片段需要 `fps`'
+      + '，音频需要 `sr`（或 `sample_rate`）——采样率与音频 VAE 不一致的音轨'
+      + '会被重采样到 VAE 的采样率，这正是要求标明采样率的原因，所以请把生'
+      + '产者的采样率设成 VAE 的（发布检查点为 32000），以免重采样两次。可'
+      + '选的边带键：`short_edge` 指定这一个参考的画布（此处默认 0，表示按'
+      + '送来的尺寸编码）；音频节拍上的 `attach` 可针对该节拍覆盖本阶段的 `'
+      + 'attach_audio`——true 表示把它作为前一个参考的配乐，false 表示拒绝配'
+      + '置中提出的附加。已接线的端口每次请求都必须发节拍——空张量就是“本次'
+      + '没有内容”的说法，因为一个沉默的端口会让其后所有参考重新编号，从而'
+      + '悄悄改变整个请求',
+      '可選的張量形式參考素材，每個參考一個節拍，編號排在 `references` 清單'
+      + '之後。種類由張量的秩決定：[N] 或 [聲道數, N] 的 f32 是音訊，[3, H,'
+      + ' W] 的 u8 是圖片，[frames, 3, H, W] 的 u8 是片段——這也解決了檔案本'
+      + '身無法表達的情形，因為單格片段是 [1, 3, H, W]，而靜態圖是 [3, H, W'
+      + ']。邊帶攜帶各種速率，缺少它們是錯誤而不是走預設值：片段需要 `fps`'
+      + '，音訊需要 `sr`（或 `sample_rate`）——取樣率與音訊 VAE 不一致的音軌'
+      + '會被重新取樣到 VAE 的取樣率，這正是要求標明取樣率的原因，所以請把'
+      + '生產者的取樣率設成 VAE 的（發布檢查點為 32000），以免重新取樣兩次'
+      + '。可選的邊帶鍵：`short_edge` 指定這一個參考的畫布（此處預設 0，表'
+      + '示按送來的尺寸編碼）；音訊節拍上的 `attach` 可針對該節拍覆寫本階段'
+      + '的 `attach_audio`——true 表示把它作為前一個參考的配樂，false 表示拒'
+      + '絕設定中提出的附加。已接線的埠每次請求都必須發節拍——空張量就是「本'
+      + '次沒有內容」的說法，因為一個沉默的埠會讓其後所有參考重新編號，從而'
+      + '悄悄改變整個請求'],
+  'port.video-ref-encoder.ref6': ['',
+      '可选的张量形式参考素材，每个参考一个节拍，编号排在 `references` 列表'
+      + '之后。种类由张量的秩决定：[N] 或 [声道数, N] 的 f32 是音频，[3, H,'
+      + ' W] 的 u8 是图片，[frames, 3, H, W] 的 u8 是片段——这也解决了文件本'
+      + '身无法表达的情形，因为单帧片段是 [1, 3, H, W]，而静态图是 [3, H, W'
+      + ']。边带携带各种速率，缺少它们是错误而不是走默认值：片段需要 `fps`'
+      + '，音频需要 `sr`（或 `sample_rate`）——采样率与音频 VAE 不一致的音轨'
+      + '会被重采样到 VAE 的采样率，这正是要求标明采样率的原因，所以请把生'
+      + '产者的采样率设成 VAE 的（发布检查点为 32000），以免重采样两次。可'
+      + '选的边带键：`short_edge` 指定这一个参考的画布（此处默认 0，表示按'
+      + '送来的尺寸编码）；音频节拍上的 `attach` 可针对该节拍覆盖本阶段的 `'
+      + 'attach_audio`——true 表示把它作为前一个参考的配乐，false 表示拒绝配'
+      + '置中提出的附加。已接线的端口每次请求都必须发节拍——空张量就是“本次'
+      + '没有内容”的说法，因为一个沉默的端口会让其后所有参考重新编号，从而'
+      + '悄悄改变整个请求',
+      '可選的張量形式參考素材，每個參考一個節拍，編號排在 `references` 清單'
+      + '之後。種類由張量的秩決定：[N] 或 [聲道數, N] 的 f32 是音訊，[3, H,'
+      + ' W] 的 u8 是圖片，[frames, 3, H, W] 的 u8 是片段——這也解決了檔案本'
+      + '身無法表達的情形，因為單格片段是 [1, 3, H, W]，而靜態圖是 [3, H, W'
+      + ']。邊帶攜帶各種速率，缺少它們是錯誤而不是走預設值：片段需要 `fps`'
+      + '，音訊需要 `sr`（或 `sample_rate`）——取樣率與音訊 VAE 不一致的音軌'
+      + '會被重新取樣到 VAE 的取樣率，這正是要求標明取樣率的原因，所以請把'
+      + '生產者的取樣率設成 VAE 的（發布檢查點為 32000），以免重新取樣兩次'
+      + '。可選的邊帶鍵：`short_edge` 指定這一個參考的畫布（此處預設 0，表'
+      + '示按送來的尺寸編碼）；音訊節拍上的 `attach` 可針對該節拍覆寫本階段'
+      + '的 `attach_audio`——true 表示把它作為前一個參考的配樂，false 表示拒'
+      + '絕設定中提出的附加。已接線的埠每次請求都必須發節拍——空張量就是「本'
+      + '次沒有內容」的說法，因為一個沉默的埠會讓其後所有參考重新編號，從而'
+      + '悄悄改變整個請求'],
+  'port.video-ref-encoder.conditioning': ['',
+      'bf16 [n_tokens, 5120]——Qwen3-VL-32B 第 50 层在整个呈现上的抽取结果。'
+      + '与 diffusion-conditioner 发出的约定相同，因此 generate-video 两者'
+      + '皆可接受；边带携带逐行的模态标签以及每个参考的潜变量几何',
+      'bf16 [n_tokens, 5120]——Qwen3-VL-32B 第 50 層在整個呈現上的抽取結果。'
+      + '與 diffusion-conditioner 發出的約定相同，因此 generate-video 兩者'
+      + '皆可接受；邊帶攜帶逐列的模態標籤以及每個參考的潛變數幾何'],
+  'port.video-ref-encoder.ref_video': ['',
+      'f32 [rows, 96]——图像与视频参考的潜变量打包成的 DiT 行，按参考顺序拼'
+      + '接。没有任何参考带视频时为 0 行',
+      'f32 [rows, 96]——影像與影片參考的潛變數打包成的 DiT 列，按參考順序串'
+      + '接。沒有任何參考帶影片時為 0 列'],
+  'port.video-ref-encoder.ref_audio': ['',
+      'f32 [rows, 32]——参考配乐，单个参考内部按声道优先排列，顺序与上面一致'
+      + '。一个都没有时为 0 行',
+      'f32 [rows, 32]——參考配樂，單個參考內部按聲道優先排列，順序與上面一致'
+      + '。一個都沒有時為 0 列'],
+
+  // ---- CoreML Model (generic) ----
+  'stage.coreml-inference.name': ['', 'CoreML 模型', 'CoreML 模型'],
+  'stage.coreml-inference.doc': ['',
+      '在一个 TensorBeat 输入上运行通用 CoreML 模型，并为每个输出特征（'
+      + 'output_feature_names）各发出一个 TensorBeat。',
+      '在一個 TensorBeat 輸入上執行通用 CoreML 模型，並為每個輸出特徵（'
+      + 'output_feature_names）各發出一個 TensorBeat。'],
+  'cfg.coreml-inference.model_path': ['',
+      '.mlmodelc 目录或 .mlmodel 文件',
+      '.mlmodelc 目錄或 .mlmodel 檔案'],
+  'cfg.coreml-inference.input_feature_name': ['',
+      '模型输入特征名',
+      '模型輸入特徵名'],
+  'cfg.coreml-inference.output_feature_names': ['',
+      '输出特征名的非空数组',
+      '輸出特徵名的非空陣列'],
+  'cfg.coreml-inference.compute_units': ['',
+      '0=仅 CPU  1=CPU+GPU  2=全部  3=CPU+ANE',
+      '0=僅 CPU  1=CPU+GPU  2=全部  3=CPU+ANE'],
+  'cfg.coreml-inference.uses_cpu_only': ['',
+      '推理时对 compute_units 的覆盖',
+      '推理時對 compute_units 的覆寫'],
+  'port.coreml-inference.input': ['',
+      '作为 TensorBeat 的模型输入特征',
+      '作為 TensorBeat 的模型輸入特徵'],
+
+  // ---- passthrough (generic) ----
+  'stage.passthrough.doc': ['',
+      '恒等的 1 入 / 1 出阶段：原样转发每一个输入节拍。输入端的 EOS 结束本'
+      + '阶段。',
+      '恆等的 1 入 / 1 出階段：原樣轉發每一個輸入節拍。輸入端的 EOS 結束本'
+      + '階段。'],
+  'port.passthrough.in': ['', '任意节拍', '任意節拍'],
+  'port.passthrough.out': ['', '原样转发的输入节拍', '原樣轉發的輸入節拍'],
+
+  // ---- Boogu-Image Model Config (model-specific-config) ----
+  'stage.boogu-image-model-config.name': ['',
+      'Boogu-Image 模型配置',
+      'Boogu-Image 模型設定'],
+  'stage.boogu-image-model-config.doc': ['',
+      '源：Boogu-Image 专属参数——它的管道对 VLM 条件图像施加的两个界限，两'
+      + '者并不冗余。发一个节拍即结束；若接了 trigger 输入端口，则每收到一'
+      + '个节拍发一次。',
+      '來源：Boogu-Image 專屬參數——它的管道對 VLM 條件影像施加的兩個界限，'
+      + '兩者並不冗餘。發一個節拍即結束；若接了 trigger 輸入埠，則每收到一'
+      + '個節拍發一次。'],
+  'cfg.boogu-image-model-config.vl_long_edge': ['',
+      '接地编码：送入视觉塔之前，参考图像最长边的上限。未设置 => 768',
+      '接地編碼：送入視覺塔之前，參考影像最長邊的上限。未設定 => 768'],
+  'cfg.boogu-image-model-config.vl_pixel_budget': ['',
+      '接地编码：总像素数上限，与 vl_long_edge 一同生效。未设置 => 本模型族'
+      + '自己的 384x384（147456）',
+      '接地編碼：總像素數上限，與 vl_long_edge 一同生效。未設定 => 本模型族'
+      + '自己的 384x384（147456）'],
+  'cfg.boogu-image-model-config.vl_min_pixels': ['',
+      '接地编码：图像处理器的下界，正是它让过小或过于狭长的参考图在切 patch'
+      + ' 前被放大。未设置 => 本模型族自己的 65536',
+      '接地編碼：影像處理器的下界，正是它讓過小或過於狹長的參考影像在切 '
+      + 'patch 前被放大。未設定 => 本模型族自己的 65536'],
+  'cfg.boogu-image-model-config.vl_max_pixels': ['',
+      '接地编码：图像处理器的上界。未设置 => 本模型族自己的 16777216',
+      '接地編碼：影像處理器的上界。未設定 => 本模型族自己的 16777216'],
+  'port.boogu-image-model-config.trigger': ['',
+      '可选的节拍，用于控制何时重新发出配置（chrono 滴答、提示词源、反馈回'
+      + '路等）。负载内容不限——收到本身就是信号。未接时，本阶段每次运行只发'
+      + '一次',
+      '可選的節拍，用於控制何時重新發出設定（chrono 滴答、提示詞來源、回饋'
+      + '迴路等）。負載內容不限——收到本身就是訊號。未接時，本階段每次執行只'
+      + '發一次'],
+  'port.boogu-image-model-config.model_config': ['',
+      'boogu-image 参数，作为一个 FlexData 对象 {model_family: boogu-image,'
+      + ' +vl_*}，供 diffusion-conditioner 的 model_config 输入端口使用（接'
+      + '地编码）',
+      'boogu-image 參數，作為一個 FlexData 物件 {model_family: boogu-image,'
+      + ' +vl_*}，供 diffusion-conditioner 的 model_config 輸入埠使用（接地'
+      + '編碼）'],
+
+  // ---- Qwen-Image-2.1 Model Config (model-specific-config) ----
+  'stage.qwen-image-21-model-config.name': ['',
+      'Qwen-Image-2.1 模型配置',
+      'Qwen-Image-2.1 模型設定'],
+  'stage.qwen-image-21-model-config.doc': ['',
+      '源：Qwen-Image-2.1 专属参数——跨步前缀 KV 缓存、对参考图像的界限'
+      + '（这些界限是与 VAE 共用的，并非可以随意选择）、运行时 LoRA，以及少'
+      + '步适配器自带的调度。发一个节拍即结束；若接了 trigger 输入端口，则'
+      + '每收到一个节拍发一次。',
+      '來源：Qwen-Image-2.1 專屬參數——跨步前綴 KV 快取、對參考影像的界限'
+      + '（這些界限是與 VAE 共用的，並非可以隨意選擇）、執行階段 LoRA，以及'
+      + '少步轉接器自帶的排程。發一個節拍即結束；若接了 trigger 輸入埠，則'
+      + '每收到一個節拍發一次。'],
+  'cfg.qwen-image-21-model-config.use_kv_cache': ['',
+      '在各去噪步之间复用文本与条件图像前缀的注意力 K/V。之所以成立，是因为'
+      + '本模型在 t=0 调制该前缀，使它与步数无关——因此这是精确优化而非近似'
+      + '，缓存与不缓存的结果逐位相同。文生图时收益很小（前缀只有几十行，而'
+      + '图像有数千行），多参考编辑时收益很大。未设置 => 开启',
+      '在各去噪步之間重複使用文字與條件影像前綴的注意力 K/V。之所以成立，是'
+      + '因為本模型在 t=0 調變該前綴，使它與步數無關——因此這是精確最佳化而'
+      + '非近似，快取與不快取的結果逐位元相同。文生圖時收益很小（前綴只有幾'
+      + '十列，而影像有數千列），多參考編輯時收益很大。未設定 => 開啟'],
+  'cfg.qwen-image-21-model-config.vl_long_edge': ['',
+      '接地编码：送入视觉塔之前，参考图像最长边的上限。未设置 => 0（不限）'
+      + '——本模型族按面积而非最长边设界',
+      '接地編碼：送入視覺塔之前，參考影像最長邊的上限。未設定 => 0（不限）'
+      + '——本模型族按面積而非最長邊設界'],
+  'cfg.qwen-image-21-model-config.vl_pixel_budget': ['',
+      '接地编码：参考图像的总像素上限。未设置 => 本模型族自己的 1024x1024'
+      + '（1048576）。改动它并非没有代价：同一批缩放后的像素也要喂给 VAE，'
+      + '而 DiT 要求视觉塔的合并网格恰好是 VAE 潜空间网格的一半，因此结果若'
+      + '无法对齐到 32，该参考图就无法排布',
+      '接地編碼：參考影像的總像素上限。未設定 => 本模型族自己的 1024x1024'
+      + '（1048576）。改動它並非沒有代價：同一批縮放後的像素也要餵給 VAE，'
+      + '而 DiT 要求視覺塔的合併網格恰好是 VAE 潛空間網格的一半，因此結果若'
+      + '無法對齊到 32，該參考影像就無法排布'],
+  'cfg.qwen-image-21-model-config.vl_min_pixels': ['',
+      '接地编码：图像处理器的下界，正是它让过小或过于狭长的参考图在切 patch'
+      + ' 前被放大。未设置 => 本模型族自己的 65536',
+      '接地編碼：影像處理器的下界，正是它讓過小或過於狹長的參考影像在切 '
+      + 'patch 前被放大。未設定 => 本模型族自己的 65536'],
+  'cfg.qwen-image-21-model-config.vl_max_pixels': ['',
+      '接地编码：图像处理器的上界。未设置 => 本模型族自己的 16777216',
+      '接地編碼：影像處理器的上界。未設定 => 本模型族自己的 16777216'],
+  'cfg.qwen-image-21-model-config.lora': ['',
+      '在运行时生效的 LoRA——每个被适配的投影计算 W x + scale * B (A x)，而'
+      + '不是把增量折进权重里。可以是一个已注册的模型、一个含单个 '
+      + '.safetensors 的目录，或指向该文件的路径，peft、diffusers 与 kohya '
+      + '三种写法均可；除 block 内的投影外，共享调制与时间步 Linear 上的适'
+      + '配（Viggle 的 turbo）也能绑定。加载时生效：DiT 起来之后再改的节拍'
+      + '只会被报告并忽略。会覆盖 generate-image 自己的 `lora`。未设置 => '
+      + '不加适配器',
+      '在執行階段生效的 LoRA——每個被套用的投影計算 W x + scale * B (A x)，'
+      + '而不是把增量摺進權重裡。可以是一個已註冊的模型、一個含單個 '
+      + '.safetensors 的目錄，或指向該檔案的路徑，peft、diffusers 與 kohya '
+      + '三種寫法均可；除 block 內的投影外，共享調變與時間步 Linear 上的轉'
+      + '接（Viggle 的 turbo）也能繫結。載入時生效：DiT 起來之後再改的節拍'
+      + '只會被報告並忽略。會覆寫 generate-image 自己的 `lora`。未設定 => '
+      + '不加轉接器'],
+  'cfg.qwen-image-21-model-config.lora_scale': ['',
+      '适配器强度，按每次前向生效。可实时调整：它作为常数随 GEMM 一起计算，'
+      + '因此无需重新加载即可扫参。1.0 = 与训练时一致；0 会跳过两个适配器 '
+      + 'GEMM，所以关掉就是真的关掉',
+      '轉接器強度，按每次前向生效。可即時調整：它作為常數隨 GEMM 一起計算，'
+      + '因此無需重新載入即可掃參。1.0 = 與訓練時一致；0 會跳過兩個轉接器 '
+      + 'GEMM，所以關掉就是真的關掉'],
+  'cfg.qwen-image-21-model-config.lora2': ['',
+      '第二个运行时 LoRA，与第一个同时生效——比如 `lora` 放少步适配器，这里'
+      + '放风格适配器；两个槽位本身并无区别，谁放哪个都行。可接受的写法与 '
+      + '`lora` 相同，也同样在加载时生效',
+      '第二個執行階段 LoRA，與第一個同時生效——比如 `lora` 放少步轉接器，這'
+      + '裡放風格轉接器；兩個槽位本身並無區別，誰放哪個都行。可接受的寫法與'
+      + ' `lora` 相同，也同樣在載入時生效'],
+  'cfg.qwen-image-21-model-config.lora2_scale': ['',
+      '`lora2` 的强度，按每次前向生效，且与 `lora_scale` 相互独立。填 0 会'
+      + '跳过它的两个 GEMM',
+      '`lora2` 的強度，按每次前向生效，且與 `lora_scale` 相互獨立。填 0 會'
+      + '跳過它的兩個 GEMM'],
+  'cfg.qwen-image-21-model-config.sigmas': ['',
+      '调度的「原始」sigma 节点，噪声最高者在前——即 diffusers 管线的 '
+      + '`sigmas=` 参数——用来取代检查点的网格（linspace(1, 1/steps, '
+      + 'steps)，或蒸馏检查点自带的节点）；步数就是节点个数，检查点的时间'
+      + '偏移照常施加在这些节点上，与它的网格无异（基础模型随分辨率而变，'
+      + '蒸馏模型则不偏移）。这是少步适配器随附的东西：Viggle 的 turbo '
+      + 'v0.2.1 是 [1.0, 0.9375, 0.875, 0.75, 0.5, 0.25]，配 '
+      + 'shift_terminal 0。未设置 => 检查点的网格',
+      '排程的「原始」sigma 節點，雜訊最高者在前——即 diffusers 管線的 '
+      + '`sigmas=` 參數——用來取代檢查點的網格（linspace(1, 1/steps, '
+      + 'steps)，或蒸餾檢查點自帶的節點）；步數就是節點個數，檢查點的時間'
+      + '偏移照常施加在這些節點上，與它的網格無異（基礎模型隨解析度而變，'
+      + '蒸餾模型則不偏移）。這是少步轉接器隨附的東西：Viggle 的 turbo '
+      + 'v0.2.1 是 [1.0, 0.9375, 0.875, 0.75, 0.5, 0.25]，配 '
+      + 'shift_terminal 0。未設定 => 檢查點的網格'],
+  'cfg.qwen-image-21-model-config.shift_terminal': ['',
+      '偏移后调度的最后一个非零 sigma 被拉伸到的位置。未设置 => 检查点自己'
+      + '的值（基础模型为 0.02，蒸馏模型不拉伸）；0 = 不拉伸，这正是以 '
+      + 'shift_terminal null 发布的调度所要求的',
+      '偏移後排程的最後一個非零 sigma 被拉伸到的位置。未設定 => 檢查點自己'
+      + '的值（基礎模型為 0.02，蒸餾模型不拉伸）；0 = 不拉伸，這正是以 '
+      + 'shift_terminal null 發佈的排程所要求的'],
+  'cfg.qwen-image-21-model-config.preview_vae': ['',
+      '可选：用于实时预览的小型自编码器（TAE）。每走完一个去噪步，模型对'
+      + '成片的干净估计会由它解码，写到去噪阶段的 `preview` 输出端口，`preview`'
+      + ' 阶段可直接播放。可以是已注册的模型、只含一个 .safetensors 的目录，'
+      + '或指向它的路径。它必须是为「这个」模型的潜空间训练的。留空（默认）'
+      + '即关闭预览，端口不接也一样——那时什么都不加载、不解码',
+      '可選：用於即時預覽的小型自編碼器（TAE）。每走完一個去噪步，模型對'
+      + '成片的乾淨估計會由它解碼，寫到去噪階段的 `preview` 輸出埠，`preview`'
+      + ' 階段可直接播放。可以是已註冊的模型、只含一個 .safetensors 的目錄，'
+      + '或指向它的路徑。它必須是為「這個」模型的潛空間訓練的。留空（預設）'
+      + '即關閉預覽，埠不接也一樣——那時什麼都不載入、不解碼'],
+  'cfg.qwen-image-21-model-config.preview_every': ['',
+      '每 N 个去噪步渲染一次预览；最后一步总会渲染。解码在单独的线程上进'
+      + '行，绝不让生成等待：下一次到期时仍在排队的预览会被「替换」而不是'
+      + '保留。它确实与去噪共用 GPU，所以 N 越大，还给去噪的 GPU 时间越多。'
+      + '填 0 即关闭预览',
+      '每 N 個去噪步渲染一次預覽；最後一步總會渲染。解碼在單獨的執行緒上進'
+      + '行，絕不讓生成等待：下一次到期時仍在排隊的預覽會被「替換」而不是'
+      + '保留。它確實與去噪共用 GPU，所以 N 越大，還給去噪的 GPU 時間越多。'
+      + '填 0 即關閉預覽'],
+  'cfg.qwen-image-21-model-config.preview_max_edge': ['',
+      '预览画面的最长边（像素）；解码出的画面会按整数倍做盒式缩小，直到放'
+      + '得下（所以 512 会把 960x576 变成 480x288）。解码本身总以 TAE 自己的'
+      + '尺寸进行：改为先缩小潜变量会让画面变糊并偏色。填 0 即按解码原样发'
+      + '送',
+      '預覽畫面的最長邊（像素）；解碼出的畫面會按整數倍做盒式縮小，直到放'
+      + '得下（所以 512 會把 960x576 變成 480x288）。解碼本身總以 TAE 自己的'
+      + '尺寸進行：改為先縮小潛變數會讓畫面變糊並偏色。填 0 即按解碼原樣傳'
+      + '送'],
+  'port.qwen-image-21-model-config.trigger': ['',
+      '可选的节拍，用于控制何时重新发出配置（chrono 滴答、提示词源、反馈回'
+      + '路等）。负载内容不限——收到本身就是信号。未接时，本阶段每次运行只发'
+      + '一次',
+      '可選的節拍，用於控制何時重新發出設定（chrono 滴答、提示詞來源、回饋'
+      + '迴路等）。負載內容不限——收到本身就是訊號。未接時，本階段每次執行只'
+      + '發一次'],
+  'port.qwen-image-21-model-config.model_config': ['',
+      'qwen-image-2.1 参数，作为一个 FlexData 对象 {model_family: '
+      + 'qwen-image-21, +use_kv_cache, +vl_*, +lora、+lora2 及其强度, '
+      + '+sigmas, +shift_terminal, +preview_vae 与它的选项}，供 '
+      + 'generate-image 或 diffusion-conditioner 的 model_config 输入端口'
+      + '使用',
+      'qwen-image-2.1 參數，作為一個 FlexData 物件 {model_family: '
+      + 'qwen-image-21, +use_kv_cache, +vl_*, +lora、+lora2 及其強度, '
+      + '+sigmas, +shift_terminal, +preview_vae 與它的選項}，供 '
+      + 'generate-image 或 diffusion-conditioner 的 model_config 輸入埠使'
+      + '用'],
+
+  // ---- Z-Image Model Config (model-specific-config) ----
+  'stage.z-image-model-config.name': ['',
+      'Z-Image 模型配置',
+      'Z-Image 模型設定'],
+  'stage.z-image-model-config.doc': ['',
+      '源：Z-Image 专属参数——用本模型自己的参数化方式表达的引导强度，以及参'
+      + '考实现在其之上的两项修正。引导强度同时也是区分蒸馏版 Turbo（0）与'
+      + '未蒸馏基础版（3–5）的唯一依据，别处无从分辨。发一个节拍即结束；若'
+      + '接了 trigger 输入端口，则每收到一个节拍发一次。',
+      '來源：Z-Image 專屬參數——用本模型自己的參數化方式表達的引導強度，以及'
+      + '參考實作在其之上的兩項修正。引導強度同時也是區分蒸餾版 Turbo（0）'
+      + '與未蒸餾基礎版（3–5）的唯一依據，別處無從分辨。發一個節拍即結束；'
+      + '若接了 trigger 輸入埠，則每收到一個節拍發一次。'],
+  'cfg.z-image-model-config.guidance_scale': ['',
+      '无分类器引导，采用本模型自己的参数化：pred = pos + g*(pos - neg)，'
+      + '比常见的 neg + g*(pos - neg) 小 1。未设置 => 0，即蒸馏版 '
+      + 'Z-Image-Turbo 的设置，此时完全关闭 CFG（每步一次前向，不使用负面提'
+      + '示词）。未蒸馏的 Z-Image 基础版在此处需要 3–5，并配合 28–50 步——两'
+      + '个检查点的 transformer 配置完全相同，因此本键是唯一能说明载入了哪'
+      + '一个的依据',
+      '無分類器引導，採用本模型自己的參數化：pred = pos + g*(pos - neg)，'
+      + '比常見的 neg + g*(pos - neg) 小 1。未設定 => 0，即蒸餾版 '
+      + 'Z-Image-Turbo 的設定，此時完全關閉 CFG（每步一次前向，不使用負面提'
+      + '示詞）。未蒸餾的 Z-Image 基礎版在此處需要 3–5，並配合 28–50 步——兩'
+      + '個檢查點的 transformer 設定完全相同，因此本鍵是唯一能說明載入了哪'
+      + '一個的依據'],
+  'cfg.z-image-model-config.cfg_normalization': ['',
+      '把引导后预测的范数钳制到条件预测范数的这个倍数，用以抑制高引导强度带'
+      + '来的过饱和。未设置 => 0（关闭），与参考实现一致。仅在 '
+      + 'guidance_scale > 0 时生效',
+      '把引導後預測的範數箝制到條件預測範數的這個倍數，用以抑制高引導強度帶'
+      + '來的過飽和。未設定 => 0（關閉），與參考實作一致。僅在 '
+      + 'guidance_scale > 0 時生效'],
+  'cfg.z-image-model-config.cfg_truncation': ['',
+      '当 (1 - sigma) 超过此值时（即调度表靠近干净的一端，CFG 在那里多半只'
+      + '会带来伪影）关闭引导。未设置 => 1.0，即永不触发。仅在 '
+      + 'guidance_scale > 0 时生效',
+      '當 (1 - sigma) 超過此值時（即排程表靠近乾淨的一端，CFG 在那裡多半只'
+      + '會帶來偽影）關閉引導。未設定 => 1.0，即永不觸發。僅在 '
+      + 'guidance_scale > 0 時生效'],
+  'cfg.z-image-model-config.preview_vae': ['',
+      '可选：用于实时预览的小型自编码器（TAE）。每走完一个去噪步，模型对'
+      + '成片的干净估计会由它解码，写到去噪阶段的 `preview` 输出端口，`preview`'
+      + ' 阶段可直接播放。可以是已注册的模型、只含一个 .safetensors 的目录，'
+      + '或指向它的路径。它必须是为「这个」模型的潜空间训练的。留空（默认）'
+      + '即关闭预览，端口不接也一样——那时什么都不加载、不解码',
+      '可選：用於即時預覽的小型自編碼器（TAE）。每走完一個去噪步，模型對'
+      + '成片的乾淨估計會由它解碼，寫到去噪階段的 `preview` 輸出埠，`preview`'
+      + ' 階段可直接播放。可以是已註冊的模型、只含一個 .safetensors 的目錄，'
+      + '或指向它的路徑。它必須是為「這個」模型的潛空間訓練的。留空（預設）'
+      + '即關閉預覽，埠不接也一樣——那時什麼都不載入、不解碼'],
+  'cfg.z-image-model-config.preview_every': ['',
+      '每 N 个去噪步渲染一次预览；最后一步总会渲染。解码在单独的线程上进'
+      + '行，绝不让生成等待：下一次到期时仍在排队的预览会被「替换」而不是'
+      + '保留。它确实与去噪共用 GPU，所以 N 越大，还给去噪的 GPU 时间越多。'
+      + '填 0 即关闭预览',
+      '每 N 個去噪步渲染一次預覽；最後一步總會渲染。解碼在單獨的執行緒上進'
+      + '行，絕不讓生成等待：下一次到期時仍在排隊的預覽會被「替換」而不是'
+      + '保留。它確實與去噪共用 GPU，所以 N 越大，還給去噪的 GPU 時間越多。'
+      + '填 0 即關閉預覽'],
+  'cfg.z-image-model-config.preview_max_edge': ['',
+      '预览画面的最长边（像素）；解码出的画面会按整数倍做盒式缩小，直到放'
+      + '得下（所以 512 会把 960x576 变成 480x288）。解码本身总以 TAE 自己的'
+      + '尺寸进行：改为先缩小潜变量会让画面变糊并偏色。填 0 即按解码原样发'
+      + '送',
+      '預覽畫面的最長邊（像素）；解碼出的畫面會按整數倍做盒式縮小，直到放'
+      + '得下（所以 512 會把 960x576 變成 480x288）。解碼本身總以 TAE 自己的'
+      + '尺寸進行：改為先縮小潛變數會讓畫面變糊並偏色。填 0 即按解碼原樣傳'
+      + '送'],
+  'port.z-image-model-config.trigger': ['',
+      '可选的节拍，用于控制何时重新发出配置（chrono 滴答、提示词源、反馈回'
+      + '路等）。负载内容不限——收到本身就是信号。未接时，本阶段每次运行只发'
+      + '一次',
+      '可選的節拍，用於控制何時重新發出設定（chrono 滴答、提示詞來源、回饋'
+      + '迴路等）。負載內容不限——收到本身就是訊號。未接時，本階段每次執行只'
+      + '發一次'],
+  'port.z-image-model-config.model_config': ['',
+      'z-image 参数，作为一个 FlexData 对象 {model_family: z-image, '
+      + '+guidance_scale, +cfg_normalization, +cfg_truncation, '
+      + '+preview_vae 与它的选项}，供 generate-image 的 model_config 输入端'
+      + '口使用',
+      'z-image 參數，作為一個 FlexData 物件 {model_family: z-image, '
+      + '+guidance_scale, +cfg_normalization, +cfg_truncation, '
+      + '+preview_vae 與它的選項}，供 generate-image 的 model_config 輸入埠'
+      + '使用'],
+
+  // ---- FlashVSR Model Config (model-specific-config) ----
+  'stage.flashvsr-model-config.name': ['',
+      'FlashVSR 模型配置', 'FlashVSR 模型設定'],
+  'stage.flashvsr-model-config.doc': ['',
+      '源：FlashVSR 专属参数——去噪器跨 chunk 做注意力所用的键值窗口（也就是'
+      + '它需要的内存），以及决定它读取哪些 key 块的路由。发出一个节拍即结束'
+      + '；若接了 trigger 输入端口，则每收到一个节拍发出一个。',
+      '來源：FlashVSR 專屬參數——去雜訊器跨 chunk 做注意力所用的鍵值視窗（也'
+      + '就是它需要的記憶體），以及決定它讀取哪些 key 塊的路由。發出一個節拍'
+      + '即結束；若接了 trigger 輸入埠，則每收到一個節拍發出一個。'],
+  'cfg.flashvsr-model-config.kv_ratio': ['',
+      '每个 block 保留多少个更早 chunk 的时间窗口用于跨窗注意力（不填时取参考'
+      + '实现的 3）。这是该模型最大的一笔分配：每个 block 的窗口是 kv_ratio + '
+      + '1 个键值窗口，至少三个——1920x1152 下取 3 为 12.7 GB，取 2 为 9.6 GB'
+      + '。调低它以适配机器；代价是修复能往回看多远来保持一致性',
+      '每個 block 保留多少個更早 chunk 的時間視窗用於跨視窗注意力（不填時取參'
+      + '考實作的 3）。這是該模型最大的一筆配置：每個 block 的視窗是 kv_ratio '
+      + '+ 1 個鍵值視窗，至少三個——1920x1152 下取 3 為 12.7 GB，取 2 為 9.6 '
+      + 'GB。調低它以配合機器；代價是修復能往回看多遠來保持一致性'],
+  'cfg.flashvsr-model-config.sparse_ratio': ['',
+      '路由保留多少个 key 块，并像参考实现那样按帧面积缩放，因此同一个取值在'
+      + '任何分辨率下都表示同一种选择性（不填时取 2.0；1.5 更快，2.0 更稳）',
+      '路由保留多少個 key 塊，並像參考實作那樣按影格面積縮放，因此同一個取值'
+      + '在任何解析度下都表示同一種選擇性（不填時取 2.0；1.5 更快，2.0 更穩）'],
+  'cfg.flashvsr-model-config.local_range': ['',
+      '始终参与注意力的空间带，单位是窗口块（不填时取 11；9 细节更锐利，11 更'
+      + '稳定）',
+      '始終參與注意力的空間帶，單位是視窗塊（不填時取 11；9 細節更銳利，11 更'
+      + '穩定）'],
+  'port.flashvsr-model-config.trigger': ['',
+      '可选：用于触发重新发出配置的节拍（chrono 计时、提示词源、反馈回路都'
+      + '行）。任何载荷都可以——收到本身就是信号。不接线时，本阶段在整段运行中'
+      + '只发出一次',
+      '可選：用於觸發重新發出組態的節拍（chrono 計時、提示詞來源、回饋迴路都'
+      + '行）。任何載荷都可以——收到本身就是訊號。不接線時，本階段在整段執行中'
+      + '只發出一次'],
+  'port.flashvsr-model-config.model_config': ['',
+      'FlashVSR 参数，作为一个 FlexData 对象 {model_family: flashvsr, '
+      + '+kv_ratio, +sparse_ratio, +local_range}，供 generate-video 的 '
+      + 'model_config 输入端口使用',
+      'FlashVSR 參數，作為一個 FlexData 物件 {model_family: flashvsr, '
+      + '+kv_ratio, +sparse_ratio, +local_range}，供 generate-video 的 '
+      + 'model_config 輸入埠使用'],
+
+  // ---- FlashVSR Source Encoder (model-specific-config) ----
+  'stage.flashvsr-src-encoder.name': ['',
+      'FlashVSR 源编码器', 'FlashVSR 來源編碼器'],
+  'stage.flashvsr-src-encoder.doc': ['',
+      'FlashVSR 的源编码器：把像素域的低质量视频片段送过模型学到的因果投影，'
+      + '变成它的去噪器加到残差流上的那些条件行。这是模型专属的——这个模型族'
+      + '根本没有文本编码器，因为它的文本上下文是检查点里带着的一个常量，而它'
+      + '的条件就是片段本身。接到 generate-video 的 conditioning 输入端口。',
+      'FlashVSR 的來源編碼器：把像素域的低品質影片片段送過模型學到的因果投影'
+      + '，變成它的去雜訊器加到殘差流上的那些條件列。這是模型專屬的——這個模'
+      + '型族根本沒有文字編碼器，因為它的文字上下文是檢查點裡帶著的一個常數，'
+      + '而它的條件就是片段本身。接到 generate-video 的 conditioning 輸入埠。'],
+  'cfg.flashvsr-src-encoder.hf_dir': ['',
+      'FlashVSR 模型目录（其转换后的布局：去噪器、源投影与固定上下文合为一个'
+      + '检查点）。1 号输入端口上的 model-select 源会覆盖它，随附的流水线正是'
+      + '这样让编码器、去噪器与 VAE 共用同一个模型选择',
+      'FlashVSR 模型目錄（其轉換後的布局：去雜訊器、來源投影與固定上下文合為'
+      + '一個檢查點）。1 號輸入埠上的 model-select 來源會覆寫它，隨附的處理管'
+      + '線正是這樣讓編碼器、去雜訊器與 VAE 共用同一個模型選擇'],
+  'cfg.flashvsr-src-encoder.continuity': ['',
+      '送进来的各组帧之间是什么关系：auto | stream | clips。`stream`：它们是'
+      + '同一个源的连续片段，按一遍来修复——投影、去噪器的键/值窗口与 VAE 解码'
+      + '都把状态从一组带到下一组，因此组的边界处不会出现纹理突变；各组也不需'
+      + '要重叠。`clips`：把源切成相互重叠的片段（clip_frames、blend_frames），'
+      + '各自冷启动修复，共享的帧由解码交叉淡化——渐变而非跳变，供放不下流式的'
+      + '机器使用。`auto`（默认）在本机放得下该源尺寸下流式所需的状态时走流式'
+      + '——1920x1152 约 20 GB，512x512 约 2.5 GB——否则按片段修复',
+      '送進來的各組影格之間是什麼關係：auto | stream | clips。`stream`：它們'
+      + '是同一個來源的連續片段，按一遍來修復——投影、去雜訊器的鍵/值視窗與 '
+      + 'VAE 解碼都把狀態從一組帶到下一組，因此組的邊界處不會出現紋理突變；各'
+      + '組也不需要重疊。`clips`：把來源切成相互重疊的片段（clip_frames、'
+      + 'blend_frames），各自冷啟動修復，共享的影格由解碼交叉淡化——漸變而非跳'
+      + '變，供放不下串流的機器使用。`auto`（預設）在本機放得下該來源尺寸下串'
+      + '流所需的狀態時走串流——1920x1152 約 20 GB，512x512 約 2.5 GB——否則按'
+      + '片段修復'],
+  'cfg.flashvsr-src-encoder.clip_frames': ['',
+      '按片段修复时：每个片段的源帧数，须为 8k+1 且不少于 25。每个片段修复其'
+      + '前 clip_frames - 4 帧（最后四帧是模型的前瞻）。片段越长，重叠的代价'
+      + '摊得越薄，运行时占用也越多（41）',
+      '按片段修復時：每個片段的來源影格數，須為 8k+1 且不少於 25。每個片段修'
+      + '復其前 clip_frames - 4 個影格（最後四個是模型的前瞻）。片段越長，重疊'
+      + '的代價攤得越薄，執行時占用也越多（41）'],
+  'cfg.flashvsr-src-encoder.blend_frames': ['',
+      '按片段修复时：每个片段与下一个片段共享的修复帧数，解码会在两者之间做'
+      + '交叉淡化（升余弦），让切口成为过渡而不是跳变；0 表示硬切。每一帧都'
+      + '要多修复一次（8）',
+      '按片段修復時：每個片段與下一個片段共享的修復影格數，解碼會在兩者之間'
+      + '做交叉淡化（升餘弦），讓切口成為過渡而不是跳變；0 表示硬切。每一個'
+      + '影格都要多修復一次（8）'],
+  'cfg.flashvsr-src-encoder.color_fix': ['',
+      '为每个修复出的帧带上其源帧的颜色统计，供解码按它们匹配各通道'
+      + '（AdaIN）——这是 FlashVSR 参考实现默认施加的颜色校正（true）',
+      '為每個修復出的影格帶上其來源影格的色彩統計，供解碼按它們匹配各通道'
+      + '（AdaIN）——這是 FlashVSR 參考實作預設施加的色彩校正（true）'],
+  'port.flashvsr-src-encoder.source': ['',
+      '像素域的低质量片段：平面 U8 RGB [frames, 3, H, W]，`fps` 放在边带上，'
+      + '这正是 temporal-stack 构造出的形状。必接——这个模型族只以它的源作为'
+      + '条件，别无其他，所以不接线是拒绝而不是回退：一个没拿到源的超分模型，'
+      + '只会自信地把噪声放大',
+      '像素域的低品質片段：平面 U8 RGB [frames, 3, H, W]，`fps` 放在邊帶上，'
+      + '這正是 temporal-stack 建構出的形狀。必接——這個模型族只以它的來源作'
+      + '為條件，別無其他，所以不接線是拒絕而不是回退：一個沒拿到來源的超解析'
+      + '模型，只會自信地把雜訊放大'],
+  'port.flashvsr-src-encoder.model': ['',
+      '可选：来自 model-select 源的共享模型引用；会覆盖 hf_dir 配置',
+      '可選：來自 model-select 來源的共享模型參照；會覆寫 hf_dir 組態'],
+  'port.flashvsr-src-encoder.conditioning': ['',
+      'bf16 [row_frames * tokens, hidden]：源被投影到去噪器自己的 token 网格'
+      + '上，每四个源帧对应一个行帧。这是普通的条件——它接的就是 '
+      + 'generate-video 已有的 conditioning 输入端口，后者不需要任何改动就能'
+      + '接收。边带上带着这些行所属的几何信息 {source_width, source_height, '
+      + 'row_frames}，以及它们的位置：所含的流式块、是延续上一拍还是结束源、'
+      + '修复出的帧里有多少是真实的、与相邻片段如何重叠，以及每帧的颜色参考',
+      'bf16 [row_frames * tokens, hidden]：來源被投影到去雜訊器自己的 token '
+      + '網格上，每四個來源影格對應一個列影格。這是普通的條件——它接的就是 '
+      + 'generate-video 已有的 conditioning 輸入埠，後者不需要任何改動就能接'
+      + '收。邊帶上帶著這些列所屬的幾何資訊 {source_width, source_height, '
+      + 'row_frames}，以及它們的位置：所含的串流區塊、是延續上一拍還是結束來'
+      + '源、修復出的影格裡有多少是真實的、與相鄰片段如何重疊，以及每個影格'
+      + '的色彩參考'],
+
+  // ---- FLUX.2 Model Config (model-specific-config) ----
+  'stage.flux2-model-config.name': ['',
+      'FLUX.2 模型配置',
+      'FLUX.2 模型設定'],
+  'stage.flux2-model-config.doc': ['',
+      '源：FLUX.2 专属参数——目前主要是声明这是一个 klein-9b-kv 检查点，它那'
+      + '套参考图隔离的做法在磁盘上看不出任何痕迹，而一旦搞错方向就会生成错'
+      + '误的图像。发一个节拍即结束；若接了 trigger 输入端口，则每收到一个'
+      + '节拍发一次。',
+      '來源：FLUX.2 專屬參數——目前主要是宣告這是一個 klein-9b-kv 檢查點，它'
+      + '那套參考影像隔離的做法在磁碟上看不出任何痕跡，而一旦搞錯方向就會產'
+      + '生錯誤的影像。發一個節拍即結束；若接了 trigger 輸入埠，則每收到一'
+      + '個節拍發一次。'],
+  'cfg.flux2-model-config.klein_kv': ['',
+      '该检查点是 FLUX.2-klein-9b-kv 而非普通的 klein-9B：参考 token 在注意'
+      + '力中被隔离、以固定时间步 0 调制，且其 K/V 在各去噪步之间缓存（BFL '
+      + '实测多参考编辑加速 1.21-2.66 倍）。对该检查点必须开启，对其他检查'
+      + '点则是错的——两者在磁盘上无法区分（同样的 config.json、同样的张量名'
+      + '），因此无法自动检测。默认 false',
+      '該檢查點是 FLUX.2-klein-9b-kv 而非普通的 klein-9B：參考 token 在注意'
+      + '力中被隔離、以固定時間步 0 調變，且其 K/V 在各去噪步之間快取（BFL '
+      + '實測多參考編輯加速 1.21-2.66 倍）。對該檢查點必須開啟，對其他檢查'
+      + '點則是錯的——兩者在磁碟上無法區分（同樣的 config.json、同樣的張量名'
+      + '），因此無法自動偵測。預設 false'],
+  'cfg.flux2-model-config.lora': ['',
+      '在运行时生效的 LoRA——每个被适配的投影计算 W x + scale * B (A x)，而'
+      + '不是把增量折进权重里；对 4 位基座而言，这就是“保住一个小修正”和“把'
+      + '它四舍五入抹掉”的区别。可以是一个已注册的模型、一个含单个 '
+      + '.safetensors 的目录，或指向该文件的路径。模块名必须采用检查点自身'
+      + '使用的 diffusers 写法（transformer_blocks.N.attn.to_q、'
+      + 'single_transformer_blocks.N.attn.to_qkv_mlp_proj 等），可以带 `'
+      + 'diffusion_model.` 前缀；重命名了模块的 BFL/ComfyUI 重打包版本会一'
+      + '个都绑不上，并会明确报告。加载时生效：作用在融合投影上的适配器会关'
+      + '闭融合 SwiGLU 的交织，因此它在 DiT 构建之前读取，之后再改的节拍只'
+      + '会被报告并忽略',
+      '在執行階段生效的 LoRA——每個被套用的投影計算 W x + scale * B (A x)，'
+      + '而不是把增量摺進權重裡；對 4 位元基座而言，這就是「保住一個小修正'
+      + '」和「把它四捨五入抹掉」的差別。可以是一個已註冊的模型、一個含單個'
+      + ' .safetensors 的目錄，或指向該檔案的路徑。模組名必須採用檢查點自身'
+      + '使用的 diffusers 寫法（transformer_blocks.N.attn.to_q、'
+      + 'single_transformer_blocks.N.attn.to_qkv_mlp_proj 等），可以帶 `'
+      + 'diffusion_model.` 前綴；重新命名了模組的 BFL/ComfyUI 重新打包版本'
+      + '會一個都綁不上，並會明確報告。載入時生效：作用在融合投影上的轉接器'
+      + '會關閉融合 SwiGLU 的交織，因此它在 DiT 建構之前讀取，之後再改的節'
+      + '拍只會被報告並忽略'],
+  'cfg.flux2-model-config.lora_scale': ['',
+      '适配器强度，按每次前向生效。可实时调整：它作为常数随 GEMM 一起计算，'
+      + '因此无需重新加载即可扫参。1.0 = 与训练时一致；0 会跳过两个适配器 '
+      + 'GEMM，所以关掉就是真的关掉',
+      '轉接器強度，按每次前向生效。可即時調整：它作為常數隨 GEMM 一起計算，'
+      + '因此無需重新載入即可掃參。1.0 = 與訓練時一致；0 會跳過兩個轉接器 '
+      + 'GEMM，所以關掉就是真的關掉'],
+  'cfg.flux2-model-config.lora2': ['',
+      '第二个运行时 LoRA，与第一个同时生效：每个被适配的投影计算 W x + s1 '
+      + 'B1 (A1 x) + s2 B2 (A2 x)。它存在的意义在于这种搭配：`lora` 放蒸馏'
+      + '或身份适配器，这里放风格适配器，也就是真正需要调节的那一个——但两个'
+      + '槽位本身并无区别：谁放哪个都行，单独用 `lora2` 也完全正常。可接受'
+      + '的写法与 `lora` 相同，模块命名同样必须是 diffusers 的写法。代价是'
+      + '多一对细长 GEMM；基础权重仍然只读一次。与 `lora` 一样在加载时生效',
+      '第二個執行階段 LoRA，與第一個同時生效：每個被套用的投影計算 W x + s1'
+      + ' B1 (A1 x) + s2 B2 (A2 x)。它存在的意義在於這種搭配：`lora` 放蒸餾'
+      + '或身分轉接器，這裡放風格轉接器，也就是真正需要調節的那一個——但兩個'
+      + '槽位本身並無區別：誰放哪個都行，單獨用 `lora2` 也完全正常。可接受'
+      + '的寫法與 `lora` 相同，模組命名同樣必須是 diffusers 的寫法。代價是'
+      + '多一對細長 GEMM；基礎權重仍然只讀一次。與 `lora` 一樣在載入時生效'],
+  'cfg.flux2-model-config.lora2_scale': ['',
+      '`lora2` 的强度，按每次前向生效，且与 `lora_scale` 相互独立——这正是第'
+      + '二个槽位的意义所在：一个适配器保持它训练时的强度，另一个则可随意扫'
+      + '参。填 0 会跳过它的两个 GEMM',
+      '`lora2` 的強度，按每次前向生效，且與 `lora_scale` 相互獨立——這正是第'
+      + '二個槽位的意義所在：一個轉接器保持它訓練時的強度，另一個則可隨意掃'
+      + '參。填 0 會跳過它的兩個 GEMM'],
+  'cfg.flux2-model-config.preview_vae': ['',
+      '可选：用于实时预览的小型自编码器（TAE）。每走完一个去噪步，模型对'
+      + '成片的干净估计会由它解码，写到去噪阶段的 `preview` 输出端口，`preview`'
+      + ' 阶段可直接播放。可以是已注册的模型、只含一个 .safetensors 的目录，'
+      + '或指向它的路径。它必须是为「这个」模型的潜空间训练的。留空（默认）'
+      + '即关闭预览，端口不接也一样——那时什么都不加载、不解码',
+      '可選：用於即時預覽的小型自編碼器（TAE）。每走完一個去噪步，模型對'
+      + '成片的乾淨估計會由它解碼，寫到去噪階段的 `preview` 輸出埠，`preview`'
+      + ' 階段可直接播放。可以是已註冊的模型、只含一個 .safetensors 的目錄，'
+      + '或指向它的路徑。它必須是為「這個」模型的潛空間訓練的。留空（預設）'
+      + '即關閉預覽，埠不接也一樣——那時什麼都不載入、不解碼'],
+  'cfg.flux2-model-config.preview_every': ['',
+      '每 N 个去噪步渲染一次预览；最后一步总会渲染。解码在单独的线程上进'
+      + '行，绝不让生成等待：下一次到期时仍在排队的预览会被「替换」而不是'
+      + '保留。它确实与去噪共用 GPU，所以 N 越大，还给去噪的 GPU 时间越多。'
+      + '填 0 即关闭预览',
+      '每 N 個去噪步渲染一次預覽；最後一步總會渲染。解碼在單獨的執行緒上進'
+      + '行，絕不讓生成等待：下一次到期時仍在排隊的預覽會被「替換」而不是'
+      + '保留。它確實與去噪共用 GPU，所以 N 越大，還給去噪的 GPU 時間越多。'
+      + '填 0 即關閉預覽'],
+  'cfg.flux2-model-config.preview_max_edge': ['',
+      '预览画面的最长边（像素）；解码出的画面会按整数倍做盒式缩小，直到放'
+      + '得下（所以 512 会把 960x576 变成 480x288）。解码本身总以 TAE 自己的'
+      + '尺寸进行：改为先缩小潜变量会让画面变糊并偏色。填 0 即按解码原样发'
+      + '送',
+      '預覽畫面的最長邊（像素）；解碼出的畫面會按整數倍做盒式縮小，直到放'
+      + '得下（所以 512 會把 960x576 變成 480x288）。解碼本身總以 TAE 自己的'
+      + '尺寸進行：改為先縮小潛變數會讓畫面變糊並偏色。填 0 即按解碼原樣傳'
+      + '送'],
+  'port.flux2-model-config.trigger': ['',
+      '可选的节拍，用于控制何时重新发出配置（chrono 滴答、提示词源、反馈回'
+      + '路等）。负载内容不限——收到本身就是信号。未接时，本阶段每次运行只发'
+      + '一次',
+      '可選的節拍，用於控制何時重新發出設定（chrono 滴答、提示詞來源、回饋'
+      + '迴路等）。負載內容不限——收到本身就是訊號。未接時，本階段每次執行只'
+      + '發一次'],
+  'port.flux2-model-config.model_config': ['',
+      'FLUX.2 参数，作为一个 FlexData 对象 {model_family: flux2, klein_kv, '
+      + '+lora, +lora2 与它们的强度，+preview_vae 与它的选项}，供 '
+      + 'generate-image 的 model_config 输入端口使用',
+      'FLUX.2 參數，作為一個 FlexData 物件 {model_family: flux2, klein_kv, '
+      + '+lora, +lora2 與它們的強度，+preview_vae 與它的選項}，供 '
+      + 'generate-image 的 model_config 輸入埠使用'],
+
+  // ---- Krea-2 Model Config (model-specific-config) ----
+  'stage.krea2-model-config.name': ['',
+      'Krea-2 模型配置',
+      'Krea-2 模型設定'],
+  'stage.krea2-model-config.doc': ['',
+      '源：Krea-2 专属参数——它做接地编辑时对源图像编码所用的分辨率，那是身'
+      + '份保持编辑 LoRA 的训练分布，而不是可以随意挑的值。发一个节拍即结束'
+      + '；若接了 trigger 输入端口，则每收到一个节拍发一次。',
+      '來源：Krea-2 專屬參數——它做接地編輯時對來源影像編碼所用的解析度，那'
+      + '是身分保持編輯 LoRA 的訓練分布，而不是可以隨意挑的值。發一個節拍即'
+      + '結束；若接了 trigger 輸入埠，則每收到一個節拍發一次。'],
+  'cfg.krea2-model-config.vl_long_edge': ['',
+      '接地编码：送入视觉塔之前，参考图像最长边的上限。未设置 => 768',
+      '接地編碼：送入視覺塔之前，參考影像最長邊的上限。未設定 => 768'],
+  'cfg.krea2-model-config.vl_pixel_budget': ['',
+      '接地编码：总像素数上限，与 vl_long_edge 一同生效。未设置 => 本模型族'
+      + '不设该上限',
+      '接地編碼：總像素數上限，與 vl_long_edge 一同生效。未設定 => 本模型族'
+      + '不設該上限'],
+  'cfg.krea2-model-config.vl_min_pixels': ['',
+      '接地编码：图像处理器的下界，正是它让过小或过于狭长的参考图在切 patch'
+      + ' 前被放大。未设置 => 视觉塔的默认值',
+      '接地編碼：影像處理器的下界，正是它讓過小或過於狹長的參考影像在切 '
+      + 'patch 前被放大。未設定 => 視覺塔的預設值'],
+  'cfg.krea2-model-config.lora': ['',
+      '在运行时生效的 LoRA——每个被适配的投影计算 W x + scale * B (A x)，而'
+      + '不是把增量折进权重里；对 4 位基座而言，这就是“保住一个小修正”和“把'
+      + '它四舍五入抹掉”的区别。可以是一个已注册的模型、一个含单个 '
+      + '.safetensors 的目录，或指向该文件的路径。两套键名约定都能绑定：本'
+      + '模型自己的 diffusers 命名，以及 ai-toolkit / ComfyUI 的写法。加载'
+      + '时生效：它改变权重的构建方式（被适配的 ff.gate/ff.up 不允许融合 '
+      + 'SwiGLU 的交织），因此 DiT 起来之后再改的节拍只会被报告并忽略。未设'
+      + '置 => 不加适配器',
+      '在執行階段生效的 LoRA——每個被套用的投影計算 W x + scale * B (A x)，'
+      + '而不是把增量摺進權重裡；對 4 位元基座而言，這就是「保住一個小修正'
+      + '」和「把它四捨五入抹掉」的差別。可以是一個已註冊的模型、一個含單個'
+      + ' .safetensors 的目錄，或指向該檔案的路徑。兩套鍵名約定都能繫結：本'
+      + '模型自己的 diffusers 命名，以及 ai-toolkit / ComfyUI 的寫法。載入'
+      + '時生效：它改變權重的建構方式（被套用的 ff.gate/ff.up 不允許融合 '
+      + 'SwiGLU 的交織），因此 DiT 起來之後再改的節拍只會被報告並忽略。未設'
+      + '定 => 不加轉接器'],
+  'cfg.krea2-model-config.lora_scale': ['',
+      '适配器强度，按每次前向生效。可实时调整：它作为常数随 GEMM 一起计算，'
+      + '因此无需重新加载即可扫参。1.0 = 与训练时一致；0 会跳过两个适配器 '
+      + 'GEMM，所以关掉就是真的关掉',
+      '轉接器強度，按每次前向生效。可即時調整：它作為常數隨 GEMM 一起計算，'
+      + '因此無需重新載入即可掃參。1.0 = 與訓練時一致；0 會跳過兩個轉接器 '
+      + 'GEMM，所以關掉就是真的關掉'],
+  'cfg.krea2-model-config.lora2': ['',
+      '第二个运行时 LoRA，与第一个同时生效：每个被适配的投影计算 W x + s1 '
+      + 'B1 (A1 x) + s2 B2 (A2 x)。它存在的意义在于这种搭配：`lora` 放蒸馏'
+      + '或身份适配器，这里放风格适配器，也就是真正需要调节的那一个——但两个'
+      + '槽位本身并无区别：谁放哪个都行，单独用 `lora2` 也完全正常。可接受'
+      + '的写法与两套键名约定都与 `lora` 相同。代价是多一对细长 GEMM；基础'
+      + '权重仍然只读一次。与 `lora` 一样在加载时生效',
+      '第二個執行階段 LoRA，與第一個同時生效：每個被套用的投影計算 W x + s1'
+      + ' B1 (A1 x) + s2 B2 (A2 x)。它存在的意義在於這種搭配：`lora` 放蒸餾'
+      + '或身分轉接器，這裡放風格轉接器，也就是真正需要調節的那一個——但兩個'
+      + '槽位本身並無區別：誰放哪個都行，單獨用 `lora2` 也完全正常。可接受'
+      + '的寫法與兩套鍵名約定都與 `lora` 相同。代價是多一對細長 GEMM；基礎'
+      + '權重仍然只讀一次。與 `lora` 一樣在載入時生效'],
+  'cfg.krea2-model-config.lora2_scale': ['',
+      '`lora2` 的强度，按每次前向生效，且与 `lora_scale` 相互独立——这正是第'
+      + '二个槽位的意义所在：一个适配器保持它训练时的强度，另一个则可随意扫'
+      + '参。填 0 会跳过它的两个 GEMM',
+      '`lora2` 的強度，按每次前向生效，且與 `lora_scale` 相互獨立——這正是第'
+      + '二個槽位的意義所在：一個轉接器保持它訓練時的強度，另一個則可隨意掃'
+      + '參。填 0 會跳過它的兩個 GEMM'],
+  'cfg.krea2-model-config.vl_max_pixels': ['',
+      '接地编码：图像处理器的上界。未设置 => 视觉塔的默认值',
+      '接地編碼：影像處理器的上界。未設定 => 視覺塔的預設值'],
+  'cfg.krea2-model-config.preview_vae': ['',
+      '可选：用于实时预览的小型自编码器（TAE）。每走完一个去噪步，模型对'
+      + '成片的干净估计会由它解码，写到去噪阶段的 `preview` 输出端口，`preview`'
+      + ' 阶段可直接播放。可以是已注册的模型、只含一个 .safetensors 的目录，'
+      + '或指向它的路径。它必须是为「这个」模型的潜空间训练的。留空（默认）'
+      + '即关闭预览，端口不接也一样——那时什么都不加载、不解码',
+      '可選：用於即時預覽的小型自編碼器（TAE）。每走完一個去噪步，模型對'
+      + '成片的乾淨估計會由它解碼，寫到去噪階段的 `preview` 輸出埠，`preview`'
+      + ' 階段可直接播放。可以是已註冊的模型、只含一個 .safetensors 的目錄，'
+      + '或指向它的路徑。它必須是為「這個」模型的潛空間訓練的。留空（預設）'
+      + '即關閉預覽，埠不接也一樣——那時什麼都不載入、不解碼'],
+  'cfg.krea2-model-config.preview_every': ['',
+      '每 N 个去噪步渲染一次预览；最后一步总会渲染。解码在单独的线程上进'
+      + '行，绝不让生成等待：下一次到期时仍在排队的预览会被「替换」而不是'
+      + '保留。它确实与去噪共用 GPU，所以 N 越大，还给去噪的 GPU 时间越多。'
+      + '填 0 即关闭预览',
+      '每 N 個去噪步渲染一次預覽；最後一步總會渲染。解碼在單獨的執行緒上進'
+      + '行，絕不讓生成等待：下一次到期時仍在排隊的預覽會被「替換」而不是'
+      + '保留。它確實與去噪共用 GPU，所以 N 越大，還給去噪的 GPU 時間越多。'
+      + '填 0 即關閉預覽'],
+  'cfg.krea2-model-config.preview_max_edge': ['',
+      '预览画面的最长边（像素）；解码出的画面会按整数倍做盒式缩小，直到放'
+      + '得下（所以 512 会把 960x576 变成 480x288）。解码本身总以 TAE 自己的'
+      + '尺寸进行：改为先缩小潜变量会让画面变糊并偏色。填 0 即按解码原样发'
+      + '送',
+      '預覽畫面的最長邊（像素）；解碼出的畫面會按整數倍做盒式縮小，直到放'
+      + '得下（所以 512 會把 960x576 變成 480x288）。解碼本身總以 TAE 自己的'
+      + '尺寸進行：改為先縮小潛變數會讓畫面變糊並偏色。填 0 即按解碼原樣傳'
+      + '送'],
+  'port.krea2-model-config.trigger': ['',
+      '可选的节拍，用于控制何时重新发出配置（chrono 滴答、提示词源、反馈回'
+      + '路等）。负载内容不限——收到本身就是信号。未接时，本阶段每次运行只发'
+      + '一次',
+      '可選的節拍，用於控制何時重新發出設定（chrono 滴答、提示詞來源、回饋'
+      + '迴路等）。負載內容不限——收到本身就是訊號。未接時，本階段每次執行只'
+      + '發一次'],
+  'port.krea2-model-config.model_config': ['',
+      'krea2 参数，作为一个 FlexData 对象 {model_family: krea2, +vl_*, +'
+      + 'lora, +lora2 与它们的强度，+preview_vae 与它的选项}。其中 vl_* 各'
+      + '键给 diffusion-conditioner 的 model_config 输入端口（接地编码），'
+      + 'lora 与 preview 各键给 generate-image 的。请同时接到两者——各自只读'
+      + '取属于自己的部分',
+      'krea2 參數，作為一個 FlexData 物件 {model_family: krea2, +vl_*, +'
+      + 'lora, +lora2 與它們的強度，+preview_vae 與它的選項}。其中 vl_* 各'
+      + '鍵給 diffusion-conditioner 的 model_config 輸入埠（接地編碼），'
+      + 'lora 與 preview 各鍵給 generate-image 的。請同時接到兩者——各自只讀'
+      + '取屬於自己的部分'],
+
+  // ---- MiniMax-H3 Model Config (model-specific-config) ----
+  'stage.minimax-h3-model-config.name': ['',
+      'MiniMax-H3 模型配置',
+      'MiniMax-H3 模型設定'],
+  'stage.minimax-h3-model-config.doc': ['',
+      '源：把 MiniMax-H3 专属的生成参数（视频与音频两套噪声计划各自的 sigma'
+      + ' shift、固定条件行所处的噪声水平，以及配乐时长）作为一个 FlexData '
+      + '节拍发出，供 generate-video 锁存。H3 经过引导蒸馏，因此这里刻意没'
+      + '有引导强度。发一个节拍即结束；若接了 trigger 输入端口，则每收到一'
+      + '个节拍发一次。',
+      '來源：把 MiniMax-H3 專屬的生成參數（影片與音訊兩套雜訊排程各自的 '
+      + 'sigma shift、固定條件列所處的雜訊水準，以及配樂長度）作為一個 '
+      + 'FlexData 節拍發出，供 generate-video 鎖存。H3 經過引導蒸餾，因此這'
+      + '裡刻意沒有引導強度。發一個節拍即結束；若接了 trigger 輸入埠，則每'
+      + '收到一個節拍發一次。'],
+  'cfg.minimax-h3-model-config.video_shift': ['',
+      '视频噪声计划的 sigma shift。12.0 是发布检查点所用的值；它与音频那一'
+      + '个不可互换',
+      '影片雜訊排程的 sigma shift。12.0 是發布檢查點所用的值；它與音訊那一'
+      + '個不可互換'],
+  'cfg.minimax-h3-model-config.audio_shift': ['',
+      '音频噪声计划的 sigma shift，与视频那一套在相同步数上同步推进',
+      '音訊雜訊排程的 sigma shift，與影片那一套在相同步數上同步推進'],
+  'cfg.minimax-h3-model-config.condition_timestep': ['',
+      '固定关键帧行所处的条件噪声水平；在本模型 t = 1 - sigma 的约定下，1.0'
+      + ' 表示完全干净。只有当检查点是用加噪锚点训练的，才需要调低它',
+      '固定關鍵影格列所處的條件雜訊水準；在本模型 t = 1 - sigma 的約定下，'
+      + '1.0 表示完全乾淨。只有當檢查點是用加噪錨點訓練的，才需要調低它'],
+  'cfg.minimax-h3-model-config.condition_audio_timestep': ['',
+      '同上，但针对 Ref2VA 参考配乐的那些行。之所以分开，是因为参考的画面和'
+      + '音频由不同的 VAE 编码，进入序列时也是不同的行',
+      '同上，但針對 Ref2VA 參考配樂的那些列。之所以分開，是因為參考的畫面和'
+      + '音訊由不同的 VAE 編碼，進入序列時也是不同的列'],
+  'cfg.minimax-h3-model-config.audio_seconds': ['',
+      '配乐时长；0 表示由视频的帧数 / 帧率推导，这样两种模态在构造上就等长',
+      '配樂長度；0 表示由影片的影格數 / 影格率推導，這樣兩種模態在結構上就'
+      + '等長'],
+  'cfg.minimax-h3-model-config.linear_branch': ['',
+      '可选：VDN-H3 的发布根目录——也就是放着它的 config.json 与 '
+      + 'linear_branch/ 的那个目录。给了它，每个主 block 的注意力就变成混合式'
+      + '：对 query 附近的帧做分块窗口 softmax，再加上一个双向 delta rule，把'
+      + '窗口看不到的部分全部带上。两者是把 key 分给了彼此，所以这不是叠在全'
+      + '注意力之上的近似——它是另一种注意力，而这里的权重正是为它训练的。这'
+      + '是第二个检查点，不是替换：DiT 仍然是模型源所指定的那个，因为该分支共'
+      + '用那个 DiT 自己的 q/k/v 投影。它在加载时生效，和下面的 `lora` 一样、'
+      + '理由也一样——它改变的是这些 block 是什么，而不是某个东西施加得多强'
+      + '——所以在 DiT 已经建好之后再指定另一个，会被拒绝而不是只生效一半',
+      '可選：VDN-H3 的發布根目錄——也就是放著它的 config.json 與 '
+      + 'linear_branch/ 的那個目錄。給了它，每個主 block 的注意力就變成混合式'
+      + '：對 query 附近的影格做分塊視窗 softmax，再加上一個雙向 delta rule，'
+      + '把視窗看不到的部分全部帶上。兩者是把 key 分給了彼此，所以這不是疊在'
+      + '全注意力之上的近似——它是另一種注意力，而這裡的權重正是為它訓練的。'
+      + '這是第二個檢查點，不是替換：DiT 仍然是模型來源所指定的那個，因為該分'
+      + '支共用那個 DiT 自己的 q/k/v 投影。它在載入時生效，和下面的 `lora` 一'
+      + '樣、理由也一樣——它改變的是這些 block 是什麼，而不是某個東西施加得多'
+      + '強——所以在 DiT 已經建好之後再指定另一個，會被拒絕而不是只生效一半'],
+  'cfg.minimax-h3-model-config.lora': ['',
+      '在运行时生效的 LoRA——每个被适配的投影计算 W x + scale * B (A x)，而'
+      + '不是把增量折进权重里；对 4 位基座而言，这就是“保住一个小修正”和“把'
+      + '它四舍五入抹掉”的区别。可以是一个已注册的模型（对 Turbo 适配器执行'
+      + ' `model-fetch` 后写入的那个键）、一个含单个 .safetensors 的目录，'
+      + '或直接指向该文件的路径。对少步适配器而言，它优于 lora-fuse：'
+      + 'MiniMax-H3 Turbo 的增量相对权重只有 2-4e-4，而 bf16 的步进约为 '
+      + '4e-3，合并会把其中大部分抹掉（只剩 46-78% 的增量存活），4 位基座则'
+      + '更粗。代价约为各投影 FLOPs 的 1.5%。加载时生效：它在 DiT 构建之前'
+      + '读取，之后再改的节拍只会被报告并忽略',
+      '在執行階段生效的 LoRA——每個被套用的投影計算 W x + scale * B (A x)，'
+      + '而不是把增量摺進權重裡；對 4 位元基座而言，這就是「保住一個小修正'
+      + '」和「把它四捨五入抹掉」的差別。可以是一個已註冊的模型（對 Turbo '
+      + '轉接器執行 `model-fetch` 後寫入的那個鍵）、一個含單個 .safetensors'
+      + ' 的目錄，或直接指向該檔案的路徑。對少步轉接器而言，它優於 '
+      + 'lora-fuse：MiniMax-H3 Turbo 的增量相對權重只有 2-4e-4，而 bf16 的'
+      + '步進約為 4e-3，合併會把其中大部分抹掉（只剩 46-78% 的增量存活），4'
+      + ' 位元基座則更粗。代價約為各投影 FLOPs 的 1.5%。載入時生效：它在 '
+      + 'DiT 建構之前讀取，之後再改的節拍只會被報告並忽略'],
+  'cfg.minimax-h3-model-config.lora_qkv_layout': ['',
+      '融合的 attn.qkv_proj 适配器采用哪种行顺序。两家发布方对该投影的行分'
+      + '组方式不同——Comfy-Org 的重打包是扁平的 [全部 q | 全部 k | 全部 v]'
+      + '，而 MiniMaxAI 的各次发布都是按头排列——本代码树两者都不重排，因此'
+      + '为另一方构建的适配器会在每个 block 上落到错误的通道。`auto`（默认'
+      + '）按扁平读取（所有已发布的 H3 适配器都是扁平的），并在按头排列的 '
+      + 'DiT 上重排行，使一个适配器能同时服务两种检查点。`per_head` 是留给'
+      + '真正基于 MiniMaxAI 权重训练的适配器的退路。只影响这个融合投影',
+      '融合的 attn.qkv_proj 轉接器採用哪種列順序。兩家發布方對該投影的列分'
+      + '組方式不同——Comfy-Org 的重新打包是扁平的 [全部 q | 全部 k | 全部 v'
+      + ']，而 MiniMaxAI 的各次發布都是按頭排列——本程式碼樹兩者都不重排，因'
+      + '此為另一方建構的轉接器會在每個 block 上落到錯誤的通道。`auto`（預'
+      + '設）按扁平讀取（所有已發布的 H3 轉接器都是扁平的），並在按頭排列的'
+      + ' DiT 上重排列，使一個轉接器能同時服務兩種檢查點。`per_head` 是留給'
+      + '真正基於 MiniMaxAI 權重訓練的轉接器的退路。只影響這個融合投影'],
+  'cfg.minimax-h3-model-config.lora_scale': ['',
+      '适配器强度，按每次前向生效。可实时调整：由触发驱动的配置可以跨节拍'
+      + '扫参而无需重新加载，填 0 会跳过该适配器的两个 GEMM，所以关掉就是'
+      + '真的关掉。1.0 即训练时的强度，也是 Turbo 适配器调校的目标值；出现'
+      + '模糊拖影可略微调高，过度锐化起颗粒则调低',
+      '轉接器強度，按每次前向生效。可即時調整：由觸發驅動的設定可以跨節拍'
+      + '掃參而無需重新載入，填 0 會跳過該轉接器的兩個 GEMM，所以關掉就是'
+      + '真的關掉。1.0 即訓練時的強度，也是 Turbo 轉接器調校的目標值；出現'
+      + '模糊拖影可略微調高，過度銳化起顆粒則調低'],
+  'cfg.minimax-h3-model-config.lora2': ['',
+      '第二个运行时 LoRA，与第一个同时生效：每个被适配的投影计算 W x + s1 '
+      + 'B1 (A1 x) + s2 B2 (A2 x)。它存在的意义在于这种搭配：`lora` 放少步'
+      + '蒸馏适配器——那是对整个模型的修正，应当保持它训练时的强度——这里放风'
+      + '格或身份适配器，也就是真正需要调节的那一个。不过两个槽位本身并无区'
+      + '别：谁放哪个都行，强度也各自独立。可接受的写法与 `lora` 相同。代价'
+      + '是多一对细长 GEMM，在 rank 64 时约占一个投影的 1.5%；基础权重仍然'
+      + '只读一次。与 `lora` 一样在加载时生效',
+      '第二個執行階段 LoRA，與第一個同時生效：每個被套用的投影計算 W x + s1'
+      + ' B1 (A1 x) + s2 B2 (A2 x)。它存在的意義在於這種搭配：`lora` 放少步'
+      + '蒸餾轉接器——那是對整個模型的修正，應當保持它訓練時的強度——這裡放風'
+      + '格或身分轉接器，也就是真正需要調節的那一個。不過兩個槽位本身並無區'
+      + '別：誰放哪個都行，強度也各自獨立。可接受的寫法與 `lora` 相同。代價'
+      + '是多一對細長 GEMM，在 rank 64 時約占一個投影的 1.5%；基礎權重仍然'
+      + '只讀一次。與 `lora` 一樣在載入時生效'],
+  'cfg.minimax-h3-model-config.lora2_qkv_layout': ['',
+      '`lora2` 那个融合 attn.qkv_proj 的行顺序，含义与 `lora` 的 '
+      + '`lora_qkv_layout` 完全相同。之所以逐槽位设置，是因为行顺序是文件'
+      + '的属性：来自不同发布方的两个适配器需要不同的答案',
+      '`lora2` 那個融合 attn.qkv_proj 的列順序，含義與 `lora` 的 '
+      + '`lora_qkv_layout` 完全相同。之所以逐槽位設定，是因為列順序是檔案'
+      + '的屬性：來自不同發布方的兩個轉接器需要不同的答案'],
+  'cfg.minimax-h3-model-config.taomate': ['',
+      'TaoMate-H3 的流式方法，用于它的三步适配器（`lora` 中的 '
+      + 'TaoLiveAIGC/TaoMate-H3）。这个适配器不是给普通去噪用的少步 LoRA：'
+      + '它是为这样一种方法蒸馏的——由基础模型生成音轨（一次纯音频推理），'
+      + '适配器以每 5 秒四个分块生成视频，每块三步，每块都关注此前各干净分块'
+      + '的缓存。`auto`（默认）在某个适配器槽位持有 TaoMate 适配器时（依据其'
+      + '张量识别）运行该方法；`on` 不论拼写如何都用 `lora` 中的适配器运行'
+      + '它；`off` 用它运行普通去噪，而这并非它的训练方式。仅支持文本到音'
+      + '视频，按完整的 5 秒请求生成；`steps` 和 shift 不适用。干净 K/V 缓存'
+      + '在 864x480 约 19 GB，在 1376x768 约 48 GB——默认放在磁盘上，见 '
+      + '`taomate_kv`',
+      'TaoMate-H3 的串流方法，用於它的三步轉接器（`lora` 中的 '
+      + 'TaoLiveAIGC/TaoMate-H3）。這個轉接器不是給一般去噪用的少步 LoRA：'
+      + '它是為這樣一種方法蒸餾的——由基礎模型產生音軌（一次純音訊推論），'
+      + '轉接器以每 5 秒四個分塊產生影片，每塊三步，每塊都關注此前各乾淨分塊'
+      + '的快取。`auto`（預設）在某個轉接器槽位持有 TaoMate 轉接器時（依其'
+      + '張量辨識）執行該方法；`on` 不論拼寫如何都用 `lora` 中的轉接器執行'
+      + '它；`off` 用它執行一般去噪，而這並非它的訓練方式。僅支援文字到影'
+      + '音，按完整的 5 秒請求產生；`steps` 與 shift 不適用。乾淨 K/V 快取'
+      + '在 864x480 約 19 GB，在 1376x768 約 48 GB——預設放在磁碟上，見 '
+      + '`taomate_kv`'],
+  'cfg.minimax-h3-model-config.taomate_kv': ['',
+      'TaoMate-H3 的干净 K/V 缓存放在哪里。`auto`（默认）把它放在磁盘上——'
+      + '每个已提交的分块一个文件，每个块的键和值在需要它们的注意力之前提前'
+      + '一个块读回，经由两个几百 MB 的槽位——`i8_gemm` 开启时为 8 位，否则'
+      + '为 bf16。`bf16` 和 `int8` 选择磁盘上的位宽：int8 是 64 个一组的仿射'
+      + '量化（读写的字节约减半；注意力看到的键和值精确到 8 位），bf16 与 '
+      + '`memory` 的数值完全相同。`memory` 把整个缓存放在内存里，即上游的做'
+      + '法：没有磁盘读写，但在 832x480 约 17 GB，24 GB 的 Mac 每次前向都要'
+      + '换页',
+      'TaoMate-H3 的乾淨 K/V 快取放在哪裡。`auto`（預設）把它放在磁碟上——'
+      + '每個已提交的分塊一個檔案，每個區塊的鍵和值在需要它們的注意力之前提前'
+      + '一個區塊讀回，經由兩個幾百 MB 的槽位——`i8_gemm` 開啟時為 8 位元，否'
+      + '則為 bf16。`bf16` 與 `int8` 選擇磁碟上的位寬：int8 是 64 個一組的仿'
+      + '射量化（讀寫的位元組約減半；注意力看到的鍵和值精確到 8 位元），bf16 '
+      + '與 `memory` 的數值完全相同。`memory` 把整個快取放在記憶體裡，即上游'
+      + '的做法：沒有磁碟讀寫，但在 832x480 約 17 GB，24 GB 的 Mac 每次前向都'
+      + '要換頁'],
+  'cfg.minimax-h3-model-config.lora2_scale': ['',
+      '`lora2` 的强度，按每次前向生效，且与 `lora_scale` 相互独立——这正是第'
+      + '二个槽位的意义所在：蒸馏适配器保持它训练时的强度，而这一个可以随意'
+      + '扫参。填 0 会跳过它的两个 GEMM',
+      '`lora2` 的強度，按每次前向生效，且與 `lora_scale` 相互獨立——這正是第'
+      + '二個槽位的意義所在：蒸餾轉接器保持它訓練時的強度，而這一個可以隨意'
+      + '掃參。填 0 會跳過它的兩個 GEMM'],
+  'cfg.minimax-h3-model-config.preview_vae': ['',
+      '可选：用于实时预览的小型自编码器（TAE）。每走完一个去噪步，模型对'
+      + '成片的干净估计会由它解码，写到去噪阶段的 `preview` 输出端口，`preview`'
+      + ' 阶段可直接播放。可以是已注册的模型、只含一个 .safetensors 的目录，'
+      + '或指向它的路径。它必须是为「这个」模型的潜空间训练的。留空（默认）'
+      + '即关闭预览，端口不接也一样——那时什么都不加载、不解码',
+      '可選：用於即時預覽的小型自編碼器（TAE）。每走完一個去噪步，模型對'
+      + '成片的乾淨估計會由它解碼，寫到去噪階段的 `preview` 輸出埠，`preview`'
+      + ' 階段可直接播放。可以是已註冊的模型、只含一個 .safetensors 的目錄，'
+      + '或指向它的路徑。它必須是為「這個」模型的潛空間訓練的。留空（預設）'
+      + '即關閉預覽，埠不接也一樣——那時什麼都不載入、不解碼'],
+  'cfg.minimax-h3-model-config.preview_every': ['',
+      '每 N 个去噪步渲染一次预览；最后一步总会渲染。解码在单独的线程上进'
+      + '行，绝不让生成等待：下一次到期时仍在排队的预览会被「替换」而不是'
+      + '保留。它确实与去噪共用 GPU，所以 N 越大，还给去噪的 GPU 时间越多。'
+      + '填 0 即关闭预览',
+      '每 N 個去噪步渲染一次預覽；最後一步總會渲染。解碼在單獨的執行緒上進'
+      + '行，絕不讓生成等待：下一次到期時仍在排隊的預覽會被「替換」而不是'
+      + '保留。它確實與去噪共用 GPU，所以 N 越大，還給去噪的 GPU 時間越多。'
+      + '填 0 即關閉預覽'],
+  'cfg.minimax-h3-model-config.preview_max_edge': ['',
+      '预览画面的最长边（像素）；解码出的画面会按整数倍做盒式缩小，直到放'
+      + '得下（所以 512 会把 960x576 变成 480x288）。解码本身总以 TAE 自己的'
+      + '尺寸进行：改为先缩小潜变量会让画面变糊并偏色。填 0 即按解码原样发'
+      + '送',
+      '預覽畫面的最長邊（像素）；解碼出的畫面會按整數倍做盒式縮小，直到放'
+      + '得下（所以 512 會把 960x576 變成 480x288）。解碼本身總以 TAE 自己的'
+      + '尺寸進行：改為先縮小潛變數會讓畫面變糊並偏色。填 0 即按解碼原樣傳'
+      + '送'],
+  'cfg.minimax-h3-model-config.preview_frames': ['',
+      '可选：视频预览的长度上限（帧）。0（默认）预览整段，N 只解码前 N '
+      + '帧。这是精确结果而非近似——视频 TAE 的记忆只向前传递——也是唯一能'
+      + '让预览变「便宜」的选项',
+      '可選：影片預覽的長度上限（影格）。0（預設）預覽整段，N 只解碼前 N '
+      + '格。這是精確結果而非近似——影片 TAE 的記憶只向前傳遞——也是唯一能'
+      + '讓預覽變「便宜」的選項'],
+  'port.minimax-h3-model-config.trigger': ['',
+      '可选的节拍，用于控制何时重新发出配置（chrono 滴答、提示词源、反馈回'
+      + '路等）。负载内容不限——收到本身就是信号。未接时，本阶段每次运行只发'
+      + '一次',
+      '可選的節拍，用於控制何時重新發出設定（chrono 滴答、提示詞來源、回饋'
+      + '迴路等）。負載內容不限——收到本身就是訊號。未接時，本階段每次執行只'
+      + '發一次'],
+  'port.minimax-h3-model-config.model_config': ['',
+      'MiniMax-H3 生成参数，作为一个 FlexData 对象 {model_family: '
+      + 'minimax-h3, video_shift, audio_shift, condition_timestep, '
+      + 'condition_audio_timestep, audio_seconds，以及可选的 lora、lora2 '
+      + '与它们的强度，可选的 preview_vae 与它的三个选项}，供 generate-video '
+      + '的 model_config 输入端口使用',
+      'MiniMax-H3 生成參數，作為一個 FlexData 物件 {model_family: '
+      + 'minimax-h3, video_shift, audio_shift, condition_timestep, '
+      + 'condition_audio_timestep, audio_seconds，以及可選的 lora、lora2 '
+      + '與它們的強度，可選的 preview_vae 與它的三個選項}，供 generate-video '
+      + '的 model_config 輸入埠使用'],
+
+  // ---- Qwen-Image-Edit Model Config (model-specific-config) ----
+  'stage.qwen-image-edit-model-config.name': ['',
+      'Qwen-Image-Edit 模型配置',
+      'Qwen-Image-Edit 模型設定'],
+  'stage.qwen-image-edit-model-config.doc': ['',
+      '源：Qwen-Image-Edit 专属参数——它的 Qwen2.5-VL 视觉塔据以智能缩放参考'
+      + '图的像素预算。发一个节拍即结束；若接了 trigger 输入端口，则每收到'
+      + '一个节拍发一次。',
+      '來源：Qwen-Image-Edit 專屬參數——它的 Qwen2.5-VL 視覺塔據以智慧縮放參'
+      + '考影像的像素預算。發一個節拍即結束；若接了 trigger 輸入埠，則每收'
+      + '到一個節拍發一次。'],
+  'cfg.qwen-image-edit-model-config.vl_long_edge': ['',
+      '接地编码：送入视觉塔之前，参考图像最长边的上限。未设置 => 本模型族不'
+      + '设该上限，它的视觉塔改用像素预算',
+      '接地編碼：送入視覺塔之前，參考影像最長邊的上限。未設定 => 本模型族不'
+      + '設該上限，它的視覺塔改用像素預算'],
+  'cfg.qwen-image-edit-model-config.vl_pixel_budget': ['',
+      '接地编码：总像素数上限，与 vl_long_edge 一同生效。未设置 => 本模型族'
+      + '自己的 384x384（147456）',
+      '接地編碼：總像素數上限，與 vl_long_edge 一同生效。未設定 => 本模型族'
+      + '自己的 384x384（147456）'],
+  'cfg.qwen-image-edit-model-config.vl_min_pixels': ['',
+      '接地编码：图像处理器的下界，正是它让过小或过于狭长的参考图在切 patch'
+      + ' 前被放大。未设置 => 视觉塔的默认值',
+      '接地編碼：影像處理器的下界，正是它讓過小或過於狹長的參考影像在切 '
+      + 'patch 前被放大。未設定 => 視覺塔的預設值'],
+  'cfg.qwen-image-edit-model-config.vl_max_pixels': ['',
+      '接地编码：图像处理器的上界。未设置 => 视觉塔的默认值',
+      '接地編碼：影像處理器的上界。未設定 => 視覺塔的預設值'],
+  'port.qwen-image-edit-model-config.trigger': ['',
+      '可选的节拍，用于控制何时重新发出配置（chrono 滴答、提示词源、反馈回'
+      + '路等）。负载内容不限——收到本身就是信号。未接时，本阶段每次运行只发'
+      + '一次',
+      '可選的節拍，用於控制何時重新發出設定（chrono 滴答、提示詞來源、回饋'
+      + '迴路等）。負載內容不限——收到本身就是訊號。未接時，本階段每次執行只'
+      + '發一次'],
+  'port.qwen-image-edit-model-config.model_config': ['',
+      'qwen-image-edit 参数，作为一个 FlexData 对象 {model_family: '
+      + 'qwen-image-edit, +vl_*}，供 diffusion-conditioner 的 model_config '
+      + '输入端口使用（接地编码）',
+      'qwen-image-edit 參數，作為一個 FlexData 物件 {model_family: '
+      + 'qwen-image-edit, +vl_*}，供 diffusion-conditioner 的 model_config '
+      + '輸入埠使用（接地編碼）'],
+
+  // ---- VOSR Model Config (model-specific-config) ----
+  'stage.vosr-model-config.name': ['', 'VOSR 模型配置', 'VOSR 模型設定'],
+  'stage.vosr-model-config.doc': ['',
+      '源：VOSR 专属参数——当画面大于其权重蒸馏时所用的网格时，这个一步修复器'
+      + '要如何切分。发出一个节拍即结束；若接了 trigger 输入端口，则每收到一个'
+      + '节拍发出一个。',
+      '來源：VOSR 專屬參數——當畫面大於其權重蒸餾時所用的網格時，這個一步修復'
+      + '器要如何切分。發出一個節拍即結束；若接了 trigger 輸入埠，則每收到一個'
+      + '節拍發出一個。'],
+  'cfg.vosr-model-config.tile_size': ['',
+      '在潜空间里对修复器分块，每个分块的边长为这么多输出像素（向 16 的倍数取'
+      + '整）。不填时，只要输出比检查点蒸馏时的分辨率大，就按那个分辨率分块'
+      + '——这也是参考实现的做法，它让每个分块都落在权重认得的 token 网格上。'
+      + '填 0 强制一次过：在那个分辨率上是对的，超过之后就是模型从没见过的网'
+      + '格，会在人脸上织出周期性的纹路',
+      '在潛空間裡對修復器分塊，每個分塊的邊長為這麼多輸出像素（向 16 的倍數取'
+      + '整）。不填時，只要輸出比檢查點蒸餾時的解析度大，就按那個解析度分塊'
+      + '——這也是參考實作的做法，它讓每個分塊都落在權重認得的 token 網格上。'
+      + '填 0 強制一次過：在那個解析度上是對的，超過之後就是模型從沒見過的網'
+      + '格，會在人臉上織出週期性的紋路'],
+  'cfg.vosr-model-config.tile_overlap': ['',
+      '分块之间的重叠，单位是输出像素；小于分块的八分之一时会被提到八分之一。'
+      + '重叠的分块用高斯权重融合，并共用同一个噪声场，所以这是用计算量换取无'
+      + '缝拼接。tile_size 为 0 时忽略',
+      '分塊之間的重疊，單位是輸出像素；小於分塊的八分之一時會被提到八分之一。'
+      + '重疊的分塊用高斯權重融合，並共用同一個雜訊場，所以這是用計算量換取無'
+      + '縫拼接。tile_size 為 0 時忽略'],
+  'port.vosr-model-config.trigger': ['',
+      '可选：用于触发重新发出配置的节拍（chrono 计时、提示词源、反馈回路都'
+      + '行）。任何载荷都可以——收到本身就是信号。不接线时，本阶段在整段运行中'
+      + '只发出一次',
+      '可選：用於觸發重新發出組態的節拍（chrono 計時、提示詞來源、回饋迴路都'
+      + '行）。任何載荷都可以——收到本身就是訊號。不接線時，本階段在整段執行中'
+      + '只發出一次'],
+  'port.vosr-model-config.model_config': ['',
+      'VOSR 参数，作为一个 FlexData 对象 {model_family: vosr, +tile_size, '
+      + '+tile_overlap}，供 generate-image 的 model_config 输入端口使用'
+      + '（修复器的分块方式）',
+      'VOSR 參數，作為一個 FlexData 物件 {model_family: vosr, +tile_size, '
+      + '+tile_overlap}，供 generate-image 的 model_config 輸入埠使用'
+      + '（修復器的分塊方式）'],
+
+  // ---- Wan 2.x Model Config (model-specific-config) ----
+  'stage.wan2-model-config.name': ['',
+      'Wan 2.x 模型配置',
+      'Wan 2.x 模型設定'],
+  'stage.wan2-model-config.doc': ['',
+      '源：把 Wan 专属的生成参数（无分类器引导，以及 A14B 双专家的切换边界'
+      + '）作为一个 FlexData 节拍发出，供 generate-video 锁存。需要这些参数'
+      + '的模型族自己携带它们，因此一张图能看出它是为哪个检查点搭的。发一个'
+      + '节拍即结束；若接了 trigger 输入端口，则每收到一个节拍发一次。',
+      '來源：把 Wan 專屬的生成參數（無分類器引導，以及 A14B 雙專家的切換邊'
+      + '界）作為一個 FlexData 節拍發出，供 generate-video 鎖存。需要這些參'
+      + '數的模型族自己攜帶它們，因此一張圖能看出它是為哪個檢查點搭的。發一'
+      + '個節拍即結束；若接了 trigger 輸入埠，則每收到一個節拍發一次。'],
+  'cfg.wan2-model-config.guidance_scale': ['',
+      '无分类器引导强度；在双专家检查点（A14B）上指的是高噪声专家的那一个。'
+      + 'Wan 未经蒸馏，因此正是它把生成引向提示词——但前提是 generate-video '
+      + '上接了负向条件，否则引导强度会被强制为 1',
+      '無分類器引導強度；在雙專家檢查點（A14B）上指的是高雜訊專家的那一個。'
+      + 'Wan 未經蒸餾，因此正是它把生成引向提示詞——但前提是 generate-video '
+      + '上接了負向條件，否則引導強度會被強制為 1'],
+  'cfg.wan2-model-config.guidance_scale_2': ['',
+      '低噪声专家的无分类器引导强度（双专家检查点，例如 A14B）。与前一个分'
+      + '开，是因为两个专家训练所覆盖的 sigma 区间不同',
+      '低雜訊專家的無分類器引導強度（雙專家檢查點，例如 A14B）。與前一個分'
+      + '開，是因為兩個專家訓練所涵蓋的 sigma 區間不同'],
+  'cfg.wan2-model-config.boundary_ratio': ['',
+      '低噪声专家从高噪声专家手里接管的 sigma 值；0 表示只有单个专家。请留'
+      + '空，让检查点自己的 model_index.json 决定——对所有原版检查点这才是正'
+      + '确做法；在这里设置会覆盖该文件',
+      '低雜訊專家從高雜訊專家手裡接管的 sigma 值；0 表示只有單個專家。請留'
+      + '空，讓檢查點自己的 model_index.json 決定——對所有原版檢查點這才是正'
+      + '確做法；在這裡設定會覆寫該檔案'],
+  'port.wan2-model-config.trigger': ['',
+      '可选的节拍，用于控制何时重新发出配置（chrono 滴答、提示词源、反馈回'
+      + '路等）。负载内容不限——收到本身就是信号。未接时，本阶段每次运行只发'
+      + '一次',
+      '可選的節拍，用於控制何時重新發出設定（chrono 滴答、提示詞來源、回饋'
+      + '迴路等）。負載內容不限——收到本身就是訊號。未接時，本階段每次執行只'
+      + '發一次'],
+  'port.wan2-model-config.model_config': ['',
+      'Wan 生成参数，作为一个 FlexData 对象 {model_family: wan, '
+      + 'guidance_scale, guidance_scale_2, +boundary_ratio}，供 '
+      + 'generate-video 的 model_config 输入端口使用',
+      'Wan 生成參數，作為一個 FlexData 物件 {model_family: wan, '
+      + 'guidance_scale, guidance_scale_2, +boundary_ratio}，供 '
+      + 'generate-video 的 model_config 輸入埠使用'],
+
+  // ---- HLS Broadcast (network) ----
+  'stage.hls-broadcast.name': ['', 'HLS 广播', 'HLS 廣播'],
+  'stage.hls-broadcast.doc': ['',
+      '汇聚节点：把传入的 RGB 帧（VideoToolbox/libx264）和/或 PCM 音频（AAC'
+      + '）编码成滚动的内存 HLS 播放列表与分片，并由进程内的 HTTP 服务器对'
+      + '外提供。无输出端口。',
+      '匯聚節點：把傳入的 RGB 影格（VideoToolbox/libx264）和/或 PCM 音訊（'
+      + 'AAC）編碼成滾動的記憶體 HLS 播放清單與分片，並由行程內的 HTTP 伺服'
+      + '器對外提供。無輸出埠。'],
+  'cfg.hls-broadcast.playlist_name': ['',
+      'HLS .m3u8 播放列表文件名',
+      'HLS .m3u8 播放清單檔名'],
+  'cfg.hls-broadcast.segment_duration': ['',
+      'hls_time 秒数（可为小数）',
+      'hls_time 秒數（可為小數）'],
+  'cfg.hls-broadcast.live_start_offset': ['',
+      'EXT-X-START 偏移秒数；0 = 关闭',
+      'EXT-X-START 偏移秒數；0 = 關閉'],
+  'cfg.hls-broadcast.playlist_max_size': ['',
+      'hls_list_size；0 = 不限',
+      'hls_list_size；0 = 不限'],
+  'cfg.hls-broadcast.hls_flags': ['',
+      '封装器的 hls_flags 字符串（\'delete_segments\' 会被忽略——分片存在内存'
+      + '中，由内部自行淘汰）',
+      '封裝器的 hls_flags 字串（\'delete_segments\' 會被忽略——分片存在記憶體'
+      + '中，由內部自行淘汰）'],
+  'cfg.hls-broadcast.codec': ['', '视频编码器名称', '視訊編碼器名稱'],
+  'cfg.hls-broadcast.bitrate': ['',
+      '目标比特率（bps），最小 64000',
+      '目標位元率（bps），最小 64000'],
+  'cfg.hls-broadcast.gop_size': ['',
+      '关键帧间隔（帧数）',
+      '關鍵影格間隔（影格數）'],
+  'cfg.hls-broadcast.preset': ['', 'libx264 preset', 'libx264 preset'],
+  'cfg.hls-broadcast.tune': ['', 'libx264 tune', 'libx264 tune'],
+  'cfg.hls-broadcast.fps_num': ['',
+      '帧率分子；0 = 自动（沿用输入边带的 fps，否则取 30）',
+      '影格率分子；0 = 自動（沿用輸入邊帶的 fps，否則取 30）'],
+  'cfg.hls-broadcast.fps_den': ['',
+      '帧率分母；0 = 自动（与 fps_num 配对）',
+      '影格率分母；0 = 自動（與 fps_num 配對）'],
+  'cfg.hls-broadcast.input_normalized': ['',
+      'F32 输入是 [0,1] 而非 [0,255]',
+      'F32 輸入是 [0,1] 而非 [0,255]'],
+  'cfg.hls-broadcast.realtime': ['',
+      'PTS 跟随挂钟时间，并强制插入关键帧',
+      'PTS 跟隨掛鐘時間，並強制插入關鍵影格'],
+  'cfg.hls-broadcast.log_input_stats_every': ['',
+      '每第 N 帧记录一次最小/平均/最大值；0 = 关闭',
+      '每第 N 格記錄一次最小/平均/最大值；0 = 關閉'],
+  'cfg.hls-broadcast.serve_http': ['',
+      '运行进程内的静态 HTTP 服务器',
+      '執行行程內的靜態 HTTP 伺服器'],
+  'cfg.hls-broadcast.bind_address': ['',
+      'HTTP 服务器绑定地址；留空 = 自动（本会话由 web 界面提供时用 web 界面'
+      + '的地址，否则用 en0 的局域网 IP，再否则 0.0.0.0）',
+      'HTTP 伺服器繫結位址；留空 = 自動（本工作階段由 web 介面提供時用 web '
+      + '介面的位址，否則用 en0 的區域網路 IP，再否則 0.0.0.0）'],
+  'cfg.hls-broadcast.port': ['',
+      'HTTP 服务器端口，[0,65535]',
+      'HTTP 伺服器連接埠，[0,65535]'],
+  'cfg.hls-broadcast.audio_codec': ['',
+      '可选音频流所用的音频编码器名称',
+      '可選音訊串流所用的音訊編碼器名稱'],
+  'cfg.hls-broadcast.audio_bitrate': ['',
+      '音频目标比特率（bps）',
+      '音訊目標位元率（bps）'],
+  'cfg.hls-broadcast.audio_sample_rate': ['',
+      '音频编码器输出采样率；0 = 自动（48000）',
+      '音訊編碼器輸出取樣率；0 = 自動（48000）'],
+  'cfg.hls-broadcast.audio_channels': ['',
+      '音频编码器输出声道数',
+      '音訊編碼器輸出聲道數'],
+  'cfg.hls-broadcast.audio_buffer_seconds': ['',
+      '针对没有时间戳的音频所设的初始抖动缓冲（秒）；0 = 关闭',
+      '針對沒有時間戳記的音訊所設的初始抖動緩衝（秒）；0 = 關閉'],
+  'cfg.hls-broadcast.prime_silence': ['',
+      '纯音频实时流：启动时先以一条静音轨上线，让观众能在第一段 PCM 到达之'
+      + '前就接入；自计时的节奏会推进它，真实音频接上后无缝续播。默认开启；'
+      + '关闭则保持旧行为（第一个音频节拍到达时才出现流）',
+      '純音訊即時串流：啟動時先以一條靜音軌上線，讓觀眾能在第一段 PCM 抵達'
+      + '之前就接入；自計時的節奏會推進它，真實音訊接上後無縫續播。預設開啟'
+      + '；關閉則保持舊行為（第一個音訊節拍抵達時才出現串流）'],
+  'port.hls-broadcast.frames': ['',
+      '视频 RGB TensorBeat [3,H,W]（F32 或 U8）；分辨率在本阶段的生命周期内'
+      + '必须保持不变。若要做纯音频流，把 PCM 生产者接到这里即可（按张量的'
+      + '秩自动识别）。',
+      '視訊 RGB TensorBeat [3,H,W]（F32 或 U8）；解析度在本階段的生命週期內'
+      + '必須保持不變。若要做純音訊串流，把 PCM 生產者接到這裡即可（按張量'
+      + '的秩自動辨識）。'],
+  'port.hls-broadcast.audio': ['',
+      '可选的音频 PCM TensorBeat：F32，秩为 1 的 [n]（单声道）或秩为 2 的 ['
+      + '声道数, n]。sideband.sample_rate 与 timestamp_us 会被采用。',
+      '可選的音訊 PCM TensorBeat：F32，秩為 1 的 [n]（單聲道）或秩為 2 的 ['
+      + '聲道數, n]。sideband.sample_rate 與 timestamp_us 會被採用。'],
+
+  // ---- Preview (network) ----
+  'stage.preview.name': ['', '预览', '預覽'],
+  'stage.preview.doc': ['',
+      '汇聚节点：自计时的实时视频预览（默认 25 fps；没有输入前显示黑屏，之'
+      + '后按采样/重复方式出图，并沿用输入的帧率），编码为分片 MP4 的 H.264'
+      + '，通过 WebSocket 推送到 web 界面 -> Media Source Extensions（在纯 '
+      + 'HTTP 的局域网上即可播放，不需要 HTTPS）。可选地透传 PCM 音频。无输'
+      + '出端口。',
+      '匯聚節點：自計時的即時視訊預覽（預設 25 fps；沒有輸入前顯示黑畫面，'
+      + '之後按取樣/重複方式出圖，並沿用輸入的影格率），編碼為分片 MP4 的 '
+      + 'H.264，透過 WebSocket 推送到 web 介面 -> Media Source Extensions（'
+      + '在純 HTTP 的區域網路上即可播放，不需要 HTTPS）。可選地透傳 PCM 音'
+      + '訊。無輸出埠。'],
+  'cfg.preview.bitrate': ['',
+      '目标比特率（bps），最小 64000',
+      '目標位元率（bps），最小 64000'],
+  'cfg.preview.input_normalized': ['',
+      'F32 输入是 [0,1] 而非 [0,255]',
+      'F32 輸入是 [0,1] 而非 [0,255]'],
+  'cfg.preview.title': ['',
+      '在 web 界面预览选择器中显示的可选标签；留空 = 使用阶段 id',
+      '在 web 介面預覽選擇器中顯示的可選標籤；留空 = 使用階段 id'],
+  'cfg.preview.image_mode': ['',
+      '对帧率很低的图像类源允许静态图片模式（低于 1 fps 时发送图片而不是视'
+      + '频）；false = 始终按视频处理',
+      '對影格率很低的影像類來源允許靜態圖片模式（低於 1 fps 時傳送圖片而不'
+      + '是視訊）；false = 始終按視訊處理'],
+  'port.preview.frames': ['',
+      '视频 RGB [3,H,W] 或 RGBA [4,H,W] TensorBeat（F32 或 U8）；RGBA 会合'
+      + '成到棋盘格背景上，因为静态 PNG 和 H.264 都不带 alpha。第一帧决定原'
+      + '生分辨率。秩为 4 的 [F,C,H,W] 拍是一个「片段」（generate-video 的去'
+      + '噪预览，或 vae-decode 的 clip 端口）：它会被保留，按自身帧率循环播'
+      + '放，直到下一拍替换它',
+      '視訊 RGB [3,H,W] 或 RGBA [4,H,W] TensorBeat（F32 或 U8）；RGBA 會合'
+      + '成到棋盤格背景上，因為靜態 PNG 和 H.264 都不帶 alpha。第一格決定原'
+      + '生解析度。秩為 4 的 [F,C,H,W] 拍是一個「片段」（generate-video 的去'
+      + '噪預覽，或 vae-decode 的 clip 埠）：它會被保留，按自身影格率循環播'
+      + '放，直到下一拍替換它'],
+  'port.preview.audio': ['',
+      '可选的音频 PCM TensorBeat：F32，秩为 1 的 [n]（单声道）或秩为 2 的 ['
+      + '声道数, n]。sideband.sample_rate 会被采用。',
+      '可選的音訊 PCM TensorBeat：F32，秩為 1 的 [n]（單聲道）或秩為 2 的 ['
+      + '聲道數, n]。sideband.sample_rate 會被採用。'],
+
+  // ---- REST Client (network) ----
+  'stage.rest-client.name': ['', 'REST 客户端', 'REST 用戶端'],
+  'stage.rest-client.doc': ['',
+      '每收到一个输入节拍就发起一次 HTTP 请求（libcurl），并把响应（状态码/'
+      + '头部/正文）作为 FlexData 信封从 0 号输出端口转发出去。',
+      '每收到一個輸入節拍就發起一次 HTTP 請求（libcurl），並把回應（狀態碼/'
+      + '標頭/內文）作為 FlexData 信封從 0 號輸出埠轉發出去。'],
+  'cfg.rest-client.method': ['',
+      'HTTP 方法：GET|POST|PUT|PATCH|DELETE|HEAD',
+      'HTTP 方法：GET|POST|PUT|PATCH|DELETE|HEAD'],
+  'cfg.rest-client.url': ['',
+      '完整的端点 URL（http/https）',
+      '完整的端點 URL（http/https）'],
+  'cfg.rest-client.headers': ['',
+      'header 名 -> 字符串值 的对象',
+      '標頭名 -> 字串值 的物件'],
+  'cfg.rest-client.payload_path': ['',
+      '以斜杠分隔的选择器，指向 0 号输入端口负载中的某处（留空 = 原样使用整'
+      + '个负载）',
+      '以斜線分隔的選擇器，指向 0 號輸入埠負載中的某處（留空 = 原樣使用整個'
+      + '負載）'],
+  'cfg.rest-client.payload_format': ['',
+      'json | raw_string | none',
+      'json | raw_string | none'],
+  'cfg.rest-client.content_type': ['',
+      '显式覆盖 Content-Type',
+      '明確覆寫 Content-Type'],
+  'cfg.rest-client.timeout_seconds': ['',
+      '网络超时（1..3600）',
+      '網路逾時（1..3600）'],
+  'cfg.rest-client.verify_tls': ['',
+      '强制校验 TLS 证书',
+      '強制驗證 TLS 憑證'],
+  'cfg.rest-client.emit_on_error': ['',
+      '即使发生传输错误也发出一个响应节拍',
+      '即使發生傳輸錯誤也發出一個回應節拍'],
+  'port.rest-client.request': ['',
+      'FlexData 正文来源，或任意触发节拍',
+      'FlexData 內文來源，或任意觸發節拍'],
+  'port.rest-client.response': ['',
+      'FlexData {ok,status,headers,body,body_raw,error,elapsed_ms}',
+      'FlexData {ok,status,headers,body,body_raw,error,elapsed_ms}'],
+
+  // ---- RTSP Capture (network) ----
+  'stage.rtsp-capture.name': ['', 'RTSP 采集', 'RTSP 擷取'],
+  'stage.rtsp-capture.doc': ['',
+      '长时间运行的源：连接到已注册摄像头的 RTSP 流（FFmpeg），写出按 IDR '
+      + '对齐的 MP4 分段，并按访问单元逐个发出 H.264 与 AAC 的 '
+      + 'EncodedSegment。仅 Apple 平台。',
+      '長時間執行的來源：連線到已註冊攝影機的 RTSP 串流（FFmpeg），寫出按 '
+      + 'IDR 對齊的 MP4 分段，並按存取單元逐個發出 H.264 與 AAC 的 '
+      + 'EncodedSegment。僅 Apple 平台。'],
+  'cfg.rtsp-capture.camera_name': ['',
+      'IP 摄像头注册表中的摄像头键',
+      'IP 攝影機註冊表中的攝影機鍵'],
+  'cfg.rtsp-capture.output_dir': ['',
+      '存放最终 MP4 分段的目录',
+      '存放最終 MP4 分段的目錄'],
+  'cfg.rtsp-capture.segment_seconds': ['',
+      '目标分段长度（秒）',
+      '目標分段長度（秒）'],
+  'cfg.rtsp-capture.videos_db_suffix': ['',
+      '每个摄像头的 videos 子数据库后缀',
+      '每個攝影機的 videos 子資料庫後綴'],
+  'cfg.rtsp-capture.rtsp_transport': ['',
+      'FFmpeg 的 rtsp_transport（tcp/udp）',
+      'FFmpeg 的 rtsp_transport（tcp/udp）'],
+  'cfg.rtsp-capture.stimeout_us': ['',
+      'FFmpeg 套接字 I/O 超时（微秒）',
+      'FFmpeg 通訊端 I/O 逾時（微秒）'],
+  'cfg.rtsp-capture.connect_timeout_ms': ['',
+      '连接超时（毫秒）',
+      '連線逾時（毫秒）'],
+  'cfg.rtsp-capture.reconnect_delay_ms': ['',
+      '重连前的退避时间（毫秒）',
+      '重新連線前的退避時間（毫秒）'],
+  'cfg.rtsp-capture.rediscover_timeout_ms': ['',
+      'ONVIF 重新发现超时（毫秒）',
+      'ONVIF 重新探索逾時（毫秒）'],
+  'cfg.rtsp-capture.transcode_video_bitrate': ['',
+      '需要转码时的 H.264 编码比特率',
+      '需要轉碼時的 H.264 編碼位元率'],
+  'cfg.rtsp-capture.transcode_audio_bitrate': ['',
+      '需要转码时的 AAC 编码比特率',
+      '需要轉碼時的 AAC 編碼位元率'],
+  'cfg.rtsp-capture.oport_depth': ['',
+      '输出环形缓冲深度（丢弃最旧）',
+      '輸出環形緩衝深度（丟棄最舊）'],
+  'port.rtsp-capture.watchdog': ['',
+      '可选的滴答流（例如 chrono）；两次滴答之间摄像头始终没有数据即强制重'
+      + '连',
+      '可選的滴答串流（例如 chrono）；兩次滴答之間攝影機始終沒有資料即強制'
+      + '重新連線'],
+  'port.rtsp-capture.video': ['',
+      '每个 H.264 访问单元一个 EncodedSegment（AVCC）',
+      '每個 H.264 存取單元一個 EncodedSegment（AVCC）'],
+  'port.rtsp-capture.audio': ['',
+      '每个 AAC 数据包一个 EncodedSegment（不含 ADTS 头）',
+      '每個 AAC 封包一個 EncodedSegment（不含 ADTS 標頭）'],
+
+  // ---- LoRA Fuse (preparation) ----
+  'stage.lora-fuse.name': ['', 'LoRA 融合', 'LoRA 融合'],
+  'stage.lora-fuse.doc': ['',
+      '源：把基础模型与 LoRA 适配器融合（W + scale*dW；dW = B@A，LoKr 适配'
+      + '器则为 kron(w1,w2)）成一个新的、已注册的模型。支持 diffusers 与 '
+      + 'ai-toolkit / ComfyUI（diffusion_model.*）两套适配器命名。对 Krea-2'
+      + '，base_model 指向 transformer/ 即 DiT，结果通过 generate-image 的 '
+      + 'dit_dir 使用；若同时设置 base_pipeline，还会一并复制编码器/VAE/分'
+      + '词器，得到一个自包含、可继续量化的模型。可选的 trigger 输入与 '
+      + 'summary 输出。',
+      '來源：把基礎模型與 LoRA 轉接器融合（W + scale*dW；dW = B@A，LoKr 轉'
+      + '接器則為 kron(w1,w2)）成一個新的、已註冊的模型。支援 diffusers 與 '
+      + 'ai-toolkit / ComfyUI（diffusion_model.*）兩套轉接器命名。對 Krea-2'
+      + '，base_model 指向 transformer/ 即 DiT，結果透過 generate-image 的 '
+      + 'dit_dir 使用；若同時設定 base_pipeline，還會一併複製編碼器/VAE/斷'
+      + '詞器，得到一個自包含、可繼續量化的模型。可選的 trigger 輸入與 '
+      + 'summary 輸出。'],
+  'cfg.lora-fuse.base_model': ['',
+      '基础模型目录或 models 数据库键（对 Krea-2 是 transformer/ 即 DiT）',
+      '基礎模型目錄或 models 資料庫鍵（對 Krea-2 是 transformer/ 即 DiT）'],
+  'cfg.lora-fuse.lora': ['',
+      'LoRA .safetensors 文件，或含单个 .safetensors 的目录/数据库键',
+      'LoRA .safetensors 檔案，或含單個 .safetensors 的目錄/資料庫鍵'],
+  'cfg.lora-fuse.output_name': ['',
+      '结果名称 -> <cwd>/models/<output_name>（并注册），或直接给出显式路径',
+      '結果名稱 -> <cwd>/models/<output_name>（並註冊），或直接給出明確路徑'],
+  'cfg.lora-fuse.base_pipeline': ['',
+      '可选的 diffusers 基础管道根目录（目录或数据库键）；设置后，融合出的 '
+      + 'DiT 写入 <output>/transformer/，管道的其余组件（text_encoder/、vae'
+      + '/、tokenizer/、scheduler/、model_index.json）以硬链接/复制方式并列'
+      + '放置 -> 得到一个自包含、可像原版一样继续量化的模型。留空 => 仅输出'
+      + '裸 DiT。',
+      '可選的 diffusers 基礎管道根目錄（目錄或資料庫鍵）；設定後，融合出的 '
+      + 'DiT 寫入 <output>/transformer/，管道的其餘元件（text_encoder/、vae'
+      + '/、tokenizer/、scheduler/、model_index.json）以硬連結/複製方式並列'
+      + '放置 -> 得到一個自包含、可像原版一樣繼續量化的模型。留空 => 僅輸出'
+      + '裸 DiT。'],
+  'cfg.lora-fuse.scale': ['',
+      'LoRA 融合强度（默认 1.0）',
+      'LoRA 融合強度（預設 1.0）'],
+  'port.lora-fuse.trigger': ['',
+      '可选的节奏触发（任意节拍类型）；接上后，融合会先等一个节拍再执行——让'
+      + '这些准备类阶段可以串成一套流程',
+      '可選的節奏觸發（任意節拍類型）；接上後，融合會先等一個節拍再執行——讓'
+      + '這些準備類階段可以串成一套流程'],
+  'port.lora-fuse.summary': ['',
+      '融合完成后的 FlexData 摘要；其 `text` 字段可经 save-text 输出为报告'
+      + '，该节拍同时触发流程中的下一个阶段',
+      '融合完成後的 FlexData 摘要；其 `text` 欄位可經 save-text 輸出為報告'
+      + '，該節拍同時觸發流程中的下一個階段'],
+
+  // ---- Model Benchmark (preparation) ----
+  'stage.model-benchmark.name': ['', '模型测速', '模型測速'],
+  'stage.model-benchmark.doc': ['',
+      '源：一次性的语言模型吞吐量基准测试。加载一个语言模型（models 数据库'
+      + '键或路径），在若干上下文长度上分别测量预填充、增量预填充与解码的耗'
+      + '时，记录每项测试期间的 GPU 温度 / 频率 / 利用率 / 功耗，并输出一份'
+      + ' Markdown 报告。可选的 trigger 输入与 summary 输出。',
+      '來源：一次性的語言模型吞吐量基準測試。載入一個語言模型（models 資料'
+      + '庫鍵或路徑），在若干上下文長度上分別測量預填充、增量預填充與解碼的'
+      + '耗時，記錄每項測試期間的 GPU 溫度 / 頻率 / 使用率 / 功耗，並輸出一'
+      + '份 Markdown 報告。可選的 trigger 輸入與 summary 輸出。'],
+  'cfg.model-benchmark.model': ['',
+      '要测速的文本语言模型：models 数据库键（model-fetch / model-quantize'
+      + '）或模型目录路径',
+      '要測速的文字語言模型：models 資料庫鍵（model-fetch / model-quantize'
+      + '）或模型目錄路徑'],
+  'cfg.model-benchmark.contexts': ['',
+      '以逗号分隔的待测上下文长度（例如再加上 "8192,16384" 做更长的探测）',
+      '以逗號分隔的待測上下文長度（例如再加上 "8192,16384" 做更長的探測）'],
+  'cfg.model-benchmark.decode_tokens': ['',
+      '每次解码测试解码多少 token',
+      '每次解碼測試解碼多少 token'],
+  'cfg.model-benchmark.prefill_chunk': ['',
+      '深度增量预填充探针所用的分块大小',
+      '深度增量預填充探針所用的分塊大小'],
+  'cfg.model-benchmark.warmup': ['',
+      '计时前的热身迭代次数（结果丢弃）',
+      '計時前的暖身迭代次數（結果丟棄）'],
+  'cfg.model-benchmark.seed': ['',
+      '合成提示词的随机种子（同时也是采样器种子）',
+      '合成提示詞的隨機種子（同時也是取樣器種子）'],
+  'cfg.model-benchmark.cooldown_s': ['',
+      '每项计时测试之后休眠多少秒，让 GPU 热状态稳定下来；最后一项之后不再'
+      + '休眠',
+      '每項計時測試之後休眠多少秒，讓 GPU 熱狀態穩定下來；最後一項之後不再'
+      + '休眠'],
+  'cfg.model-benchmark.temperature': ['',
+      '解码采样器温度（0 = 贪心/argmax）',
+      '解碼取樣器溫度（0 = 貪婪/argmax）'],
+  'cfg.model-benchmark.top_k': ['',
+      '解码采样器的 top-k（0 = 禁用）',
+      '解碼取樣器的 top-k（0 = 停用）'],
+  'cfg.model-benchmark.top_p': ['',
+      '解码采样器的核采样 top-p（1.0 = 禁用）',
+      '解碼取樣器的核取樣 top-p（1.0 = 停用）'],
+  'cfg.model-benchmark.min_p': ['',
+      '解码采样器的 min-p（0.0 = 禁用）',
+      '解碼取樣器的 min-p（0.0 = 停用）'],
+  'cfg.model-benchmark.repetition_penalty': ['',
+      '解码的重复惩罚（1.0 = 禁用）',
+      '解碼的重複懲罰（1.0 = 停用）'],
+  'cfg.model-benchmark.presence_penalty': ['',
+      '解码的存在惩罚（0.0 = 禁用）',
+      '解碼的存在懲罰（0.0 = 停用）'],
+  'cfg.model-benchmark.mtp': ['',
+      '模型带 MTP 头时，解码测试使用 MTP 推测解码（真实文本提示词 + 接受率'
+      + '）；否则使用 pdecode 前瞻',
+      '模型帶 MTP 頭時，解碼測試使用 MTP 推測解碼（真實文字提示詞 + 接受率'
+      + '）；否則使用 pdecode 前瞻'],
+  'cfg.model-benchmark.mtp_require_exact': ['',
+      '要求 MTP 的贪心解码与串行贪心 token 精确一致后才使用它；不一致时回退'
+      + '到 pdecode。默认 false：即使出现分歧，MTP 仍是一次有效的贪心解码（'
+      + '批量验证在 bf16 下与单行解码并非逐位相同），因此照样纳入测速并加以'
+      + '注明',
+      '要求 MTP 的貪婪解碼與序列貪婪 token 精確一致後才使用它；不一致時回退'
+      + '到 pdecode。預設 false：即使出現分歧，MTP 仍是一次有效的貪婪解碼（'
+      + '批次驗證在 bf16 下與單列解碼並非逐位相同），因此照樣納入測速並加以'
+      + '註明'],
+  'port.model-benchmark.trigger': ['',
+      '可选的节奏触发（任意节拍类型）；接上后，任务会先等一个节拍再执行——让'
+      + '这些准备类阶段可以串成一套流程',
+      '可選的節奏觸發（任意節拍類型）；接上後，工作會先等一個節拍再執行——讓'
+      + '這些準備類階段可以串成一套流程'],
+  'port.model-benchmark.summary': ['',
+      '本次测速的 FlexData 摘要；其 `text` 字段就是 Markdown 报告（可接一个'
+      + ' save-text），该节拍同时触发流程中的下一个阶段',
+      '本次測速的 FlexData 摘要；其 `text` 欄位就是 Markdown 報告（可接一個'
+      + ' save-text），該節拍同時觸發流程中的下一個階段'],
+
+  // ---- Model Eval (preparation) ----
+  'stage.model-eval.name': ['', '模型评估', '模型評估'],
+  'stage.model-eval.doc': ['',
+      '源：一次性离线评估一个或两个语言模型（models 数据库键或路径）。跑 '
+      + 'WikiText-2 困惑度 + 随机抽样的 ARC-Challenge 准确率探针，并记录一'
+      + '份 Markdown 报告（给两个模型时是对比报告）。可选的 trigger 输入与 '
+      + 'summary 输出。',
+      '來源：一次性離線評估一個或兩個語言模型（models 資料庫鍵或路徑）。跑 '
+      + 'WikiText-2 困惑度 + 隨機抽樣的 ARC-Challenge 準確率探針，並記錄一'
+      + '份 Markdown 報告（給兩個模型時是對比報告）。可選的 trigger 輸入與 '
+      + 'summary 輸出。'],
+  'cfg.model-eval.model_a': ['',
+      '第一个模型：models 数据库键（model-fetch / model-quantize）或模型目'
+      + '录路径',
+      '第一個模型：models 資料庫鍵（model-fetch / model-quantize）或模型目'
+      + '錄路徑'],
+  'cfg.model-eval.model_b': ['',
+      '可选的第二个模型（键或路径）；设置后报告会是带差值的并排对比',
+      '可選的第二個模型（鍵或路徑）；設定後報告會是帶差值的並排對比'],
+  'cfg.model-eval.wikitext': ['',
+      'WikiText-2 数据集：models 数据库键（可用 model-fetch 获取）或目录路'
+      + '径；留空/找不到则跳过困惑度探针',
+      'WikiText-2 資料集：models 資料庫鍵（可用 model-fetch 取得）或目錄路'
+      + '徑；留空/找不到則跳過困惑度探針'],
+  'cfg.model-eval.arc': ['',
+      'ARC-Challenge 数据集：models 数据库键或目录路径；留空/找不到则跳过 '
+      + 'ARC 探针',
+      'ARC-Challenge 資料集：models 資料庫鍵或目錄路徑；留空/找不到則跳過 '
+      + 'ARC 探針'],
+  'cfg.model-eval.ppl_tokens': ['',
+      '用于计算困惑度的 WikiText-2 token 数（0 => 全部）',
+      '用於計算困惑度的 WikiText-2 token 數（0 => 全部）'],
+  'cfg.model-eval.arc_samples': ['',
+      '随机抽取多少道 ARC-Challenge 题目（0 => 整个题库）',
+      '隨機抽取多少道 ARC-Challenge 題目（0 => 整個題庫）'],
+  'cfg.model-eval.seed': ['',
+      'ARC-Challenge 抽样的随机种子',
+      'ARC-Challenge 抽樣的隨機種子'],
+  'cfg.model-eval.divergence': ['',
+      'A 与 B 输出之间的 KL 散度 + logit 相对误差（用于绝对困惑度没有意义的'
+      + '模型，例如 MOSS-TTS-Local-v1.5 这类 TTS/编解码骨干）；需要 model_b'
+      + '。A 的逐 token logits 会被缓存（ppl_tokens * 词表大小 个浮点数，在'
+      + '词表 152k / 256 token 时约 155 MB）——词表极大的模型请调低 '
+      + 'ppl_tokens。',
+      'A 與 B 輸出之間的 KL 散度 + logit 相對誤差（用於絕對困惑度沒有意義的'
+      + '模型，例如 MOSS-TTS-Local-v1.5 這類 TTS/編解碼骨幹）；需要 model_b'
+      + '。A 的逐 token logits 會被快取（ppl_tokens * 詞表大小 個浮點數，在'
+      + '詞表 152k / 256 token 時約 155 MB）——詞表極大的模型請調低 '
+      + 'ppl_tokens。'],
+  'port.model-eval.trigger': ['',
+      '可选的节奏触发（任意节拍类型）；接上后，任务会先等一个节拍再执行——让'
+      + '这些准备类阶段可以串成一套流程',
+      '可選的節奏觸發（任意節拍類型）；接上後，工作會先等一個節拍再執行——讓'
+      + '這些準備類階段可以串成一套流程'],
+  'port.model-eval.summary': ['',
+      '本次评估的 FlexData 摘要；其 `text` 字段就是 Markdown 报告（可接一个'
+      + ' save-text），该节拍同时触发流程中的下一个阶段',
+      '本次評估的 FlexData 摘要；其 `text` 欄位就是 Markdown 報告（可接一個'
+      + ' save-text），該節拍同時觸發流程中的下一個階段'],
+
+  // ---- Model Fetch (preparation) ----
+  'stage.model-fetch.name': ['', '模型下载', '模型下載'],
+  'stage.model-fetch.doc': ['',
+      '交互式一次性任务：确定一个模型（浏览内置的 HuggingFace 目录，或直接'
+      + '输入路径），从 HuggingFace 或镜像（modelscope.cn）下载到某个基准路'
+      + '径下，原生合成 Qwen3-ASR 的 tokenizer.json，并以 huggingface.co 上'
+      + '的路径为键注册进模型注册表（无论实际由哪个源提供）。可选的 trigger'
+      + ' 输入与 summary 输出。',
+      '互動式一次性工作：確定一個模型（瀏覽內建的 HuggingFace 目錄，或直接'
+      + '輸入路徑），從 HuggingFace 或鏡像（modelscope.cn）下載到某個基準路'
+      + '徑下，原生合成 Qwen3-ASR 的 tokenizer.json，並以 huggingface.co 上'
+      + '的路徑為鍵註冊進模型註冊表（無論實際由哪個來源提供）。可選的 '
+      + 'trigger 輸入與 summary 輸出。'],
+  'cfg.model-fetch.base_path': ['',
+      '下载根目录；留空 -> ./models。文件落在 <base>/<owner>/<repo> 下',
+      '下載根目錄；留空 -> ./models。檔案落在 <base>/<owner>/<repo> 下'],
+  'cfg.model-fetch.model_path': ['',
+      '非交互方式：直接给出 \'owner/repo\'（或完整 URL）；留空 -> 交互提示 / '
+      + '浏览目录',
+      '非互動方式：直接給出 \'owner/repo\'（或完整 URL）；留空 -> 互動提示 / '
+      + '瀏覽目錄'],
+  'cfg.model-fetch.model_key': ['',
+      '在 models 数据库中改用这个键注册，而不用目录名 / hf 路径。这样，同一'
+      + '个仓库发布的两个模型可以在磁盘上共用一个目录，同时在数据库中保持为'
+      + '两条独立记录：把 Comfy-Org/MiniMax-H3 取两次，一次用 model_variant'
+      + '=fl2va + model_key=Comfy-Org/MiniMax-H3-FL2VA，一次用 ref2va，两条'
+      + '记录各有自己的 model_type、版本和文件清单，而字节只下载一次（'
+      + 'skip_existing_files 会避免共享的编码器和各 VAE 被重复下载）。留空 '
+      + '-> 与此前一样，用目录名，否则用 hf 路径',
+      '在 models 資料庫中改用這個鍵註冊，而不用目錄名 / hf 路徑。這樣，同一'
+      + '個儲存庫發布的兩個模型可以在磁碟上共用一個目錄，同時在資料庫中保持'
+      + '為兩筆獨立記錄：把 Comfy-Org/MiniMax-H3 取兩次，一次用 '
+      + 'model_variant=fl2va + model_key=Comfy-Org/MiniMax-H3-FL2VA，一次用'
+      + ' ref2va，兩筆記錄各有自己的 model_type、版本和檔案清單，而位元組只'
+      + '下載一次（skip_existing_files 會避免共用的編碼器和各 VAE 被重複下'
+      + '載）。留空 -> 與此前一樣，用目錄名，否則用 hf 路徑'],
+  'cfg.model-fetch.model_variant': ['',
+      '当一个仓库发布了多个模型、而 `model_path` 无法区分时，指明要哪一个。'
+      + '它会（不区分大小写地）与目录条目的 version、variant、name 和 '
+      + 'model_type 逐一匹配；任一项的精确命中优先于子串匹配。这是浏览流程'
+      + '中版本/变体菜单的非交互写法——例如 Comfy-Org/MiniMax-H3 同时发布了 '
+      + 'FL2VA 与 Ref2VA 两个分区，两者固定的文件并不相同，写 "ref2va" 就是'
+      + '要第二个。仓库只发布一个模型时留空即可；发布了多个而留空时，取回会'
+      + '被拒绝并列出候选，而不是悄悄取第一个',
+      '當一個儲存庫發布了多個模型、而 `model_path` 無法區分時，指明要哪一個'
+      + '。它會（不區分大小寫地）與目錄條目的 version、variant、name 和 '
+      + 'model_type 逐一比對；任一項的精確命中優先於子字串比對。這是瀏覽流'
+      + '程中版本/變體選單的非互動寫法——例如 Comfy-Org/MiniMax-H3 同時發布'
+      + '了 FL2VA 與 Ref2VA 兩個分區，兩者固定的檔案並不相同，寫 "ref2va" '
+      + '就是要第二個。儲存庫只發布一個模型時留空即可；發布了多個而留空時，'
+      + '取回會被拒絕並列出候選，而不是悄悄取第一個'],
+  'cfg.model-fetch.hf_token': ['',
+      '访问受限/私有仓库所用的 bearer token；留空 -> 取所选源对应的环境变量'
+      + '（HuggingFace 用 $HF_TOKEN / $HUGGING_FACE_HUB_TOKEN，ModelScope '
+      + '用 $MODELSCOPE_API_TOKEN / $MODELSCOPE_TOKEN）；若下载时发现是受限'
+      + '仓库，会通过 getpasswd 提示输入',
+      '存取受限/私有儲存庫所用的 bearer token；留空 -> 取所選來源對應的環境'
+      + '變數（HuggingFace 用 $HF_TOKEN / $HUGGING_FACE_HUB_TOKEN，'
+      + 'ModelScope 用 $MODELSCOPE_API_TOKEN / $MODELSCOPE_TOKEN）；若下載'
+      + '時發現是受限儲存庫，會透過 getpasswd 提示輸入'],
+  'cfg.model-fetch.source': ['',
+      '从哪里下载：\'huggingface\'（默认）或 \'modelscope\'（modelscope.cn，中'
+      + '国大陆可访问的镜像）。留空 -> 取 $VPIPE_MODEL_SOURCE，否则用 '
+      + 'huggingface——这样受网络限制的机器只需设置一次环境变量，而不必逐个'
+      + '阶段配置。它只决定下载源：注册表的键和磁盘上的目录一律取自 '
+      + 'HuggingFace 路径，因此同一个模型无论从哪一侧取回，都是同一个位置上'
+      + '的同一个模型，切换源也不会产生第二份副本。目录中的绝大多数条目在镜'
+      + '像上使用完全相同的 owner/repo；少数例外的映射写在 model-source.cc '
+      + '中',
+      '從哪裡下載：\'huggingface\'（預設）或 \'modelscope\'（modelscope.cn，中'
+      + '國大陸可存取的鏡像）。留空 -> 取 $VPIPE_MODEL_SOURCE，否則用 '
+      + 'huggingface——這樣受網路限制的機器只需設定一次環境變數，而不必逐個'
+      + '階段設定。它只決定下載來源：註冊表的鍵和磁碟上的目錄一律取自 '
+      + 'HuggingFace 路徑，因此同一個模型無論從哪一側取回，都是同一個位置上'
+      + '的同一個模型，切換來源也不會產生第二份副本。目錄中的絕大多數條目在'
+      + '鏡像上使用完全相同的 owner/repo；少數例外的對應寫在 '
+      + 'model-source.cc 中'],
+  'cfg.model-fetch.source_revision': ['',
+      '要读取的分支/标签/提交；留空 -> 各源自己的默认值，而两者并不相同（'
+      + 'HuggingFace 是 \'main\'，ModelScope 是 \'master\'）。正因如此，显式指'
+      + '定往往并不合适——而且在 ModelScope 上，一个不存在的修订版返回的是空'
+      + '文件列表而不是错误',
+      '要讀取的分支/標籤/提交；留空 -> 各來源自己的預設值，而兩者並不相同（'
+      + 'HuggingFace 是 \'main\'，ModelScope 是 \'master\'）。正因如此，明確指'
+      + '定往往並不合適——而且在 ModelScope 上，一個不存在的修訂版傳回的是空'
+      + '檔案清單而不是錯誤'],
+  'cfg.model-fetch.overwrite_existing': ['',
+      '对注册表中已有的模型重新下载并重新注册',
+      '對註冊表中已有的模型重新下載並重新註冊'],
+  'cfg.model-fetch.prepare_tokenizer': ['',
+      '为 Qwen3-ASR 原生合成 tokenizer.json（不需要 transformers）',
+      '為 Qwen3-ASR 原生合成 tokenizer.json（不需要 transformers）'],
+  'cfg.model-fetch.skip_existing_files': ['',
+      '跳过磁盘上已存在且大小与仓库一致的文件',
+      '跳過磁碟上已存在且大小與儲存庫一致的檔案'],
+  'cfg.model-fetch.verify_tls': ['',
+      '强制校验 TLS 证书',
+      '強制驗證 TLS 憑證'],
+  'cfg.model-fetch.timeout_seconds': ['',
+      '元数据调用（列出仓库文件）的截止时间。文件传输改由 stall_seconds 约'
+      + '束：总时限无法区分慢连接和死连接，而一个 20 GB 的分片以 2 MB/s 下'
+      + '载要三个小时，那完全是健康的',
+      '中繼資料呼叫（列出儲存庫檔案）的截止時間。檔案傳輸改由 stall_seconds'
+      + ' 約束：總時限無法區分慢連線和死連線，而一個 20 GB 的分片以 2 MB/s '
+      + '下載要三個小時，那完全是健康的'],
+  'cfg.model-fetch.stall_seconds': ['',
+      '文件传输低于 1 KB/s 持续这么久后放弃，并从中断处重试。这才是大分片真'
+      + '正需要的超时——它只在连接已经死掉时触发，不会因为单纯的慢而触发。0 '
+      + '-> 不做停滞检测（此时挂起的传输会一直阻塞，直到对端断开）',
+      '檔案傳輸低於 1 KB/s 持續這麼久後放棄，並從中斷處重試。這才是大分片真'
+      + '正需要的逾時——它只在連線已經死掉時觸發，不會因為單純的慢而觸發。0 '
+      + '-> 不做停滯偵測（此時掛起的傳輸會一直阻塞，直到對端斷開）'],
+  'cfg.model-fetch.download_retries': ['',
+      '首次之外每个文件额外尝试的次数，每次都从磁盘上的部分文件继续（间隔 2'
+      + '/5/15/30/60 秒）。无论如何部分文件都会在阶段结束后保留，因此用尽次'
+      + '数的下载在再次运行时是继续而不是重来',
+      '首次之外每個檔案額外嘗試的次數，每次都從磁碟上的部分檔案繼續（間隔 2'
+      + '/5/15/30/60 秒）。無論如何部分檔案都會在階段結束後保留，因此用盡次'
+      + '數的下載在再次執行時是繼續而不是重來'],
+  'cfg.model-fetch.xet_streams': ['',
+      '对仓库发布了内容存储哈希的大文件，一次并行拉取多少个区间。这类文件以'
+      + '去重、压缩后的分块存储，可以并行取回再重组，而不必用单条连接串行下'
+      + '载——单条连接往往在链路带宽之前就先成为瓶颈。在一个 5.2 GB 的 bf16 '
+      + '分片上实测，三组交错对比：单流中位 88.3 MB/s，8 路 94.4 MB/s——1.07'
+      + ' 倍，其中大部分来自内容存储对 bf16 权重只需传 0.873 倍字节，而非并'
+      + '行本身，因为单流本已接近该链路的上限。在单流确为瓶颈的环境下收益要'
+      + '大得多。0 -> 一律走普通单流。小于 256 MB 的文件无论如何都走单流：'
+      + '为它们多花两个往返并不划算',
+      '對儲存庫發布了內容儲存雜湊的大檔案，一次並行拉取多少個區間。這類檔案'
+      + '以去重、壓縮後的分塊儲存，可以並行取回再重組，而不必用單條連線序列'
+      + '下載——單條連線往往在鏈路頻寬之前就先成為瓶頸。在一個 5.2 GB 的 '
+      + 'bf16 分片上實測，三組交錯對比：單串流中位 88.3 MB/s，8 路 94.4 MB/'
+      + 's——1.07 倍，其中大部分來自內容儲存對 bf16 權重只需傳 0.873 倍位元'
+      + '組，而非並行本身，因為單串流本已接近該鏈路的上限。在單串流確為瓶頸'
+      + '的環境下收益要大得多。0 -> 一律走普通單串流。小於 256 MB 的檔案無'
+      + '論如何都走單串流：為它們多花兩個往返並不划算'],
+  'cfg.model-fetch.verify_checksums': ['',
+      '把每个下载下来的文件与其仓库公布的校验和逐一核对——LFS 分片用 SHA-256'
+      + '，小文件用 git blob 的 SHA-1——不一致就整个重新下载。HuggingFace 不'
+      + '为任何文件公布 MD5，因此没有 MD5 可核。仓库什么都没公布的文件会被'
+      + '报告为未校验，而不是算作通过',
+      '把每個下載下來的檔案與其儲存庫公布的總和檢查碼逐一核對——LFS 分片用 '
+      + 'SHA-256，小檔案用 git blob 的 SHA-1——不一致就整個重新下載。'
+      + 'HuggingFace 不為任何檔案公布 MD5，因此沒有 MD5 可核。儲存庫什麼都'
+      + '沒公布的檔案會被報告為未檢查，而不是算作通過'],
+  'port.model-fetch.trigger': ['',
+      '可选的节奏触发（任意节拍类型）；接上后，任务会先等一个节拍再执行——让'
+      + '这些准备类阶段可以串成一套流程',
+      '可選的節奏觸發（任意節拍類型）；接上後，工作會先等一個節拍再執行——讓'
+      + '這些準備類階段可以串成一套流程'],
+  'port.model-fetch.summary': ['',
+      '已完成工作的 FlexData 摘要；其 `text` 字段可经 save-text 输出为报告'
+      + '，该节拍同时触发流程中的下一个阶段',
+      '已完成工作的 FlexData 摘要；其 `text` 欄位可經 save-text 輸出為報告'
+      + '，該節拍同時觸發流程中的下一個階段'],
+
+  // ---- Model Quantize (preparation) ----
+  'stage.model-quantize.name': ['', '模型量化', '模型量化'],
+  'stage.model-quantize.doc': ['',
+      '源：一次性离线把 safetensors 模型量化为 MLX 仿射分组量化格式，覆盖 '
+      + 'vpipe 支持的各个模型族（Llama / Qwen2 / Qwen3 / Qwen3.5 / Gemma-4 '
+      + '/ MOSS）。arch / layer_prefix / n_layers 从源自动检测。线性层被量'
+      + '化；嵌入/输出头/归一化/辅助模块原样透传。对 Krea-2（文生图）模型，'
+      + '`target` 选择组件（dit | text_encoder | vae），输出是一个自包含的'
+      + '管道（所有组件都复制过来，只有目标被量化），可直接用作 '
+      + 'generate-image 的 hf_dir——多次串联即可量化多个组件。FP8 源'
+      + '（F8_E4M3 / F8_E5M2，带或不带缩放）按 bf16 读取；bits=16 则'
+      + '把它原样写成稠密检查点，而不做量化。可选的 trigger 输入与 summary'
+      + ' 输出。',
+      '來源：一次性離線把 safetensors 模型量化為 MLX 仿射分組量化格式，涵蓋'
+      + ' vpipe 支援的各個模型族（Llama / Qwen2 / Qwen3 / Qwen3.5 / Gemma-4'
+      + ' / MOSS）。arch / layer_prefix / n_layers 從來源自動偵測。線性層被'
+      + '量化；嵌入/輸出頭/正規化/輔助模組原樣透傳。對 Krea-2（文生圖）模型'
+      + '，`target` 選擇元件（dit | text_encoder | vae），輸出是一個自包含'
+      + '的管道（所有元件都複製過來，只有目標被量化），可直接用作 '
+      + 'generate-image 的 hf_dir——多次串聯即可量化多個元件。FP8 來源'
+      + '（F8_E4M3 / F8_E5M2，帶或不帶縮放）按 bf16 讀取；bits=16 則'
+      + '把它原樣寫成稠密檢查點，而不做量化。可選的 trigger 輸入與 summary'
+      + ' 輸出。'],
+  'cfg.model-quantize.src_model': ['',
+      '源模型：models 数据库中的键（由 model-fetch 注册），或一个路径——'
+      + 'bf16/f16/fp8 的 safetensors 目录，或单个 .safetensors 文件：'
+      + 'Comfy-Org 的组件，或 Krea 自有布局的 Krea-2 DiT（社区微调模型），'
+      + '后者会以 diffusers 名称写出',
+      '來源模型：models 資料庫中的鍵（由 model-fetch 註冊），或一個路徑——'
+      + 'bf16/f16/fp8 的 safetensors 目錄，或單個 .safetensors 檔案：'
+      + 'Comfy-Org 的元件，或 Krea 自有佈局的 Krea-2 DiT（社群微調模型），'
+      + '後者會以 diffusers 名稱寫出'],
+  'cfg.model-quantize.output_name': ['',
+      '结果名称 -> <cwd>/models/<output_name>（以该键注册进 models 数据库）'
+      + '，或一个显式路径（"/.."、"./.."），后者原样使用且不注册',
+      '結果名稱 -> <cwd>/models/<output_name>（以該鍵註冊進 models 資料庫）'
+      + '，或一個明確路徑（"/.."、"./.."），後者原樣使用且不註冊'],
+  'cfg.model-quantize.bits': ['',
+      '骨干网络的仿射量化位宽（4 | 8），或 16：输出稠密检查点、不做任何'
+      + '量化——FP8 张量解码为 bf16（精确无损，每个 FP8 值都是一个 bf16 '
+      + '值），其余原样复制，于是 FP8 检查点变成普通的 bf16 检查点',
+      '骨幹網路的仿射量化位元寬度（4 | 8），或 16：輸出稠密檢查點、不做'
+      + '任何量化——FP8 張量解碼為 bf16（精確無損，每個 FP8 值都是一個 '
+      + 'bf16 值），其餘原樣複製，於是 FP8 檢查點變成普通的 bf16 檢查點'],
+  'cfg.model-quantize.group_size': ['',
+      '仿射量化的分组大小（32 | 64）',
+      '仿射量化的分組大小（32 | 64）'],
+  'cfg.model-quantize.arch': ['',
+      '模型族标签；留空 => 从 config.json 的 model_type 自动检测',
+      '模型族標籤；留空 => 從 config.json 的 model_type 自動偵測'],
+  'cfg.model-quantize.target': ['',
+      '量化模型的哪一部分。文生图（Krea-2 / FLUX.2 / Boogu-Image）：选一个'
+      + '组件——dit（默认）| text_encoder（Boogu 是它的 mllm/）| vae——输出是'
+      + '一个自包含的管道（全部复制，只量化目标），可直接作为 hf_dir 使用；'
+      + '可多次串联。通用 / 多模态语言模型：选一个子模块范围——all（默认，整'
+      + '个模型）| text（仅语言骨干）| vision | audio | 一个显式的张量名前'
+      + '缀——只量化该子模块，其余保持 bf16（例如量化语言骨干、保留全精度视'
+      + '觉塔）',
+      '量化模型的哪一部分。文生圖（Krea-2 / FLUX.2 / Boogu-Image）：選一個'
+      + '元件——dit（預設）| text_encoder（Boogu 是它的 mllm/）| vae——輸出是'
+      + '一個自包含的管道（全部複製，只量化目標），可直接作為 hf_dir 使用；'
+      + '可多次串聯。通用 / 多模態語言模型：選一個子模組範圍——all（預設，整'
+      + '個模型）| text（僅語言骨幹）| vision | audio | 一個明確的張量名前'
+      + '綴——只量化該子模組，其餘保持 bf16（例如量化語言骨幹、保留全精度視'
+      + '覺塔）'],
+  'cfg.model-quantize.skip_existing': ['',
+      '若输出的 config.json 已存在则跳过',
+      '若輸出的 config.json 已存在則跳過'],
+  'cfg.model-quantize.awq': ['',
+      'AWQ 激活感知平滑（逐层搜索等效浮点的缩放系数）。适用于标准 layernorm'
+      + ' 结构——包括全注意力和 Qwen3.5 的门控 DeltaNet（Llama / Qwen2 / '
+      + 'Qwen3 / Qwen3.5 / MOSS）；对 Gemma 的 FFN 归一化和 MoE 则被禁止（'
+      + '请改用 mixed 或普通量化）。校准：提供 calib_dir，否则对 Qwen3 系列'
+      + '（稠密或 Qwen3.5 混合）会在设备上自动校准',
+      'AWQ 啟動感知平滑（逐層搜尋等效浮點的縮放係數）。適用於標準 layernorm'
+      + ' 結構——包括全注意力和 Qwen3.5 的閘控 DeltaNet（Llama / Qwen2 / '
+      + 'Qwen3 / Qwen3.5 / MOSS）；對 Gemma 的 FFN 正規化和 MoE 則被禁止（'
+      + '請改用 mixed 或普通量化）。校準：提供 calib_dir，否則對 Qwen3 系列'
+      + '（稠密或 Qwen3.5 混合）會在裝置上自動校準'],
+  'cfg.model-quantize.awq_clip': ['',
+      '配套的 AWQ 逐组权重裁剪搜索（需要 awq）；默认关闭——在小规模校准集上'
+      + '可能反而让末端漂移变差',
+      '配套的 AWQ 逐組權重裁剪搜尋（需要 awq）；預設關閉——在小規模校準集上'
+      + '可能反而讓末端漂移變差'],
+  'cfg.model-quantize.klein_kv': ['',
+      'flux2 源是 FLUX.2-klein-9b-kv 而非普通的 klein-9B。它只影响设备上的'
+      + '校准，因为校准扫描是以一张参考图为条件的：该检查点会隔离参考 token'
+      + '，若按普通的联合注意力去校准，就会针对它根本见不到的分布做裁剪。权'
+      + '重量化本身完全相同（张量名与形状一致）。默认 false',
+      'flux2 來源是 FLUX.2-klein-9b-kv 而非普通的 klein-9B。它只影響裝置上'
+      + '的校準，因為校準掃描是以一張參考影像為條件的：該檢查點會隔離參考 '
+      + 'token，若按普通的聯合注意力去校準，就會針對它根本見不到的分布做裁'
+      + '剪。權重量化本身完全相同（張量名與形狀一致）。預設 false'],
+  'cfg.model-quantize.calib_dir': ['',
+      '含 calib_{qkv,o,gateup,down}.f32 激活统计量的目录；留空（默认）=> 对'
+      + '已知架构在设备上自动校准',
+      '含 calib_{qkv,o,gateup,down}.f32 啟動統計量的目錄；留空（預設）=> 對'
+      + '已知架構在裝置上自動校準'],
+  'cfg.model-quantize.mixed': ['',
+      'unsloth 风格的逐层混合精度：把最敏感的 mixed_frac 比例的层提升到 '
+      + 'high_bits。适用于任何采用标准命名的模型族（不匹配的层会被跳过）。'
+      + '要求 bits=4、high_bits=8、group_size=64',
+      'unsloth 風格的逐層混合精度：把最敏感的 mixed_frac 比例的層提升到 '
+      + 'high_bits。適用於任何採用標準命名的模型族（不符合的層會被跳過）。'
+      + '要求 bits=4、high_bits=8、group_size=64'],
+  'cfg.model-quantize.high_bits': ['',
+      '混合精度中提升后的位宽（8）',
+      '混合精度中提升後的位元寬度（8）'],
+  'cfg.model-quantize.mixed_frac': ['',
+      '提升到 high_bits 的层所占比例',
+      '提升到 high_bits 的層所占比例'],
+  'cfg.model-quantize.layer_prefix': ['',
+      'awq/mixed 逐层张量所用的架构层根前缀；留空 => 从 config.json 自动检'
+      + '测',
+      'awq/mixed 逐層張量所用的架構層根前綴；留空 => 從 config.json 自動偵'
+      + '測'],
+  'cfg.model-quantize.n_layers': ['',
+      'awq/mixed 所用的层数；0 => 从 config.json 自动检测',
+      'awq/mixed 所用的層數；0 => 從 config.json 自動偵測'],
+  'cfg.model-quantize.quant_exclude': ['',
+      '以逗号分隔的张量名子串，命中者保持稠密。只要 `target` 指定的是一个整'
+      + '体范围就需要它，因为那条规则会收下所有叶子名不是归一化、也不是嵌入'
+      + '的二维浮点张量——这对线性层是对的，对其他长得像线性层的东西则是错的'
+      + '。有两类会被误伤：调制表（DiT 的 f32 缩放/偏移行是二维的，但它们不'
+      + '是矩阵），以及很小的门控投影，在寥寥几行上做逐组仿射量化全是误差、'
+      + '毫无节省。这两种都不会表现为加载失败——检查点照样量化、照样加载，然'
+      + '后生成错误的结果',
+      '以逗號分隔的張量名子字串，命中者保持稠密。只要 `target` 指定的是一個'
+      + '整體範圍就需要它，因為那條規則會收下所有葉子名不是正規化、也不是嵌'
+      + '入的二維浮點張量——這對線性層是對的，對其他長得像線性層的東西則是錯'
+      + '的。有兩類會被誤傷：調變表（DiT 的 f32 縮放/偏移列是二維的，但它們'
+      + '不是矩陣），以及很小的閘控投影，在寥寥幾列上做逐組仿射量化全是誤差'
+      + '、毫無節省。這兩種都不會表現為載入失敗——檢查點照樣量化、照樣載入，'
+      + '然後產生錯誤的結果'],
+  'cfg.model-quantize.quant_vision': ['',
+      'text_encoder 场景：连检查点的视觉塔（visual.*）也一起量化，而不是原'
+      + '样以 bf16 透传。默认关闭，因为视觉塔对精度敏感，而且相对这里量化的'
+      + '编码器的语言部分来说体积不大。若某个多模态编码器只用于纯文本，就值'
+      + '得开启——MiniMax-H3 抽取的是 Qwen3-VL 骨干，从不运行它的视觉塔，因'
+      + '此那约 1.5 GB 的 bf16 完全是白背',
+      'text_encoder 情境：連檢查點的視覺塔（visual.*）也一起量化，而不是原'
+      + '樣以 bf16 透傳。預設關閉，因為視覺塔對精度敏感，而且相對這裡量化的'
+      + '編碼器的語言部分來說體積不大。若某個多模態編碼器只用於純文字，就值'
+      + '得開啟——MiniMax-H3 抽取的是 Qwen3-VL 骨幹，從不執行它的視覺塔，因'
+      + '此那約 1.5 GB 的 bf16 完全是白背'],
+  'cfg.model-quantize.quant_modulation': ['',
+      'Qwen-Image-Edit、Boogu-Image、Wan 与 MiniMax-H3 的 DiT：连 AdaLN 调'
+      + '制投影也一起量化（QIE 的 *_mod.1；Boogu 的 norm*.linear；H3 的 '
+      + 'adaln_proj.linear）。它们是仍保持 bf16 的最大一批权重——QIE 约 13 '
+      + 'GB -> 约 3.4 GB，Boogu 2.1 GB -> 约 1.1 GB；在 H3 上调制部分占 33B'
+      + ' 中的 13B，把它留作 bf16 会让 4 位检查点停在约 36 GB——正因如此整个'
+      + ' DiT 才塞得进 16 GB 的机器。但它们对精度敏感，所以默认保持 bf16；'
+      + '在这里显式开启后会强制为 8 位（而不是主体的位宽）',
+      'Qwen-Image-Edit、Boogu-Image、Wan 與 MiniMax-H3 的 DiT：連 AdaLN 調'
+      + '變投影也一起量化（QIE 的 *_mod.1；Boogu 的 norm*.linear；H3 的 '
+      + 'adaln_proj.linear）。它們是仍保持 bf16 的最大一批權重——QIE 約 13 '
+      + 'GB -> 約 3.4 GB，Boogu 2.1 GB -> 約 1.1 GB；在 H3 上調變部分占 33B'
+      + ' 中的 13B，把它留作 bf16 會讓 4 位元檢查點停在約 36 GB——正因如此整'
+      + '個 DiT 才塞得進 16 GB 的機器。但它們對精度敏感，所以預設保持 bf16'
+      + '；在這裡明確開啟後會強制為 8 位元（而不是主體的位元寬度）'],
+  'port.model-quantize.trigger': ['',
+      '可选的节奏触发（任意节拍类型）；接上后，任务会先等一个节拍再执行——让'
+      + '这些准备类阶段可以串成一套流程',
+      '可選的節奏觸發（任意節拍類型）；接上後，工作會先等一個節拍再執行——讓'
+      + '這些準備類階段可以串成一套流程'],
+  'port.model-quantize.summary': ['',
+      '已完成工作的 FlexData 摘要；其 `text` 字段可经 save-text 输出为报告'
+      + '，该节拍同时触发流程中的下一个阶段',
+      '已完成工作的 FlexData 摘要；其 `text` 欄位可經 save-text 輸出為報告'
+      + '，該節拍同時觸發流程中的下一個階段'],
+
+  // ---- Model Register (preparation) ----
+  'stage.model-register.name': ['', '模型注册', '模型註冊'],
+  'stage.model-register.doc': ['',
+      '一次性任务：把磁盘上已有的模型目录注册进模型注册表（相当于不下载的 '
+      + 'model-fetch）。运行时类型与输入/输出模态都从该目录检测得出——目录匹'
+      + '配、config.json、diffusers transformer、GGUF 或 CoreML 包——因此通'
+      + '常只需配置一个路径。可选的 trigger 输入与 summary 输出。',
+      '一次性工作：把磁碟上已有的模型目錄註冊進模型註冊表（相當於不下載的 '
+      + 'model-fetch）。執行階段型別與輸入/輸出模態都從該目錄偵測得出——目錄'
+      + '比對、config.json、diffusers transformer、GGUF 或 CoreML 套件——因'
+      + '此通常只需設定一個路徑。可選的 trigger 輸入與 summary 輸出。'],
+  'cfg.model-register.model_dir': ['',
+      '磁盘上要注册的模型目录（也可以是单个 .mlpackage / .gguf 文件）。关于'
+      + '它记录的一切——运行时类型、输入/输出模态、尺寸标签——都从该目录检测'
+      + '得出',
+      '磁碟上要註冊的模型目錄（也可以是單個 .mlpackage / .gguf 檔案）。關於'
+      + '它記錄的一切——執行階段型別、輸入/輸出模態、尺寸標籤——都從該目錄偵'
+      + '測得出'],
+  'cfg.model-register.key': ['',
+      '注册所用的键；留空 => 取路径末两段拼成的 "<owner>/<repo>"（即 '
+      + 'model-fetch 写入的布局），否则取目录名',
+      '註冊所用的鍵；留空 => 取路徑末兩段拼成的 "<owner>/<repo>"（即 '
+      + 'model-fetch 寫入的版面），否則取目錄名'],
+  'cfg.model-register.model_type': ['',
+      '覆盖检测出的运行时提示（例如 qwen3.5、gemma4、flux2、krea2）；留空 ='
+      + '> 从目录检测，无法确定时保持为空',
+      '覆寫偵測出的執行階段提示（例如 qwen3.5、gemma4、flux2、krea2）；留空'
+      + ' => 從目錄偵測，無法確定時保持為空'],
+  'cfg.model-register.overwrite_existing': ['',
+      '允许这个键从另一个目录手中被接管（默认关闭：覆盖别的模型的键会被拒绝'
+      + '）。对同一个目录重新注册是幂等的，不需要开启此项',
+      '允許這個鍵從另一個目錄手中被接管（預設關閉：覆寫別的模型的鍵會被拒絕'
+      + '）。對同一個目錄重新註冊是冪等的，不需要開啟此項'],
+  'port.model-register.trigger': ['',
+      '可选的节奏触发（任意节拍类型）；接上后，任务会先等一个节拍再执行——让'
+      + '这些准备类阶段可以串成一套流程',
+      '可選的節奏觸發（任意節拍類型）；接上後，工作會先等一個節拍再執行——讓'
+      + '這些準備類階段可以串成一套流程'],
+  'port.model-register.summary': ['',
+      '本次注册的 FlexData 摘要；其 `text` 字段可经 save-text 输出为报告，'
+      + '该节拍同时触发流程中的下一个阶段',
+      '本次註冊的 FlexData 摘要；其 `text` 欄位可經 save-text 輸出為報告，'
+      + '該節拍同時觸發流程中的下一個階段'],
+
+  // ---- Model Remove (preparation) ----
+  'stage.model-remove.name': ['', '模型移除', '模型移除'],
+  'stage.model-remove.doc': ['',
+      '一次性任务：把一个已注册的模型从 models 数据库中移除（model-fetch 的'
+      + '逆操作）。删除以 `model` 为键的记录；若 delete_files=true，还会把'
+      + '记录中的 local_path 目录从磁盘上删掉。开启 missing_ok 时，模型本就'
+      + '不存在也算成功。可选的 trigger 输入与 summary 输出。',
+      '一次性工作：把一個已註冊的模型從 models 資料庫中移除（model-fetch 的'
+      + '逆操作）。刪除以 `model` 為鍵的記錄；若 delete_files=true，還會把'
+      + '記錄中的 local_path 目錄從磁碟上刪掉。開啟 missing_ok 時，模型本就'
+      + '不存在也算成功。可選的 trigger 輸入與 summary 輸出。'],
+  'cfg.model-remove.model': ['',
+      '要移除的 models 数据库键（即 model-fetch / model-quantize 注册该模型'
+      + '时所用的键）',
+      '要移除的 models 資料庫鍵（即 model-fetch / model-quantize 註冊該模型'
+      + '時所用的鍵）'],
+  'cfg.model-remove.delete_files': ['',
+      '同时把模型记录中的 local_path 目录从磁盘上删除（需显式开启；具破坏性'
+      + '——否则只删除记录）',
+      '同時把模型記錄中的 local_path 目錄從磁碟上刪除（需明確開啟；具破壞性'
+      + '——否則只刪除記錄）'],
+  'cfg.model-remove.missing_ok': ['',
+      '把“模型未注册”视为成功（等同于已移除），而不是中断整套流程',
+      '把「模型未註冊」視為成功（等同於已移除），而不是中斷整套流程'],
+  'port.model-remove.trigger': ['',
+      '可选的节奏触发（任意节拍类型）；接上后，任务会先等一个节拍再执行——让'
+      + '这些准备类阶段可以串成一套流程',
+      '可選的節奏觸發（任意節拍類型）；接上後，工作會先等一個節拍再執行——讓'
+      + '這些準備類階段可以串成一套流程'],
+  'port.model-remove.summary': ['',
+      '已完成工作的 FlexData 摘要；其 `text` 字段可经 save-text 输出为报告'
+      + '，该节拍同时触发流程中的下一个阶段',
+      '已完成工作的 FlexData 摘要；其 `text` 欄位可經 save-text 輸出為報告'
+      + '，該節拍同時觸發流程中的下一個階段'],
+
+  // ---- ONVIF Discovery (preparation) ----
+  'stage.onvif-discovery.name': ['',
+      'ONVIF 摄像头搜索',
+      'ONVIF 攝影機搜尋'],
+  'stage.onvif-discovery.doc': ['',
+      '交互式一次性任务：用 WS-Discovery 探测 ONVIF 摄像头，提示用户选择并'
+      + '输入凭据，然后把加密后的摄像头记录持久化到 LMDB。0 入 / 0 出（仅 '
+      + 'Apple 平台）。',
+      '互動式一次性工作：用 WS-Discovery 探測 ONVIF 攝影機，提示使用者選擇'
+      + '並輸入憑證，然後把加密後的攝影機記錄持久化到 LMDB。0 入 / 0 出（僅'
+      + ' Apple 平台）。'],
+  'cfg.onvif-discovery.probe_timeout_ms': ['',
+      'WS-Discovery 探测超时（毫秒）',
+      'WS-Discovery 探測逾時（毫秒）'],
+  'cfg.onvif-discovery.overwrite_existing': ['',
+      '替换已经注册过的摄像头',
+      '取代已經註冊過的攝影機'],
+  'cfg.onvif-discovery.mask_password': ['',
+      '输入密码时进行遮蔽（getpasswd：关闭标准输入回显 / web 界面使用遮蔽字'
+      + '段）；false 则明文显示',
+      '輸入密碼時進行遮蔽（getpasswd：關閉標準輸入回顯 / web 介面使用遮蔽欄'
+      + '位）；false 則明文顯示'],
+
+  // ---- Load Text (text) ----
+  'stage.load-text.name': ['', '加载文本', '載入文字'],
+  'stage.load-text.doc': ['',
+      '源：从文件系统读取文本文件，把每个文件的内容作为 FlexData 字符串（即'
+      + ' text-input 的格式）发出。若接了 trigger 输入端口，则每个节拍发出'
+      + '一个文件；未接时一次发完全部然后结束。',
+      '來源：從檔案系統讀取文字檔，把每個檔案的內容作為 FlexData 字串（即 '
+      + 'text-input 的格式）發出。若接了 trigger 輸入埠，則每個節拍發出一個'
+      + '檔案；未接時一次發完全部然後結束。'],
+  'cfg.load-text.path': ['',
+      '文本文件路径字符串，或字符串数组',
+      '文字檔路徑字串，或字串陣列'],
+  'port.load-text.trigger': ['',
+      '可选的节奏节拍（例如 chrono）；每来一个就读取并发出下一个文件',
+      '可選的節奏節拍（例如 chrono）；每來一個就讀取並發出下一個檔案'],
+  'port.load-text.text': ['',
+      '文件内容，作为一个 FlexData 字符串负载',
+      '檔案內容，作為一個 FlexData 字串負載'],
+
+  // ---- Save Text (text) ----
+  'stage.save-text.name': ['', '保存文本', '儲存文字'],
+  'stage.save-text.doc': ['',
+      '汇聚节点：把每个 FlexData 节拍中的某个文本字段（配置项 `key`，默认 "'
+      + 'text"）追加写入文本文件，按换行策略每个节拍写一条。EOS 结束本阶段'
+      + '。',
+      '匯聚節點：把每個 FlexData 節拍中的某個文字欄位（設定項 `key`，預設 "'
+      + 'text"）附加寫入文字檔，按換行策略每個節拍寫一條。EOS 結束本階段。'],
+  'cfg.save-text.path': ['', '输出文本文件路径', '輸出文字檔路徑'],
+  'cfg.save-text.key': ['',
+      '要写出的 FlexData 字段（纯字符串负载则整体写出）',
+      '要寫出的 FlexData 欄位（純字串負載則整體寫出）'],
+  'cfg.save-text.newline': ['',
+      '条目分隔策略：after（默认）| before | none',
+      '條目分隔策略：after（預設）| before | none'],
+  'cfg.save-text.append': ['',
+      '追加写入文件（默认）；设为 false 则在开始时清空文件',
+      '附加寫入檔案（預設）；設為 false 則在開始時清空檔案'],
+  'port.save-text.text': ['',
+      '携带待保存文本的 FlexData（见 `key`）',
+      '攜帶待儲存文字的 FlexData（見 `key`）'],
+
+  // ---- Chat (text) ----
+  'stage.text-chat.name': ['', '聊天', '聊天'],
+  'stage.text-chat.doc': ['',
+      '对话式语言模型阶段：把每个用户回合追加到持久的 K/V 聊天上下文，把助'
+      + '手回复流式送到界面，并发出一条 FlexData 回合记录。/clear 可重置。'
+      + '回合中的媒体行标记可附带图像/音频（用 FFmpeg 解码，由模型自己的塔'
+      + '编码）；不支持的模态会给出警告并丢弃。',
+      '對話式語言模型階段：把每個使用者回合附加到持久的 K/V 聊天上下文，把'
+      + '助理回覆串流送到介面，並發出一筆 FlexData 回合記錄。/clear 可重設'
+      + '。回合中的媒體行標記可附帶影像/音訊（用 FFmpeg 解碼，由模型自己的'
+      + '塔編碼）；不支援的模態會給出警告並丟棄。'],
+  'cfg.text-chat.hf_dir': ['',
+      '模型：models 数据库中的键（由 model-fetch 注册）或 HF 风格的模型目录'
+      + '；同名时数据库键优先于路径。',
+      '模型：models 資料庫中的鍵（由 model-fetch 註冊）或 HF 風格的模型目錄'
+      + '；同名時資料庫鍵優先於路徑。'],
+  'cfg.text-chat.compute_dtype': ['',
+      'bf16 | f16 | f32',
+      'bf16 | f16 | f32'],
+  'cfg.text-chat.page_tokens': ['',
+      'ContextManager 的 K/V 分页大小',
+      'ContextManager 的 K/V 分頁大小'],
+  'cfg.text-chat.max_pages': ['',
+      '每个语言模型的分页池容量（>= 1）',
+      '每個語言模型的分頁池容量（>= 1）'],
+  'cfg.text-chat.max_new_tokens': ['',
+      '每个回合的生成预算（>= 1）',
+      '每個回合的生成預算（>= 1）'],
+  'cfg.text-chat.disable_thinking': ['',
+      '覆盖聊天模板的思考（thinking）默认设置',
+      '覆寫聊天範本的思考（thinking）預設設定'],
+  'cfg.text-chat.reasoning_effort': ['',
+      '要求模型思考多少："xhigh"、"medium" 或 "low"。这是 Qwen3.8 聊天模板'
+      + '里的控制项——它会在系统回合前加上一段指令（启用工具时并入 tools 回'
+      + '合），文本与官方模板逐字一致。"medium" 就是不加指令的渲染结果，正'
+      + '如参考实现所定义，因此它什么都不输出。留空（默认）同样什么都不输出'
+      + '，这也是此前每个 Qwen3 版本的行为——参考实现自己的默认值是 "xhigh"'
+      + '，但 vpipe 无法把 3.8 的检查点与 3.5/3.6 区分开（三者都声明 '
+      + 'model_type 为 "qwen3_5"），因此 xhigh 需要显式选择而不是默认假定。'
+      + '关闭思考时，或模型族没有推理力度这一概念时，本项会被忽略并给出警告',
+      '要求模型思考多少："xhigh"、"medium" 或 "low"。這是 Qwen3.8 聊天範本'
+      + '裡的控制項——它會在系統回合前加上一段指令（啟用工具時併入 tools 回'
+      + '合），文字與官方範本逐字一致。"medium" 就是不加指令的算繪結果，正'
+      + '如參考實作所定義，因此它什麼都不輸出。留空（預設）同樣什麼都不輸出'
+      + '，這也是此前每個 Qwen3 版本的行為——參考實作自己的預設值是 "xhigh"'
+      + '，但 vpipe 無法把 3.8 的檢查點與 3.5/3.6 區分開（三者都宣告 '
+      + 'model_type 為 "qwen3_5"），因此 xhigh 需要明確選擇而不是預設假定。'
+      + '關閉思考時，或模型族沒有推理力度這一概念時，本項會被忽略並給出警告'],
+  'cfg.text-chat.enable_tools': ['',
+      '启用 MCP 工具调用：向模型公布内置工具（get_current_time），执行模型'
+      + '发出的任何 <tool_call>，并把结果回灌以进行下一轮解码（仅限 ChatML/'
+      + 'Qwen 系列）',
+      '啟用 MCP 工具呼叫：向模型公布內建工具（get_current_time），執行模型'
+      + '發出的任何 <tool_call>，並把結果回灌以進行下一輪解碼（僅限 ChatML/'
+      + 'Qwen 系列）'],
+  'cfg.text-chat.enable_python_tool': ['',
+      '增加一个沙盒化的 `run_python` 工具（seatbelt：无网络、临时暂存文件系'
+      + '统、禁止读取主目录、限制 CPU 与时间）。独立开关；任一工具开关都会'
+      + '激活工具循环。它执行的是模型写出的代码——请谨慎开启',
+      '增加一個沙箱化的 `run_python` 工具（seatbelt：無網路、暫時暫存檔案系'
+      + '統、禁止讀取家目錄、限制 CPU 與時間）。獨立開關；任一工具開關都會'
+      + '啟用工具迴圈。它執行的是模型寫出的程式碼——請謹慎開啟'],
+  'cfg.text-chat.enable_file_tools': ['',
+      '增加受限的 read_file / write_file / list_files 工具，根目录为 '
+      + 'file_sandbox_dir（路径无法逃出该根目录）。任一工具开关都会激活工具'
+      + '循环',
+      '增加受限的 read_file / write_file / list_files 工具，根目錄為 '
+      + 'file_sandbox_dir（路徑無法逃出該根目錄）。任一工具開關都會啟用工具'
+      + '迴圈'],
+  'cfg.text-chat.file_sandbox_dir': ['',
+      '文件/shell 工具的显式工作区根目录；设置后覆盖 file_sandbox。留空 => '
+      + '使用 file_sandbox 模式',
+      '檔案/shell 工具的明確工作區根目錄；設定後覆寫 file_sandbox。留空 => '
+      + '使用 file_sandbox 模式'],
+  'cfg.text-chat.file_sandbox': ['',
+      '未设置 file_sandbox_dir 时，文件/shell 工具的工作区：\'per-chat\'（每'
+      + '个阶段一个临时目录，拆除时清空——默认）或 \'persistent\'（会话沙盒根'
+      + '目录 $CWD/sandbox，跨会话保留）',
+      '未設定 file_sandbox_dir 時，檔案/shell 工具的工作區：\'per-chat\'（每'
+      + '個階段一個暫存目錄，拆除時清空——預設）或 \'persistent\'（工作階段沙'
+      + '箱根目錄 $CWD/sandbox，跨工作階段保留）'],
+  'cfg.text-chat.enable_shell_tool': ['',
+      '增加一个沙盒化的 `run_shell` 工具（seatbelt：无网络、写入限制在 '
+      + 'file_sandbox_dir 工作区内、禁止读取主目录、限制 CPU 与时间）。与文'
+      + '件工具共用工作区。它执行的是模型写出的命令——请谨慎开启',
+      '增加一個沙箱化的 `run_shell` 工具（seatbelt：無網路、寫入限制在 '
+      + 'file_sandbox_dir 工作區內、禁止讀取家目錄、限制 CPU 與時間）。與檔'
+      + '案工具共用工作區。它執行的是模型寫出的指令——請謹慎開啟'],
+  'cfg.text-chat.enable_web_tools': ['',
+      '增加 fetch_url / scrape_page 工具（http/https GET；带 SSRF 防护：拒'
+      + '绝私有/本机目标）。任一工具开关都会激活工具循环',
+      '增加 fetch_url / scrape_page 工具（http/https GET；帶 SSRF 防護：拒'
+      + '絕私有/本機目標）。任一工具開關都會啟用工具迴圈'],
+  'cfg.text-chat.web_allow_private': ['',
+      '允许网页工具访问私有/本机地址（关闭 SSRF 防护）——仅限可信的本地使用',
+      '允許網頁工具存取私有/本機位址（關閉 SSRF 防護）——僅限可信的本機使用'],
+  'cfg.text-chat.allow_system_temp': ['',
+      '允许沙盒中的 run_shell / run_python 工具把每用户的系统临时目录（'
+      + 'macOS Darwin temp）用作 $TMPDIR 和一个可写根目录。默认 false 会把'
+      + '所有临时文件限制在工作区/当前目录之下；开启它是为了让那些硬编码系'
+      + '统临时目录、忽略 $TMPDIR 的工具（例如 macOS 的 `mktemp` 命令）能正'
+      + '常工作，代价是临时文件会落在启动目录之外',
+      '允許沙箱中的 run_shell / run_python 工具把每使用者的系統暫存目錄（'
+      + 'macOS Darwin temp）用作 $TMPDIR 和一個可寫根目錄。預設 false 會把'
+      + '所有暫存檔限制在工作區/目前目錄之下；開啟它是為了讓那些硬寫死系統'
+      + '暫存目錄、忽略 $TMPDIR 的工具（例如 macOS 的 `mktemp` 指令）能正常'
+      + '運作，代價是暫存檔會落在啟動目錄之外'],
+  'cfg.text-chat.stream_answer_only': ['',
+      '把推理（<think>）与工具调用块从流式输出端口（编号 1）中剔除，好让说'
+      + '话的消费者（例如 text-to-speech）只朗读答案；0 号输出端口仍然携带'
+      + '完整回复',
+      '把推理（<think>）與工具呼叫區塊從串流輸出埠（編號 1）中剔除，好讓說'
+      + '話的消費者（例如 text-to-speech）只朗讀答案；0 號輸出埠仍然攜帶完'
+      + '整回覆'],
+  'cfg.text-chat.stream_words': ['',
+      '流式输出端口（编号 1）的分块：超过这么多个词后在句读处发出（硬上限为 '
+      + '3 倍，至少 60）——适合 text-to-speech 朗读的单位；0 则每解码出一段'
+      + '就立即发出，供读者看着回复写出来',
+      '串流輸出埠（編號 1）的分塊：超過這麼多個詞後在句讀處發出（硬上限為 '
+      + '3 倍，至少 60）——適合 text-to-speech 朗讀的單位；0 則每解碼出一段'
+      + '就立即發出，供讀者看著回覆寫出來'],
+  'cfg.text-chat.mtp': ['',
+      '模型自带 MTP 推测解码头时使用它（token 精确；只影响性能）；设为 '
+      + 'false 则强制走标准解码路径',
+      '模型自帶 MTP 推測解碼頭時使用它（token 精確；只影響效能）；設為 '
+      + 'false 則強制走標準解碼路徑'],
+  'cfg.text-chat.mtp_prefix_seed': ['',
+      '解码开始时用提示词为 MTP 起草器的 KV 预热：草稿接受率/解码吞吐更高，'
+      + '代价是少量额外预填充（token 精确；只影响性能）。默认开启（聊天是解'
+      + '码受限的）；若要偏向预填充吞吐可设为 false。未开启 mtp 时无效。',
+      '解碼開始時用提示詞為 MTP 起草器的 KV 預熱：草稿接受率/解碼吞吐更高，'
+      + '代價是少量額外預填充（token 精確；只影響效能）。預設開啟（聊天是解'
+      + '碼受限的）；若要偏向預填充吞吐可設為 false。未開啟 mtp 時無效。'],
+  'cfg.text-chat.draft_model': ['',
+      '用于解码的 DFlash / DFlash 2 块起草器（模型库键名或其目录）：一个依据'
+      + '目标模型隐藏状态一次起草一整块 token 的小模型，再由模型在一次前向中'
+      + '验证——例如 incoai 的 Qwen3.8-27B-DFlash2 搭配 mlx-community 的 '
+      + 'Qwen3.8-27B-4bit。贪心输出就是模型自己的贪心输出（采样时即其逐位置'
+      + '的采样结果）；只影响性能。设置后取代 mtp。留空：不使用',
+      '用於解碼的 DFlash / DFlash 2 區塊起草器（模型庫鍵名或其目錄）：一個'
+      + '依據目標模型隱藏狀態一次起草一整塊 token 的小模型，再由模型在一次前'
+      + '向中驗證——例如 incoai 的 Qwen3.8-27B-DFlash2 搭配 mlx-community 的 '
+      + 'Qwen3.8-27B-4bit。貪婪輸出就是模型自己的貪婪輸出（取樣時即其逐位置'
+      + '的取樣結果）；只影響效能。設定後取代 mtp。留空：不使用'],
+  'cfg.text-chat.draft_block_size': ['',
+      '每轮 DFlash 验证的 token 数（锚点 + 草稿，从 2 到起草器训练时的块大'
+      + '小）。0（默认）为自适应：拿每种长度实测的单轮耗时与其被接受的草稿数'
+      + '比较——在没有矩阵核心的 GPU 上短块更划算，因为那里每验证一行几乎就'
+      + '要花一次解码步的时间',
+      '每輪 DFlash 驗證的 token 數（錨點 + 草稿，從 2 到起草器訓練時的區塊'
+      + '大小）。0（預設）為自適應：拿每種長度實測的單輪耗時與其被接受的草稿'
+      + '數比較——在沒有矩陣核心的 GPU 上短區塊更划算，因為那裡每驗證一列幾乎'
+      + '就要花一次解碼步的時間'],
+  'cfg.text-chat.draft_bits': ['',
+      'DFlash 起草器在内存中的精度：8（默认）或 4——加载时量化为分组 64 '
+      + '的仿射格式；4 位让它的内存与起草耗时减半，草稿接受数略少——或 0，'
+      + '保留其存储的 bf16',
+      'DFlash 起草器在記憶體中的精度：8（預設）或 4——載入時量化為分組 64 '
+      + '的仿射格式；4 位讓它的記憶體與起草耗時減半，草稿接受數略少——或 0，'
+      + '保留其儲存的 bf16'],
+  'cfg.text-chat.i8_prefill': ['',
+      '加速模式（有损）：预填充 GEMM 改用动态 int8，在矩阵核心 GPU 上速率约'
+      + '为 f16 的 2 倍，精度即 int8 水平（开启后预填充不再 token 精确；解'
+      + '码不受影响；没有 NAX matmul2d（矩阵核心 GPU + 相应内核）时会被忽略'
+      + '）。默认 false；环境变量 VPIPE_I8_GEMM 可覆盖。',
+      '加速模式（失真）：預填充 GEMM 改用動態 int8，在矩陣核心 GPU 上速率約'
+      + '為 f16 的 2 倍，精度即 int8 水準（開啟後預填充不再 token 精確；解'
+      + '碼不受影響；沒有 NAX matmul2d（矩陣核心 GPU + 相應核心）時會被忽略'
+      + '）。預設 false；環境變數 VPIPE_I8_GEMM 可覆寫。'],
+  'port.text-chat.user': ['',
+      'FlexData 字符串：用户这一回合的文本；可以用媒体行标记内嵌图像/音频附'
+      + '件（文件系统路径或 base64），它们会经模型自己的视觉/音频塔拼接进预'
+      + '填充',
+      'FlexData 字串：使用者這一回合的文字；可以用媒體行標記內嵌影像/音訊附'
+      + '件（檔案系統路徑或 base64），它們會經模型自己的視覺/音訊塔拼接進預'
+      + '填充'],
+  'port.text-chat.sampler': ['',
+      '可选的 token 采样器配置 FlexData（sampler-select）。在第一个回合时锁'
+      + '存，之后每一回合都沿用；未接线 = 贪心（argmax）解码',
+      '可選的 token 取樣器組態 FlexData（sampler-select）。在第一個回合時鎖'
+      + '存，之後每一回合都沿用；未接線 = 貪婪（argmax）解碼'],
+  'port.text-chat.assistant': ['',
+      '每回合的 FlexData {text,prefill_ms,decode_ms,ctx_pos}（下游可选）',
+      '每回合的 FlexData {text,prefill_ms,decode_ms,ctx_pos}（下游可選）'],
+  'port.text-chat.stream': ['',
+      '回复过程中逐步发出的 FlexData {text,end_of_response}——大约每 20 个词'
+      + '在句读处（中英文皆可）发一个节拍；一次回复的最后一个节拍会把 '
+      + 'end_of_response 置为 true。它供流式消费者（例如 text-to-speech）使'
+      + '用，让其在整个回合结束之前就开始工作。开启 stream_answer_only 时，'
+      + '推理与工具调用片段会被剔除（下游可选）',
+      '回覆過程中逐步發出的 FlexData {text,end_of_response}——大約每 20 個詞'
+      + '在句讀處（中英文皆可）發一個節拍；一次回覆的最後一個節拍會把 '
+      + 'end_of_response 置為 true。它供串流消費者（例如 text-to-speech）使'
+      + '用，讓其在整個回合結束之前就開始工作。開啟 stream_answer_only 時，'
+      + '推理與工具呼叫片段會被剔除（下游可選）'],
+
+  // ---- Text Input (text) ----
+  'stage.text-input.name': ['', '文本输入', '文字輸入'],
+  'stage.text-input.doc': ['',
+      '源：在标准输出上给出提示，从标准输入读一行，并把它作为 FlexData 字符'
+      + '串发出。若接了 trigger 输入端口，则每个节拍触发一轮新的提示/读取。',
+      '來源：在標準輸出上給出提示，從標準輸入讀一行，並把它作為 FlexData 字'
+      + '串發出。若接了 trigger 輸入埠，則每個節拍觸發一輪新的提示/讀取。'],
+  'cfg.text-input.prompt': ['',
+      '每次读取前显示给用户的文本',
+      '每次讀取前顯示給使用者的文字'],
+  'cfg.text-input.count': ['',
+      '读取多少行；0 = 一直读到 EOF',
+      '讀取多少行；0 = 一直讀到 EOF'],
+  'cfg.text-input.present_first_without_beat': ['',
+      '第一次提示不等待输入端口的节拍',
+      '第一次提示不等待輸入埠的節拍'],
+  'cfg.text-input.media': ['',
+      '改用 getmedialine 提示：这一行可以用媒体行标记内嵌图像/音频附件（在'
+      + '标准输入上是文件路径，通过 web 界面的附件/拖放控件则是 base64）',
+      '改用 getmedialine 提示：這一行可以用媒體行標記內嵌影像/音訊附件（在'
+      + '標準輸入上是檔案路徑，透過 web 介面的附件/拖放控制項則是 base64）'],
+  'port.text-input.trigger': ['',
+      '可选的节拍，用于触发下一轮提示/读取（例如一个反馈回路）',
+      '可選的節拍，用於觸發下一輪提示/讀取（例如一個回饋迴路）'],
+  'port.text-input.text': ['',
+      '每读入一行发出一个 FlexData 字符串负载',
+      '每讀入一行發出一個 FlexData 字串負載'],
+
+  // ---- Text Prompt (text) ----
+  'stage.text-prompt.name': ['', '文本提示', '文字提示'],
+  'stage.text-prompt.doc': ['',
+      '源：把配置的 `text` 作为一个纯 FlexData 字符串发出（即 text-input 的'
+      + '格式，不带媒体）。发一个节拍即结束；若接了 trigger 输入端口，则每'
+      + '收到一个节拍发一次。',
+      '來源：把設定的 `text` 作為一個純 FlexData 字串發出（即 text-input 的'
+      + '格式，不帶媒體）。發一個節拍即結束；若接了 trigger 輸入埠，則每收'
+      + '到一個節拍發一次。'],
+  'cfg.text-prompt.text': ['',
+      '要作为 FlexData 字符串发出的提示文本',
+      '要作為 FlexData 字串發出的提示文字'],
+  'cfg.text-prompt.value': ['',
+      '按原样发出的 FlexData 值，代替 `text`——某个阶段要接收的对象节拍'
+      + '（text-chat 的对话）',
+      '按原樣發出的 FlexData 值，代替 `text`——某個階段要接收的物件節拍'
+      + '（text-chat 的對話）'],
+  'port.text-prompt.trigger': ['',
+      '可选的节拍，用于控制何时重新发出该文本（例如 chrono 滴答或反馈回路）',
+      '可選的節拍，用於控制何時重新發出該文字（例如 chrono 滴答或回饋迴路）'],
+  'port.text-prompt.text': ['',
+      '配置的文本，作为一个 FlexData 字符串负载',
+      '設定的文字，作為一個 FlexData 字串負載'],
+
+  // ---- ByteTrack (vision) ----
+  'stage.byte-track.name': ['', '目标跟踪器', '物件追蹤器'],
+  'stage.byte-track.doc': ['',
+      'ByteTrack 多目标跟踪器：为 yolo 检测结果跨帧分配持久的 track_id（卡'
+      + '尔曼滤波 + 两阶段 IoU/匈牙利匹配）。转发已确认的检测结果。',
+      'ByteTrack 多物件追蹤器：為 yolo 偵測結果跨影格分配持久的 track_id（'
+      + '卡爾曼濾波 + 兩階段 IoU/匈牙利比對）。轉發已確認的偵測結果。'],
+  'cfg.byte-track.track_thresh': ['',
+      '分数大于等于该值的进入高分池',
+      '分數大於等於該值的進入高分池'],
+  'cfg.byte-track.high_thresh': ['',
+      '未匹配的检测要生成新轨迹所需跨过的门槛',
+      '未比對到的偵測要產生新軌跡所需跨過的門檻'],
+  'cfg.byte-track.match_thresh': ['',
+      '首轮关联的代价上限（1 - IoU）',
+      '首輪關聯的成本上限（1 - IoU）'],
+  'cfg.byte-track.frame_rate': ['',
+      '与 track_buffer 一起决定最多可丢失多少帧',
+      '與 track_buffer 一起決定最多可遺失多少影格'],
+  'cfg.byte-track.track_buffer': ['',
+      '轨迹丢失后等待多少帧才被移除',
+      '軌跡遺失後等待多少影格才被移除'],
+  'cfg.byte-track.oport_capacity': ['',
+      '输出环形缓冲容量',
+      '輸出環形緩衝容量'],
+  'port.byte-track.detections': ['',
+      'FlexData 形式的 yolo-detection 帧记录 {frame_width,frame_height,'
+      + 'detections[]}',
+      'FlexData 形式的 yolo-detection 影格記錄 {frame_width,frame_height,'
+      + 'detections[]}'],
+  'port.byte-track.tracks': ['',
+      '同样的 FlexData 结构；只含已确认的检测，且每一个都附上了整数 '
+      + 'track_id',
+      '同樣的 FlexData 結構；只含已確認的偵測，且每一個都附上了整數 '
+      + 'track_id'],
+
+  // ---- Detection Overlay (vision) ----
+  'stage.detection-overlay.name': ['', '检测结果可视化', '偵測結果渲染器'],
+  'stage.detection-overlay.doc': ['',
+      '把得分最高的 N 个检测框与标签（以及可选的音频标签和时间戳）绘制到每'
+      + '一帧 RGB 上。0/1 号输入端口与 0 号输出端口共用视频时钟；2 号输入端'
+      + '口（音频）自成一个时钟。',
+      '把得分最高的 N 個偵測框與標籤（以及可選的音訊標籤和時間戳記）繪製到'
+      + '每一格 RGB 上。0/1 號輸入埠與 0 號輸出埠共用視訊時脈；2 號輸入埠（'
+      + '音訊）自成一個時脈。'],
+  'cfg.detection-overlay.top_n': ['',
+      '最多绘制多少个框；0 = 全部',
+      '最多繪製多少個框；0 = 全部'],
+  'cfg.detection-overlay.score_threshold': ['',
+      '丢弃低于该分数的检测结果',
+      '丟棄低於該分數的偵測結果'],
+  'cfg.detection-overlay.box_thickness': ['',
+      '边框像素宽度，限制在 [1,16]',
+      '邊框像素寬度，限制在 [1,16]'],
+  'cfg.detection-overlay.font_scale': ['',
+      '字形整数缩放倍数，限制在 [1,8]',
+      '字形整數縮放倍數，限制在 [1,8]'],
+  'cfg.detection-overlay.label_padding': ['',
+      '标签字形四周的像素留白，限制在 [0,32]',
+      '標籤字形四周的像素留白，限制在 [0,32]'],
+  'cfg.detection-overlay.score_precision': ['',
+      '小数点后位数，限制在 [0,6]',
+      '小數點後位數，限制在 [0,6]'],
+  'cfg.detection-overlay.input_normalized': ['',
+      '仅对 F32 有效；U8 输入时忽略',
+      '僅對 F32 有效；U8 輸入時忽略'],
+  'cfg.detection-overlay.draw_timestamp': ['',
+      '在右下角绘制边带中的时间戳',
+      '在右下角繪製邊帶中的時間戳記'],
+  'cfg.detection-overlay.timestamp_use_local': ['',
+      '时间戳按本地时间而非 UTC 格式化',
+      '時間戳記按本地時間而非 UTC 格式化'],
+  'cfg.detection-overlay.audio_label_threshold': ['',
+      '只有音频标签的分数超过该值时才显示，取值 [0,1]',
+      '只有音訊標籤的分數超過該值時才顯示，取值 [0,1]'],
+  'cfg.detection-overlay.class_names': ['',
+      '以 class_id 为键的标签查找表',
+      '以 class_id 為鍵的標籤查找表'],
+  'cfg.detection-overlay.oport_capacity': ['',
+      '输出环形缓冲容量',
+      '輸出環形緩衝容量'],
+  'port.detection-overlay.in.frames': ['',
+      'RGB TensorBeat [3,H,W]（F32 或 U8）',
+      'RGB TensorBeat [3,H,W]（F32 或 U8）'],
+  'port.detection-overlay.detections': ['',
+      'FlexData 形式的 YOLO/跟踪器检测结果，与帧一一对应',
+      'FlexData 形式的 YOLO/追蹤器偵測結果，與影格一一對應'],
+  'port.detection-overlay.audio_tags': ['',
+      '可选的 FlexData 音频标注流（独立时钟，按时间戳配对）',
+      '可選的 FlexData 音訊標註串流（獨立時脈，按時間戳記配對）'],
+  'port.detection-overlay.out.frames': ['',
+      '已绘制检测框与标签的 TensorBeat（dtype 不变，内存连续）',
+      '已繪製偵測框與標籤的 TensorBeat（dtype 不變，記憶體連續）'],
+
+  // ---- Realtime VQA (vision) ----
+  'stage.realtime-vqa.name': ['', '实时视觉问答', '即時視覺問答'],
+  'stage.realtime-vqa.doc': ['',
+      '实时场景视觉问答：将视频帧累积为场景（按间隔/空闲计时边界划分），然'
+      + '后对每个场景预填充一次并（批量）解码所配置的问题，输出 FlexData 答'
+      + '案包。',
+      '即時場景視覺問答：將視訊幀累積為場景（依間隔/閒置計時邊界劃分），然'
+      + '後對每個場景預填充一次並（批次）解碼所配置的問題，輸出 FlexData 答'
+      + '案包。'],
+  'cfg.realtime-vqa.hf_dir': ['',
+      'VLM 模型：models 数据库中的键（由 model-fetch 注册）或 HF 风格的模型'
+      + '目录；同名时数据库键优先于路径。',
+      'VLM 模型：models 資料庫中的鍵（由 model-fetch 註冊）或 HF 風格的模型'
+      + '目錄；同名時資料庫鍵優先於路徑。'],
+  'cfg.realtime-vqa.coreml_vision_path': ['',
+      '预转换的 CoreML 视觉塔（Qwen3.5-VL 或 Gemma-4 的软 token 导出版）：'
+      + 'models 数据库中的键（由 model-fetch 注册）或 mlpackage 路径；同名'
+      + '时数据库键优先于路径。设置后它会取代 GPU 视觉塔，预处理由该模型自'
+      + '身的输入尺寸/格式决定，因此 vlm_input_width/height 与 '
+      + 'vlm_max_soft_tokens 会被忽略。',
+      '預轉換的 CoreML 視覺塔（Qwen3.5-VL 或 Gemma-4 的軟 token 匯出版）：'
+      + 'models 資料庫中的鍵（由 model-fetch 註冊）或 mlpackage 路徑；同名'
+      + '時資料庫鍵優先於路徑。設定後它會取代 GPU 視覺塔，前處理由該模型自'
+      + '身的輸入尺寸/格式決定，因此 vlm_input_width/height 與 '
+      + 'vlm_max_soft_tokens 會被忽略。'],
+  'cfg.realtime-vqa.compute_dtype': ['',
+      'bf16 | f16 | f32',
+      'bf16 | f16 | f32'],
+  'cfg.realtime-vqa.language': ['',
+      '内置场景提示词的 IETF 界面/提示语言（en-us | zh-cn | zh-tw）；留空则'
+      + '继承会话语言。',
+      '內建場景提示詞的 IETF 介面/提示語言（en-us | zh-cn | zh-tw）；留空則'
+      + '繼承工作階段語言。'],
+  'cfg.realtime-vqa.page_tokens': ['',
+      'ContextManager 的 K/V 分页大小',
+      'ContextManager 的 K/V 分頁大小'],
+  'cfg.realtime-vqa.max_new_tokens': ['',
+      '每个问题的生成预算（token 数）',
+      '每個問題的生成預算（token 數）'],
+  'cfg.realtime-vqa.vlm_input_width': ['',
+      '固定的 VLM 输入宽度；视觉塔在 GPU 上（非 CoreML）时，会用 GPU 信箱缩'
+      + '放到该尺寸（与 vlm_input_height 配对）。0 = 原生尺寸。设置了 '
+      + 'coreml_vision_path 时忽略（CoreML 模型会按它自己固定的输入尺寸做信'
+      + '箱缩放）。',
+      '固定的 VLM 輸入寬度；視覺塔在 GPU 上（非 CoreML）時，會用 GPU 信箱縮'
+      + '放到該尺寸（與 vlm_input_height 配對）。0 = 原生尺寸。設定了 '
+      + 'coreml_vision_path 時忽略（CoreML 模型會按它自己固定的輸入尺寸做信'
+      + '箱縮放）。'],
+  'cfg.realtime-vqa.vlm_input_height': ['',
+      '固定的 VLM 输入高度；参见 vlm_input_width。0 = 原生尺寸。设置了 '
+      + 'coreml_vision_path 时忽略。',
+      '固定的 VLM 輸入高度；參見 vlm_input_width。0 = 原生尺寸。設定了 '
+      + 'coreml_vision_path 時忽略。'],
+  'cfg.realtime-vqa.vlm_max_soft_tokens': ['',
+      '每帧视觉软 token 的预算。0 = 沿用编码器静态图/默认的图像预算（细节最'
+      + '好）。设为正值可限制每帧的 token 数，用细节换取预填充速度。主要影'
+      + '响 Gemma-4（它的稠密视频预算约 64 token/帧，对宽画幅的摄像头画面过'
+      + '于粗糙）。例如填 64 即恢复 Gemma 旧的粗糙视频预算。设置了 '
+      + 'coreml_vision_path 时忽略（CoreML 模型输出的 token 数是固定的）。',
+      '每格視覺軟 token 的預算。0 = 沿用編碼器靜態圖/預設的影像預算（細節最'
+      + '好）。設為正值可限制每格的 token 數，用細節換取預填充速度。主要影'
+      + '響 Gemma-4（它的稠密影片預算約 64 token/格，對寬畫幅的攝影機畫面過'
+      + '於粗糙）。例如填 64 即恢復 Gemma 舊的粗糙影片預算。設定了 '
+      + 'coreml_vision_path 時忽略（CoreML 模型輸出的 token 數是固定的）。'],
+  'cfg.realtime-vqa.max_frame_gap_ms': ['',
+      '结束一个场景的帧间间隔（毫秒）',
+      '結束一個場景的幀間間隔（毫秒）'],
+  'cfg.realtime-vqa.idle_ticks_to_end': ['',
+      '无帧的空闲计时周期数，达到后结束场景（最小为 2）',
+      '無幀的閒置計時週期數，達到後結束場景（最小為 2）'],
+  'cfg.realtime-vqa.max_frames_per_scene': ['',
+      '安全上限；达到后提前结束场景',
+      '安全上限；達到後提前結束場景'],
+  'cfg.realtime-vqa.catch_up_drop': ['',
+      '积压超过该值时每个滴答跳过多少帧；0 = 关闭',
+      '積壓超過該值時每個滴答跳過多少影格；0 = 關閉'],
+  'cfg.realtime-vqa.batched_decode': ['',
+      '批量解码共享前缀的问题分支',
+      '批次解碼共享前綴的問題分支'],
+  'cfg.realtime-vqa.pipelined_decode': ['',
+      'GPU 常驻的流水线化单分支解码（metal）：每个 token 上让主机与 GPU 的'
+      + '工作重叠。只影响单分支解码；多问题路径请参见 '
+      + 'pipelined_batched_decode。',
+      'GPU 常駐的管線化單分支解碼（metal）：每個 token 上讓主機與 GPU 的工'
+      + '作重疊。只影響單分支解碼；多問題路徑請參見 '
+      + 'pipelined_batched_decode。'],
+  'cfg.realtime-vqa.pipelined_batched_decode': ['',
+      '需显式开启的 GPU 常驻流水线化批量解码（metal，定长 N 并带前瞻）：'
+      + 'token 留在设备上，主机侧的输出与下一步的 CPU 编码与 GPU 重叠。默认'
+      + '关闭：答案长度参差不齐时，逐步收缩的同步路径反而更快。',
+      '需明確開啟的 GPU 常駐管線化批次解碼（metal，定長 N 並帶前瞻）：token'
+      + ' 留在裝置上，主機側的輸出與下一步的 CPU 編碼與 GPU 重疊。預設關閉'
+      + '：答案長度參差不齊時，逐步收縮的同步路徑反而更快。'],
+  'cfg.realtime-vqa.i8_prefill': ['',
+      '加速模式（有损）：预填充 GEMM 改用动态 int8，在矩阵核心 GPU 上速率约'
+      + '为 f16 的 2 倍，精度即 int8 水平（开启后预填充不再 token 精确；但'
+      + '在这里很合适——realtime-vqa 每个场景都会重新预填充；没有 NAX '
+      + 'matmul2d（矩阵核心 GPU + 相应内核）时会被忽略）。默认 false；'
+      + 'VPIPE_I8_GEMM 可覆盖。',
+      '加速模式（失真）：預填充 GEMM 改用動態 int8，在矩陣核心 GPU 上速率約'
+      + '為 f16 的 2 倍，精度即 int8 水準（開啟後預填充不再 token 精確；但'
+      + '在這裡很合適——realtime-vqa 每個場景都會重新預填充；沒有 NAX '
+      + 'matmul2d（矩陣核心 GPU + 相應核心）時會被忽略）。預設 false；'
+      + 'VPIPE_I8_GEMM 可覆寫。'],
+  'cfg.realtime-vqa.scene_overlap': ['',
+      '把上一场景最后一帧（或最后一对帧）的视觉 token 作为下一场景的第一帧'
+      + '重新加入，但仅限时间上连续的场景；设为 false 可禁用',
+      '把上一場景最後一格（或最後一對影格）的視覺 token 作為下一場景的第一'
+      + '格重新加入，但僅限時間上連續的場景；設為 false 可停用'],
+  'cfg.realtime-vqa.video_fps': ['',
+      '没有 timestamp_us 时作为后备的标记节奏',
+      '沒有 timestamp_us 時作為後備的標記節奏'],
+  'cfg.realtime-vqa.disable_thinking': ['',
+      '覆盖聊天模板的思考（thinking）默认设置',
+      '覆寫聊天範本的思考（thinking）預設設定'],
+  'cfg.realtime-vqa.questions': ['',
+      '每个场景提出的问题：字符串或字符串数组',
+      '每個場景提出的問題：字串或字串陣列'],
+  'cfg.realtime-vqa.question_preamble': ['',
+      '添加到每个问题回合前的指令（用于引导答案格式）；留空则禁用。',
+      '加在每個問題回合前的指令（用於引導答案格式）；留空則停用。'],
+  'port.realtime-vqa.frames': ['',
+      '平面 u8 RGB TensorBeat [3,H,W]；边带 timestamp_us 驱动场景边界',
+      '平面 u8 RGB TensorBeat [3,H,W]；邊帶 timestamp_us 驅動場景邊界'],
+  'port.realtime-vqa.trigger': ['',
+      '周期性的 TriggerBeat；连续两个空闲滴答会结束一个场景',
+      '週期性的 TriggerBeat；連續兩個閒置滴答會結束一個場景'],
+  'port.realtime-vqa.audio': ['',
+      '可选的 FlexData 音频标签，或 PCM TensorBeat（不限类型）；按时间戳配'
+      + '对取用',
+      '可選的 FlexData 音訊標籤，或 PCM TensorBeat（不限型別）；按時間戳記'
+      + '配對取用'],
+  'port.realtime-vqa.sampler': ['',
+      '可选的 token 采样器配置 FlexData（sampler-select）。在第一帧时锁存，'
+      + '之后每个场景都沿用；未接线 = 贪心（argmax）解码',
+      '可選的 token 取樣器組態 FlexData（sampler-select）。在第一格時鎖存，'
+      + '之後每個場景都沿用；未接線 = 貪婪（argmax）解碼'],
+  'port.realtime-vqa.scene': ['',
+      '每个已结束场景的 FlexData：问题 + 答案 + 帧/时间戳元数据',
+      '每個已結束場景的 FlexData：問題 + 答案 + 幀/時間戳記中繼資料'],
+
+  // ---- Visual Q&A (vision) ----
+  'stage.visual-qa.name': ['', '视觉问答', '視覺問答'],
+  'stage.visual-qa.doc': ['',
+      '汇聚节点：加载视觉语言模型，编码传入的图像/视频帧，并在每轮提出所配'
+      + '置的问题，将答案流式传输到界面。无输出端口。',
+      '匯聚節點：載入視覺語言模型，編碼傳入的影像/視訊幀，並在每輪提出所配'
+      + '置的問題，將答案串流到介面。無輸出埠。'],
+  'cfg.visual-qa.hf_dir': ['',
+      'VLM 模型：models 数据库中的键（由 model-fetch 注册）或 HF 风格的模型'
+      + '目录；同名时数据库键优先于路径',
+      'VLM 模型：models 資料庫中的鍵（由 model-fetch 註冊）或 HF 風格的模型'
+      + '目錄；同名時資料庫鍵優先於路徑'],
+  'cfg.visual-qa.coreml_vision_path': ['',
+      '预转换的 CoreML 视觉塔路径',
+      '預轉換的 CoreML 視覺塔路徑'],
+  'cfg.visual-qa.coreml_compute_units': ['',
+      'CoreML 计算单元（0=CPU，1=+GPU，2=全部，3=+ANE）',
+      'CoreML 運算單元（0=CPU，1=+GPU，2=全部，3=+ANE）'],
+  'cfg.visual-qa.compute_dtype': ['',
+      'bf16 | f16 | f32',
+      'bf16 | f16 | f32'],
+  'cfg.visual-qa.page_tokens': ['',
+      'ContextManager 的 K/V 分页大小',
+      'ContextManager 的 K/V 分頁大小'],
+  'cfg.visual-qa.max_pages': ['',
+      '每个语言模型的分页池容量（>= 1）',
+      '每個語言模型的分頁池容量（>= 1）'],
+  'cfg.visual-qa.max_new_tokens': ['',
+      '每个问题的生成预算（>= 1）',
+      '每個問題的生成預算（>= 1）'],
+  'cfg.visual-qa.num_images': ['',
+      '每轮问答使用多少张图片/帧（>= 1）',
+      '每輪問答使用多少張影像/影格（>= 1）'],
+  'cfg.visual-qa.pause_ms_between_rounds': ['',
+      '每轮问答之后休眠多少毫秒',
+      '每輪問答之後休眠多少毫秒'],
+  'cfg.visual-qa.batched_decode': ['',
+      '批量解码共享前缀的问题分支',
+      '批次解碼共用前綴的問題分支'],
+  'cfg.visual-qa.i8_prefill': ['',
+      '加速模式（有损）：预填充 GEMM 改用动态 int8，在矩阵核心 GPU 上速率约'
+      + '为 f16 的 2 倍，精度即 int8 水平（开启后预填充不再 token 精确；没'
+      + '有 NAX matmul2d（矩阵核心 GPU + 相应内核）时会被忽略）。默认 false'
+      + '；VPIPE_I8_GEMM 可覆盖。',
+      '加速模式（失真）：預填充 GEMM 改用動態 int8，在矩陣核心 GPU 上速率約'
+      + '為 f16 的 2 倍，精度即 int8 水準（開啟後預填充不再 token 精確；沒'
+      + '有 NAX matmul2d（矩陣核心 GPU + 相應核心）時會被忽略）。預設 false'
+      + '；VPIPE_I8_GEMM 可覆寫。'],
+  'cfg.visual-qa.pre_image_prompt': ['',
+      '图像块之前的用户回合文本',
+      '影像區塊之前的使用者回合文字'],
+  'cfg.visual-qa.post_image_prompt': ['',
+      '图像块之后的用户回合文本',
+      '影像區塊之後的使用者回合文字'],
+  'cfg.visual-qa.decode_after_post_image': ['',
+      '在 post-image 之后先解码一次回复，然后再分支',
+      '在 post-image 之後先解碼一次回覆，然後再分支'],
+  'cfg.visual-qa.disable_thinking': ['',
+      '覆盖聊天模板的思考（thinking）默认设置',
+      '覆寫聊天範本的思考（thinking）預設設定'],
+  'cfg.visual-qa.video': ['',
+      '视频模式：{ enabled:bool, fps:real }',
+      '視訊模式：{ enabled:bool, fps:real }'],
+  'cfg.visual-qa.questions': ['',
+      '每轮提出的问题：字符串或字符串数组',
+      '每輪提出的問題：字串或字串陣列'],
+  'port.visual-qa.images': ['',
+      'RGB TensorBeat [3,H,W]；每轮问答 num_images 张（视频模式下则是帧）',
+      'RGB TensorBeat [3,H,W]；每輪問答 num_images 張（視訊模式下則是影格）'],
+  'port.visual-qa.sampler': ['',
+      '可选的 token 采样器配置 FlexData（sampler-select）。在第一轮时锁存，'
+      + '之后每一轮都沿用；未接线 = 贪心（argmax）解码',
+      '可選的 token 取樣器組態 FlexData（sampler-select）。在第一輪時鎖存，'
+      + '之後每一輪都沿用；未接線 = 貪婪（argmax）解碼'],
+
+  // ---- YOLO Detector (vision) ----
+  'stage.yolo-detection.name': ['', '目标检测器', '物件偵測器'],
+  'stage.yolo-detection.doc': ['',
+      '对每一帧 RGB 运行 YOLOv6 结构的 CoreML 检测器（信箱缩放 + NMS），每'
+      + '帧发出一条 FlexData 检测记录。',
+      '對每一格 RGB 執行 YOLOv6 結構的 CoreML 偵測器（信箱縮放 + NMS），每'
+      + '格發出一筆 FlexData 偵測記錄。'],
+  'cfg.yolo-detection.model_path': ['',
+      'YOLO CoreML 模型：models 数据库中的键（由 model-fetch 注册）或 '
+      + 'mlpackage 路径；同名时数据库键优先于路径',
+      'YOLO CoreML 模型：models 資料庫中的鍵（由 model-fetch 註冊）或 '
+      + 'mlpackage 路徑；同名時資料庫鍵優先於路徑'],
+  'cfg.yolo-detection.input_feature_name': ['',
+      '模型输入特征名；留空（默认）自动匹配模型唯一的输入',
+      '模型輸入特徵名；留空（預設）自動比對模型唯一的輸入'],
+  'cfg.yolo-detection.output_feature_name': ['',
+      '模型输出特征名；留空（默认）自动匹配模型唯一的输出',
+      '模型輸出特徵名；留空（預設）自動比對模型唯一的輸出'],
+  'cfg.yolo-detection.num_classes': ['',
+      '类别数量；缺省或为 0 时自动检测',
+      '類別數量；缺少或為 0 時自動偵測'],
+  'cfg.yolo-detection.confidence_threshold': ['',
+      '丢弃低于该分数的检测结果',
+      '丟棄低於該分數的偵測結果'],
+  'cfg.yolo-detection.iou_threshold': ['',
+      '逐类别 NMS 的 IoU 阈值',
+      '逐類別 NMS 的 IoU 閾值'],
+  'cfg.yolo-detection.max_detections': ['',
+      'NMS 之后最多保留多少个检测',
+      'NMS 之後最多保留多少個偵測'],
+  'cfg.yolo-detection.class_names': ['',
+      '标签名称；长度必须与 num_classes 一致',
+      '標籤名稱；長度必須與 num_classes 一致'],
+  'cfg.yolo-detection.compute_units': ['',
+      '0=仅 CPU  1=CPU+GPU  2=全部  3=CPU+ANE',
+      '0=僅 CPU  1=CPU+GPU  2=全部  3=CPU+ANE'],
+  'cfg.yolo-detection.uses_cpu_only': ['',
+      '推理时对 compute_units 的覆盖',
+      '推理時對 compute_units 的覆寫'],
+  'cfg.yolo-detection.oport_capacity': ['',
+      '输出环形缓冲容量',
+      '輸出環形緩衝容量'],
+  'port.yolo-detection.frames': ['',
+      'RGB TensorBeat [3,H,W]，f32，取值 [0,1]',
+      'RGB TensorBeat [3,H,W]，f32，取值 [0,1]'],
+  'port.yolo-detection.detections': ['',
+      'FlexData '
+      + '{frame_width,frame_height,detections[{class_id,class_name,score,x1,y1,x2,y2}]}',
+      'FlexData '
+      + '{frame_width,frame_height,detections[{class_id,class_name,score,x1,y1,x2,y2}]}'],
+
+  // ---- Compare Images (visual) ----
+  'stage.compare-image.name': ['', '图像对比', '影像對比'],
+  'stage.compare-image.doc': ['',
+      '汇聚节点：把两张图片配对，在它自己的 web 界面视图中比较——只看 A、只'
+      + '看 B、并排（左右或上下、中间带分隔线），或者可拖动的垂直/水平擦除'
+      + '对比。缩放和平移在两张图之间保持同步。分辨率不一致时会统一到 max('
+      + 'Wa,Wb) x max(Ha,Hb)，按填充策略处理（缩放适配、居中、pad_color 边'
+      + '框）。缺失的输入显示为黑色。无输出端口。',
+      '匯聚節點：把兩張圖片配對，在它自己的 web 介面檢視中比較——只看 A、只'
+      + '看 B、並排（左右或上下、中間帶分隔線），或者可拖曳的垂直/水平擦除'
+      + '對比。縮放和平移在兩張圖之間保持同步。解析度不一致時會統一到 max('
+      + 'Wa,Wb) x max(Ha,Hb)，按填充策略處理（縮放調整、置中、pad_color 邊'
+      + '框）。缺少的輸入顯示為黑色。無輸出埠。'],
+  'cfg.compare-image.input_normalized': ['',
+      'F32 输入是 [0,1] 而非 [0,255]',
+      'F32 輸入是 [0,1] 而非 [0,255]'],
+  'cfg.compare-image.title': ['',
+      '在 web 界面对比选择器中显示的可选标签；留空 = 使用阶段 id',
+      '在 web 介面對比選擇器中顯示的可選標籤；留空 = 使用階段 id'],
+  'cfg.compare-image.pad_color': ['',
+      '#RRGGBB，用于填充较小那张图在统一尺寸后留下的边框',
+      '#RRGGBB，用於填充較小那張圖在統一尺寸後留下的邊框'],
+  'port.compare-image.a': ['',
+      '图像 A：平面 RGB TensorBeat [3,H,W]（F32 或 U8）。可选——未接线或没有'
+      + '数据时显示为黑色。',
+      '影像 A：平面 RGB TensorBeat [3,H,W]（F32 或 U8）。可選——未接線或沒有'
+      + '資料時顯示為黑色。'],
+  'port.compare-image.b': ['',
+      '图像 B：平面 RGB TensorBeat [3,H,W]（F32 或 U8）。可选——未接线或没有'
+      + '数据时显示为黑色。',
+      '影像 B：平面 RGB TensorBeat [3,H,W]（F32 或 U8）。可選——未接線或沒有'
+      + '資料時顯示為黑色。'],
+
+  // ---- Create Mask (visual) ----
+  'stage.create-mask.name': ['', '创建遮罩', '建立遮罩'],
+  'stage.create-mask.doc': ['',
+      '制作遮罩——既可以在它自己的 web 界面编辑器里用圆形画笔手绘（半径可调'
+      + '，alpha 模式下还可调硬度），也可以直接从输入透传。支持两态、软 '
+      + 'alpha 和多类别三种模式。每次提交发出一个节拍：要么是遮罩 [1,H,W]，'
+      + '要么是把遮罩绘制其上的参考图像 [3,H,W]。把 `interactive` 设为 '
+      + 'false 则无界面运行，收到遮罩即叠加输出。2 个可选输入端口，1 个输出'
+      + '端口。',
+      '製作遮罩——既可以在它自己的 web 介面編輯器裡用圓形筆刷手繪（半徑可調'
+      + '，alpha 模式下還可調硬度），也可以直接從輸入透傳。支援兩態、軟 '
+      + 'alpha 和多類別三種模式。每次提交發出一個節拍：要麼是遮罩 [1,H,W]，'
+      + '要麼是把遮罩繪製其上的參考影像 [3,H,W]。把 `interactive` 設為 '
+      + 'false 則無介面執行，收到遮罩即疊加輸出。2 個可選輸入埠，1 個輸出埠'
+      + '。'],
+  'cfg.create-mask.mask_mode': ['',
+      '"binary"（两态 0/255）、"alpha"（0..255 的软覆盖度，画笔硬度决定过渡'
+      + '形状），或 "class"（多类别索引图）',
+      '"binary"（兩態 0/255）、"alpha"（0..255 的軟覆蓋度，筆刷硬度決定過渡'
+      + '形狀），或 "class"（多類別索引圖）'],
+  'cfg.create-mask.classes': ['',
+      '类别数量，含背景（索引 0）；仅 "class" 模式使用',
+      '類別數量，含背景（索引 0）；僅 "class" 模式使用'],
+  'cfg.create-mask.class_colors': ['',
+      '以逗号分隔的 #RRGGBB，每个类别一个。仅用于呈现——它决定编辑器和叠加显'
+      + '示的样子，绝不影响离开本阶段的索引图。留空 = 使用内置调色板',
+      '以逗號分隔的 #RRGGBB，每個類別一個。僅用於呈現——它決定編輯器和疊加顯'
+      + '示的樣子，絕不影響離開本階段的索引圖。留空 = 使用內建調色盤'],
+  'cfg.create-mask.output': ['',
+      '"mask" 发出遮罩 [1,H,W]；"overlay" 发出把遮罩绘制其上的参考图像 [3,H'
+      + ',W]',
+      '"mask" 發出遮罩 [1,H,W]；"overlay" 發出把遮罩繪製其上的參考影像 [3,H'
+      + ',W]'],
+  'cfg.create-mask.overlay_color': ['',
+      'binary / alpha 模式下绘制遮罩所用的 #RRGGBB；class 模式使用 '
+      + 'class_colors',
+      'binary / alpha 模式下繪製遮罩所用的 #RRGGBB；class 模式使用 '
+      + 'class_colors'],
+  'cfg.create-mask.overlay_opacity': ['',
+      '遮罩绘制到参考图像上的强度，0..1',
+      '遮罩繪製到參考影像上的強度，0..1'],
+  'cfg.create-mask.output_dtype': ['',
+      '"u8"（0..255，或一个类别索引）或 "f32"（覆盖度，取值 [0,1]；类别索引'
+      + '仍是索引）',
+      '"u8"（0..255，或一個類別索引）或 "f32"（覆蓋度，取值 [0,1]；類別索引'
+      + '仍是索引）'],
+  'cfg.create-mask.width': ['',
+      '遮罩画布宽度；0 表示由 `height` 和参考图像的宽高比推断，或直接与参考'
+      + '图像一致',
+      '遮罩畫布寬度；0 表示由 `height` 和參考影像的長寬比推斷，或直接與參考'
+      + '影像一致'],
+  'cfg.create-mask.height': ['',
+      '遮罩画布高度；0 的推断方式与 `width` 相同',
+      '遮罩畫布高度；0 的推斷方式與 `width` 相同'],
+  'cfg.create-mask.interactive': ['',
+      '运行遮罩编辑器，每次提交发出一个节拍。设为 false 则没有图形界面：遮'
+      + '罩来自 in-mask，收到即发出',
+      '執行遮罩編輯器，每次提交發出一個節拍。設為 false 則沒有圖形介面：遮'
+      + '罩來自 in-mask，收到即發出'],
+  'cfg.create-mask.input_normalized': ['',
+      'F32 输入是 [0,1] 而非 [0,255]',
+      'F32 輸入是 [0,1] 而非 [0,255]'],
+  'cfg.create-mask.title': ['',
+      '在 web 界面遮罩编辑器选择器中显示的可选标签；留空 = 使用阶段 id',
+      '在 web 介面遮罩編輯器選擇器中顯示的可選標籤；留空 = 使用階段 id'],
+  'port.create-mask.ref-image': ['',
+      '参考图像：平面 RGB TensorBeat [3,H,W]（F32 或 U8）。可选——它是编辑器'
+      + '的背景，也是叠加输出的底图；未接线时编辑器在黑色底上绘制。',
+      '參考影像：平面 RGB TensorBeat [3,H,W]（F32 或 U8）。可選——它是編輯器'
+      + '的背景，也是疊加輸出的底圖；未接線時編輯器在黑色底上繪製。'],
+  'port.create-mask.in-mask': ['',
+      '作为起点的遮罩：平面 TensorBeat [1,H,W] 或 [H,W]（F32 或 U8）。可选—'
+      + '—它为编辑器提供初值；`interactive` 为 false 时它就是全部输入。',
+      '作為起點的遮罩：平面 TensorBeat [1,H,W] 或 [H,W]（F32 或 U8）。可選—'
+      + '—它為編輯器提供初值；`interactive` 為 false 時它就是全部輸入。'],
+  'port.create-mask.out': ['',
+      '按画布分辨率给出的遮罩 [1,H,W]，或按参考图像分辨率给出的、已绘制遮罩'
+      + '的参考图像 [3,H,W]——取决于 `output` 的选择。',
+      '按畫布解析度給出的遮罩 [1,H,W]，或按參考影像解析度給出的、已繪製遮罩'
+      + '的參考影像 [3,H,W]——取決於 `output` 的選擇。'],
+
+  // ---- Resample (visual) ----
+  'stage.image-resample.name': ['', '图像重采样', '影像重新取樣'],
+  'stage.image-levels.name': ['', '图像色阶', '影像色階'],
+  'stage.image-levels.doc': ['',
+      '平面 RGB 帧的影调调整：先 gamma，再围绕某个中心点做对比度，最后加'
+      + '亮度。几何不变——它是 image-resample 的影调版兄弟。无论帧的 dtype '
+      + '为何，每个旋钮都以归一化的 [0,1] 为单位，且默认值就是恒等变换。',
+      '平面 RGB 影格的影調調整：先 gamma，再圍繞某個中心點做對比度，最後加'
+      + '亮度。幾何不變——它是 image-resample 的影調版兄弟。無論影格的 dtype '
+      + '為何，每個旋鈕都以正規化的 [0,1] 為單位，且預設值就是恆等變換。'],
+  'cfg.image-levels.brightness': ['',
+      '加性偏移，以**归一化**单位表示，最后应用：0.02 大约相当于 0..255 '
+      + '刻度上的 +5。之所以归一化，是为了让同一份配置在 u8 与 f32 帧上读'
+      + '起来一致',
+      '加性偏移，以**正規化**單位表示，最後套用：0.02 大約相當於 0..255 '
+      + '刻度上的 +5。之所以正規化，是為了讓同一份設定在 u8 與 f32 影格上讀'
+      + '起來一致'],
+  'cfg.image-levels.contrast': ['',
+      '围绕 pivot 的增益，在 gamma 之后应用：1.0 不改变画面，>1 拉开动态'
+      + '范围，<1 压缩它。围绕中心点而不是从黑场缩放，正是对比度变化不会'
+      + '同时把整体亮度也挪走的原因',
+      '圍繞 pivot 的增益，在 gamma 之後套用：1.0 不改變畫面，>1 拉開動態'
+      + '範圍，<1 壓縮它。圍繞中心點而不是從黑場縮放，正是對比度變化不會'
+      + '同時把整體亮度也挪走的原因'],
+  'cfg.image-levels.gamma': ['',
+      '**最先**应用于归一化样本的指数：>1 压暗中间调，<1 提亮中间调，两者'
+      + '都让黑场与白场保持原位。必须 > 0',
+      '**最先**套用於正規化樣本的指數：>1 壓暗中間調，<1 提亮中間調，兩者'
+      + '都讓黑場與白場保持原位。必須 > 0'],
+  'cfg.image-levels.pivot': ['',
+      'contrast 所围绕的归一化色阶；0.5 是中灰。把它设成你想**保持不动**的'
+      + '那个色阶——一段暗画面若围绕 0.5 调色，暗部会先于高光被推走',
+      'contrast 所圍繞的正規化色階；0.5 是中灰。把它設成你想**保持不動**的'
+      + '那個色階——一段暗畫面若圍繞 0.5 調色，暗部會先於高光被推走'],
+  'port.image-levels.in.image': ['',
+      '平面 RGB TensorBeat [3,H,W]（u8 或 f32）',
+      '平面 RGB TensorBeat [3,H,W]（u8 或 f32）'],
+  'port.image-levels.out.image': ['',
+      '形状与 dtype 均不变，仅影调经过调整',
+      '形狀與 dtype 均不變，僅影調經過調整'],
+
+  'stage.content-aware-continuation.name': ['', '内容感知续接', '內容感知續接'],
+  'stage.content-aware-continuation.doc': ['',
+      '让一段续接片段与它所续接的片段相匹配：在接缝处测量影调与几何上的'
+      + '跳变——续接片段的开头几帧对比参考片段的最后几帧——并把它从每一帧'
+      + '中去掉。当两者看起来不像同一个静止镜头时拒绝校正，并说明原因。',
+      '讓一段續接片段與它所續接的片段相符：在接縫處測量影調與幾何上的'
+      + '跳變——續接片段的開頭幾格對比參考片段的最後幾格——並把它從每一格'
+      + '中去掉。當兩者看起來不像同一個靜止鏡頭時拒絕校正，並說明原因。'],
+  'cfg.content-aware-continuation.tone': ['',
+      '把续接片段的影调匹配到参考片段：每个通道一条单调曲线，拟合自接缝'
+      + '两侧对齐后的像素。用曲线而不是增益加偏移，因为续接片段的跳变在'
+      + '暗部最大',
+      '把續接片段的影調匹配到參考片段：每個通道一條單調曲線，擬合自接縫'
+      + '兩側對齊後的像素。用曲線而不是增益加偏移，因為續接片段的跳變在'
+      + '暗部最大'],
+  'cfg.content-aware-continuation.geometry': ['',
+      '把续接片段的几何匹配到参考片段：每个轴一个围绕画面中心的缩放加一'
+      + '个平移，拟合自块匹配得到的位移场。用于去掉续接片段回来时高了、矮'
+      + '了或偏移了零点几个百分点的情况',
+      '把續接片段的幾何匹配到參考片段：每個軸一個圍繞畫面中心的縮放加一'
+      + '個平移，擬合自區塊比對得到的位移場。用於去掉續接片段回來時高了、'
+      + '矮了或偏移了零點幾個百分點的情況'],
+  'cfg.content-aware-continuation.window': ['',
+      '接缝每一侧参与平均的帧数：参考片段的最后 `window` 帧与续接片段的'
+      + '最初 `window` 帧。接缝落在静止镜头上时——续接片段的接缝本就该落在'
+      + '那里——帧数越多越能平均掉噪声。该 stage 会先攒下这么多帧，再输出'
+      + '第一帧',
+      '接縫每一側參與平均的影格數：參考片段的最後 `window` 格與續接片段'
+      + '的最初 `window` 格。接縫落在靜止鏡頭上時——續接片段的接縫本就該落'
+      + '在那裡——影格越多越能平均掉雜訊。該 stage 會先攢下這麼多格，再輸'
+      + '出第一格'],
+  'cfg.content-aware-continuation.max_scale': ['',
+      '仍被视为接缝漂移的最大缩放误差，以比例表示（0.05 = 5%）。超过它，'
+      + '几何校正就会被拒绝并报告，而不是被应用——偏差这么大的续接片段是'
+      + '另一个镜头，而不是漂移了的同一个镜头',
+      '仍被視為接縫漂移的最大縮放誤差，以比例表示（0.05 = 5%）。超過它，'
+      + '幾何校正就會被拒絕並回報，而不是被套用——偏差這麼大的續接片段是'
+      + '另一個鏡頭，而不是漂移了的同一個鏡頭'],
+  'cfg.content-aware-continuation.max_tone': ['',
+      '影调曲线在任一色阶上所能做的最大偏移，以 0..255 刻度上的码值计。'
+      + '超过它，影调匹配就会被拒绝并报告，理由相同',
+      '影調曲線在任一色階上所能做的最大偏移，以 0..255 刻度上的碼值計。'
+      + '超過它，影調匹配就會被拒絕並回報，理由相同'],
+  'cfg.content-aware-continuation.fade_frames': ['',
+      '0（默认）把校正应用到续接片段的**每一**帧——当跳变贯穿整段片段时'
+      + '这是对的，而这正是该 stage 所针对的情况。N > 0 则在最初 N 帧内把'
+      + '校正逐渐淡出，在接缝之后把画面交还给模型自己的观感',
+      '0（預設）把校正套用到續接片段的**每一**格——當跳變貫穿整段片段時'
+      + '這是對的，而這正是該 stage 所針對的情況。N > 0 則在最初 N 格內把'
+      + '校正逐漸淡出，在接縫之後把畫面交還給模型自己的觀感'],
+  'port.content-aware-continuation.in.frames': ['',
+      '续接片段的帧，平面 RGB [3,H,W]，u8 或 f32，按顺序——即 vae-decode '
+      + '的输出',
+      '續接片段的影格，平面 RGB [3,H,W]，u8 或 f32，依序——即 vae-decode '
+      + '的輸出'],
+  'port.content-aware-continuation.reference': ['',
+      '被续接的片段：一段堆叠的 [T,3,H,W] 片段（即 temporal-stack 为引导'
+      + '片段输出的形式）或一帧 [3,H,W]。只读取它的**最后** `window` 帧',
+      '被續接的片段：一段堆疊的 [T,3,H,W] 片段（即 temporal-stack 為引導'
+      + '片段輸出的形式）或一格 [3,H,W]。只讀取它的**最後** `window` 格'],
+  'port.content-aware-continuation.out.frames': ['',
+      '同样的帧，形状与 dtype 不变，接缝处的影调与几何已被去掉',
+      '同樣的影格，形狀與 dtype 不變，接縫處的影調與幾何已被去掉'],
+
+  'stage.alpha-mix.name': ['', '透明度混合', '透明度混合'],
+  'stage.alpha-mix.doc': ['',
+      '把 front 叠加在 back 之上（Porter-Duff over），并可选地用一张遮罩'
+      + '作用于前景的 alpha。两路输入各自可以是 RGB 或 RGBA；结果可以保留'
+      + ' alpha 输出为 RGBA，也可以压平到某个背景色输出为 RGB。alpha 端口'
+      + '直接接收 create-mask 的输出。',
+      '把 front 疊加在 back 之上（Porter-Duff over），並可選地用一張遮罩'
+      + '作用於前景的 alpha。兩路輸入各自可以是 RGB 或 RGBA；結果可以保留'
+      + ' alpha 輸出為 RGBA，也可以壓平到某個背景色輸出為 RGB。alpha 連接'
+      + '埠可直接接收 create-mask 的輸出。'],
+  'cfg.alpha-mix.output': ['',
+      'rgb | rgba。rgba 保留合成结果自身的 alpha；rgb 则在之后把它压平到 '
+      + 'background 上。不设置时为 rgb——合成通常是**收尾**一张图的那一步，'
+      + '而 [3,H,W] 正是下游各级读取的形状',
+      'rgb | rgba。rgba 保留合成結果自身的 alpha；rgb 則在之後把它壓平到 '
+      + 'background 上。不設定時為 rgb——合成通常是**收尾**一張圖的那一步，'
+      + '而 [3,H,W] 正是下游各級讀取的形狀'],
+  'cfg.alpha-mix.background': ['',
+      '#RRGGBB，在合成结果仍然透明之处显示。仅当 output 为 rgb 时才读取——'
+      + 'rgba 是保留透明而不是填充它。不设置时为 #FFFFFF，与 save-image 及'
+      + '扩散条件器所压平到的颜色一致，同一张图便不会因为由哪一级压平而'
+      + '变色',
+      '#RRGGBB，在合成結果仍然透明之處顯示。僅當 output 為 rgb 時才讀取——'
+      + 'rgba 是保留透明而不是填充它。不設定時為 #FFFFFF，與 save-image 及'
+      + '擴散條件器所壓平到的顏色一致，同一張圖便不會因為由哪一級壓平而'
+      + '變色'],
+  'cfg.alpha-mix.input_normalized': ['',
+      'f32 输入是 [0,1] 还是 [0,255]。u8 没有歧义，会忽略此项。**它不作用'
+      + '于遮罩**：f32 遮罩始终是 [0,1] 的覆盖度',
+      'f32 輸入是 [0,1] 還是 [0,255]。u8 沒有歧義，會忽略此項。**它不作用'
+      + '於遮罩**：f32 遮罩始終是 [0,1] 的覆蓋度'],
+  'port.alpha-mix.in.front': ['',
+      '叠加在**上层**的图像：平面 RGB [3,H,W] 或 RGBA [4,H,W] TensorBeat'
+      + '（f32 或 u8）。三通道即表示不透明',
+      '疊加在**上層**的影像：平面 RGB [3,H,W] 或 RGBA [4,H,W] TensorBeat'
+      + '（f32 或 u8）。三通道即表示不透明'],
+  'port.alpha-mix.in.back': ['',
+      '叠加在**下层**的图像：格式相同，尺寸须与 front 一致',
+      '疊加在**下層**的影像：格式相同，尺寸須與 front 一致'],
+  'port.alpha-mix.in.alpha': ['',
+      '可选遮罩，即 create-mask 自身的输出格式——[1,H,W] 或 [H,W]，u8 '
+      + '0..255 或 f32 [0,1] 覆盖度，尺寸与两图一致。它与 front 的 alpha '
+      + '**相乘**：对 RGB 前景它就等于 alpha，对 RGBA 前景则是在不丢弃其'
+      + '原有透明度的前提下限制其显示范围',
+      '可選遮罩，即 create-mask 自身的輸出格式——[1,H,W] 或 [H,W]，u8 '
+      + '0..255 或 f32 [0,1] 覆蓋度，尺寸與兩圖一致。它與 front 的 alpha '
+      + '**相乘**：對 RGB 前景它就等於 alpha，對 RGBA 前景則是在不丟棄其'
+      + '原有透明度的前提下限制其顯示範圍'],
+  'port.alpha-mix.out.image': ['',
+      '合成结果：依 output 为平面 [3,H,W] 或 [4,H,W]，dtype 跟随 front',
+      '合成結果：依 output 為平面 [3,H,W] 或 [4,H,W]，dtype 跟隨 front'],
+  'stage.image-resample.doc': ['',
+      '把 rgb-frames 重采样到固定的宽 x 高，宽高比的处理方式（填充 / 裁剪 /'
+      + ' 拉伸 / 手动）与填充色均可配置。默认使用 Lanczos-3 重采样；\'bilinear\''
+      + ' 更省，\'bicubic\' 与 PIL 一致。f16 与 f32 帧（RGB 或 RGBA）以任一滤'
+      + '波器在 GPU 上重采样；u8 RGB 帧用 bilinear 或 lanczos 时走 GPU；其余'
+      + '走 CPU。输入端口与输出端口同属一个时钟域（1:1）。',
+      '把 rgb-frames 重新取樣到固定的寬 x 高，長寬比的處理方式（填充 / 裁剪'
+      + ' / 拉伸 / 手動）與填充色均可設定。預設使用 Lanczos-3 重新取樣；'
+      + '\'bilinear\' 更省，\'bicubic\' 與 PIL 一致。f16 與 f32 影格（RGB 或 '
+      + 'RGBA）以任一濾波器在 GPU 上重新取樣；u8 RGB 影格用 bilinear 或 '
+      + 'lanczos 時走 GPU；其餘走 CPU。輸入埠與輸出埠同屬一個時脈域（1:1）。'],
+  'cfg.image-resample.width': ['',
+      '输出宽度（像素）；留空（或设为小于等于 0）则由 height 推断，保持源的'
+      + '宽高比',
+      '輸出寬度（像素）；留空（或設為小於等於 0）則由 height 推斷，保持來源'
+      + '的長寬比'],
+  'cfg.image-resample.height': ['',
+      '输出高度（像素）；留空（或设为小于等于 0）则由 width 推断，保持源的'
+      + '宽高比',
+      '輸出高度（像素）；留空（或設為小於等於 0）則由 width 推斷，保持來源'
+      + '的長寬比'],
+  'cfg.image-resample.fit': ['',
+      '宽高比处理方式：pad（对齐长边并用 pad_color 填充）| crop（对齐短边并'
+      + '居中裁剪）| stretch（改变宽高比）| manual（从 src_x,src_y 起按 '
+      + 'scale 采样，其余填充）',
+      '長寬比處理方式：pad（對齊長邊並用 pad_color 填充）| crop（對齊短邊並'
+      + '置中裁剪）| stretch（改變長寬比）| manual（從 src_x,src_y 起按 '
+      + 'scale 取樣，其餘填充）'],
+  'cfg.image-resample.pad_color': ['',
+      'pad / manual 所用的 #RRGGBB 纯色填充（f16 / f32 帧按 0..1 归一化解读）',
+      'pad / manual 所用的 #RRGGBB 純色填充（f16 / f32 影格按 0..1 正規化解讀）'],
+  'cfg.image-resample.src_x': ['',
+      'manual：源起点 x',
+      'manual：來源起點 x'],
+  'cfg.image-resample.src_y': ['',
+      'manual：源起点 y',
+      'manual：來源起點 y'],
+  'cfg.image-resample.scale': ['',
+      'manual：重采样比例（每个源像素对应多少输出像素，须大于 0）',
+      'manual：重新取樣比例（每個來源像素對應多少輸出像素，須大於 0）'],
+  'cfg.image-resample.algorithm': ['',
+      '插值算法：\'lanczos\'（默认——Lanczos-3，带抗锯齿，与 PIL 的 LANCZOS 一'
+      + '致）| \'bilinear\'（更省，但缩小时会产生混叠）。经过本阶段的绝大多数'
+      + '流量都是缩小到某个模型的输入画布，而双线性恰恰保留了本应被滤掉的高'
+      + '频——所以好滤波器是默认，快滤波器需要显式选择 | \'bicubic\'（与 PIL '
+      + '的 BICUBIC 一致）。当模型自身的预处理使用它、而像素正是模型据以'
+      + '条件化的内容时，请选 \'bicubic\'：VOSR 修复在任何环节看到输入之前'
+      + '就以这种方式放大输入，换一种滤波器就是另一份输入。f16 与 f32 帧在 '
+      + 'GPU 上运行，u8 帧在 CPU 上运行',
+      '插值演算法：\'lanczos\'（預設——Lanczos-3，帶反鋸齒，與 PIL 的 LANCZOS '
+      + '一致）| \'bilinear\'（更省，但縮小時會產生疊頻）。經過本階段的絕大多'
+      + '數流量都是縮小到某個模型的輸入畫布，而雙線性恰恰保留了本應被濾掉的'
+      + '高頻——所以好濾波器是預設，快濾波器需要明確選擇 | \'bicubic\'（與 '
+      + 'PIL 的 BICUBIC 一致）。當模型自身的前處理使用它、而像素正是模型據'
+      + '以條件化的內容時，請選 \'bicubic\'：VOSR 修復在任何環節看到輸入之'
+      + '前就以這種方式放大輸入，換一種濾波器就是另一份輸入。f16 與 f32 影'
+      + '格在 GPU 上執行，u8 影格在 CPU 上執行'],
+  'cfg.image-resample.gpu': ['',
+      '在有内核的地方用 GPU 重采样（默认）：f16 与 f32 帧的所有滤波器、适配'
+      + '方式与通道数；u8 RGB 的 bilinear 与 lanczos。设为 false 则固定走 '
+      + 'CPU 路径——它同样实现了以上全部——用于比较两者',
+      '在有核心的地方用 GPU 重新取樣（預設）：f16 與 f32 影格的所有濾波器、'
+      + '適配方式與通道數；u8 RGB 的 bilinear 與 lanczos。設為 false 則固定'
+      + '走 CPU 路徑——它同樣實作了以上全部——用於比較兩者'],
+  'port.image-resample.in.frames': ['',
+      '平面 RGB [3,H,W] 或 RGBA [4,H,W] TensorBeat（u8、f16 或 f32）',
+      '平面 RGB [3,H,W] 或 RGBA [4,H,W] TensorBeat（u8、f16 或 f32）'],
+  'port.image-resample.out.frames': ['',
+      '重采样后的平面 TensorBeat [3|4,height,width]（dtype 不变）',
+      '重新取樣後的平面 TensorBeat [3|4,height,width]（dtype 不變）'],
+
+  // ---- Image Levels (visual) ----
+
+  // ---- Load Image (visual) ----
+  'stage.load-image.name': ['', '加载图片', '載入影像'],
+  'stage.load-image.doc': ['',
+      '源：把文件/URL 中的静态图片解码为平面 RGB TensorBeat——用 FFmpeg（U8）'
+      + '，或对 16 位、OpenEXR 与 HEIC 用 ImageIO（U8 或 F16，带色彩标记）。'
+      + '若接了 trigger 输入端口，则每个节拍发出一张图片；未接时一次发完全'
+      + '部然后结束。',
+      '來源：把檔案/URL 中的靜態影像解碼為平面 RGB TensorBeat——用 FFmpeg（U8）'
+      + '，或對 16 位元、OpenEXR 與 HEIC 用 ImageIO（U8 或 F16，帶色彩標記）。'
+      + '若接了 trigger 輸入埠，則每個節拍發出一張影像；未接時一次發完全'
+      + '部然後結束。'],
+  'cfg.load-image.dtype': ['',
+      'u8 | f16 | auto。u8（默认）是所有消费端都读的格式。f16 保留 8 位以上'
+      + '的精度——16 位 PNG/TIFF、10/12 位 HEIC、OpenEXR 的浮点（含大于 1 的值）'
+      + '：样本 0..1 对应文件自身传递函数下的码值范围，并带上文件的色彩标记'
+      + '（sideband color_primaries、color_transfer……）。auto：文件深于 8 位'
+      + '或为浮点时用 f16（相机 RAW 即属此类），否则 u8',
+      'u8 | f16 | auto。u8（預設）是所有消費端都讀的格式。f16 保留 8 位元以上'
+      + '的精度——16 位元 PNG/TIFF、10/12 位元 HEIC、OpenEXR 的浮點（含大於 1 '
+      + '的值）：樣本 0..1 對應檔案自身轉換函數下的碼值範圍，並帶上檔案的色彩'
+      + '標記（sideband color_primaries、color_transfer……）。auto：檔案深於 8 '
+      + '位元或為浮點時用 f16（相機 RAW 即屬此類），否則 u8'],
+  'cfg.load-image.decoder': ['',
+      'auto | ffmpeg | imageio。imageio（Apple）按原样读取 16 位、浮点'
+      + '（OpenEXR）与 HEIC 图片，并保留文件声明的色彩空间；FFmpeg 路径为 8 位'
+      + '且不带标记。auto：对这些文件、相机 RAW 以及 f16 读取用 ImageIO，否则'
+      + '用 FFmpeg',
+      'auto | ffmpeg | imageio。imageio（Apple）按原樣讀取 16 位元、浮點'
+      + '（OpenEXR）與 HEIC 影像，並保留檔案宣告的色彩空間；FFmpeg 路徑為 8 '
+      + '位元且不帶標記。auto：對這些檔案、相機 RAW 以及 f16 讀取用 ImageIO，'
+      + '否則用 FFmpeg'],
+  'cfg.load-image.raw': ['',
+      'rendered | linear：相机 RAW（CR2、CR3、NEF、ARW、RAF、DNG……）如何'
+      + '“冲洗”——它没有可读取的色彩空间，由冲洗决定。rendered（默认）：相机'
+      + '自己的观感，即查看器显示的样子——其色调曲线、降噪、高光恢复——输出为 '
+      + 'sRGB 0..1，正是模型训练所用的。linear：场景线性，无色调曲线，传感器'
+      + '的高光余量保留在 1 以上，采用线性 BT.2020，相机色彩不被裁切；请以 '
+      + 'f16 读取。两种方式输出的画面都是正立的（已应用 EXIF 方向，metadata '
+      + '输出端口的 EXIF 记为 1）。对其他文件无效',
+      'rendered | linear：相機 RAW（CR2、CR3、NEF、ARW、RAF、DNG……）如何'
+      + '「沖洗」——它沒有可讀取的色彩空間，由沖洗決定。rendered（預設）：相機'
+      + '自己的觀感，即檢視器顯示的樣子——其色調曲線、降噪、亮部復原——輸出為 '
+      + 'sRGB 0..1，正是模型訓練所用的。linear：場景線性，無色調曲線，感光元件'
+      + '的亮部餘量保留在 1 以上，採用線性 BT.2020，相機色彩不被裁切；請以 '
+      + 'f16 讀取。兩種方式輸出的畫面都是正立的（已套用 EXIF 方向，metadata '
+      + '輸出埠的 EXIF 記為 1）。對其他檔案無效'],
+  'cfg.load-image.raw_exposure': ['',
+      '相机 RAW 的曝光，单位 EV，叠加在相机基准曝光之上（+1 使光量加倍）。'
+      + '对其他文件无效',
+      '相機 RAW 的曝光，單位 EV，疊加在相機基準曝光之上（+1 使光量加倍）。'
+      + '對其他檔案無效'],
+  'cfg.load-image.url': ['',
+      '图片路径/URL 字符串，或字符串数组',
+      '影像路徑/URL 字串，或字串陣列'],
+  'port.load-image.trigger': ['',
+      '可选的节奏节拍（例如 chrono）；每来一个就解码并发出下一张图片',
+      '可選的節奏節拍（例如 chrono）；每來一個就解碼並發出下一張影像'],
+  'port.load-image.image': ['',
+      '解码后的图片，平面 TensorBeat，U8 或（按 `dtype`）F16——RGB [3,H,W]，'
+      + '`alpha` 为 keep 时为 RGBA [4,H,W]',
+      '解碼後的影像，平面 TensorBeat，U8 或（按 `dtype`）F16——RGB [3,H,W]，'
+      + '`alpha` 為 keep 時為 RGBA [4,H,W]'],
+  'port.load-image.metadata': ['',
+      '随图片一同携带的 FlexData {url, width, height, exif{...}, '
+      + 'exif_tiff_b64}；每张图片一个节拍，与 0 号输出端口配对。可接到 '
+      + 'save-image 的 metadata 输入端口',
+      '隨影像一同攜帶的 FlexData {url, width, height, exif{...}, '
+      + 'exif_tiff_b64}；每張影像一個節拍，與 0 號輸出埠配對。可接到 '
+      + 'save-image 的 metadata 輸入埠'],
+  'port.load-image.images': ['',
+      '把 `url` 的每张图片作为一个列表节拍发出，按 url 顺序，各自保持原'
+      + '尺寸——多参考编辑的参考集合，接到 vae-encode 的 `images` 和条件编码'
+      + '器的 `ref_images`。每次运行发出一次，先于任何节奏控制；只接这一个'
+      + '端口时，发出后即结束。无法解码的图片会被略去并给出提示',
+      '把 `url` 的每張影像作為一個列表節拍發出，按 url 順序，各自保持原'
+      + '尺寸——多參考編輯的參考集合，接到 vae-encode 的 `images` 和條件編碼'
+      + '器的 `ref_images`。每次執行發出一次，先於任何節奏控制；只接這一個'
+      + '埠時，發出後即結束。無法解碼的影像會被略去並給出提示'],
+
+  // ---- Load / Save Video through AVFoundation (visual) ----
+  'stage.avf-load-video.name': ['', '加载视频（AVFoundation）',
+      '載入影片（AVFoundation）'],
+  'stage.avf-load-video.doc': ['',
+      '源：通过 AVFoundation / VideoToolbox（Apple）读取影片的各帧——带 alpha '
+      + '的 ProRes 4444、带 PQ/HLG 及其 HDR10 元数据的 HEVC Main10——输出为 F16'
+      + '（或 U8）平面图片，并带上文件声明的色彩标记。仅视频。',
+      '來源：透過 AVFoundation / VideoToolbox（Apple）讀取影片的各格——帶 '
+      + 'alpha 的 ProRes 4444、帶 PQ/HLG 及其 HDR10 中繼資料的 HEVC Main10——'
+      + '輸出為 F16（或 U8）平面影像，並帶上檔案宣告的色彩標記。僅影片。'],
+  'cfg.avf-load-video.url': ['',
+      '影片文件（.mov、.mp4、.m4v）：ProRes、HEVC（Main10 与 HDR）、H.264——'
+      + 'AVFoundation 能解码的都行',
+      '影片檔（.mov、.mp4、.m4v）：ProRes、HEVC（Main10 與 HDR）、H.264——'
+      + 'AVFoundation 能解碼的都行'],
+  'cfg.avf-load-video.dtype': ['',
+      'f16 | u8 | f32。f16（默认）保留 10 与 12 位，以及 HDR 传递函数的码值'
+      + '（0..1）；u8 是 8 位消费端读取的格式；f32（0..1）是 video-to-rgb '
+      + '的默认格式，供围绕它构建的消费端使用',
+      'f16 | u8 | f32。f16（預設）保留 10 與 12 位元，以及 HDR 轉換函數的'
+      + '碼值（0..1）；u8 是 8 位元消費端讀取的格式；f32（0..1）是 '
+      + 'video-to-rgb 的預設格式，供圍繞它建構的消費端使用'],
+  'cfg.avf-load-video.alpha': ['',
+      'keep | drop。keep（默认）在轨道带 alpha 时（ProRes 4444）发出 [4,H,W]'
+      + '，为直通 alpha，除非文件声明为预乘（sideband alpha_mode）',
+      'keep | drop。keep（預設）在軌道帶 alpha 時（ProRes 4444）發出 '
+      + '[4,H,W]，為直通 alpha，除非檔案宣告為預乘（sideband alpha_mode）'],
+  'cfg.avf-load-video.start_s': ['', '从文件的第几秒开始',
+      '從檔案的第幾秒開始'],
+  'cfg.avf-load-video.duration_s': ['', '读取的秒数；0（默认）= 到结尾',
+      '讀取的秒數；0（預設）= 到結尾'],
+  'cfg.avf-load-video.max_frames': ['',
+      '读到这么多帧就停止；0（默认）= 不限',
+      '讀到這麼多格就停止；0（預設）= 不限'],
+  'cfg.avf-load-video.oport_capacity': ['',
+      '最多领先消费者读取的帧数（反压）；0（默认）= 4。一帧 4K F16 为 50 MB：'
+      + '解码比编码快，不加限制时会占满内存',
+      '最多領先消費者讀取的格數（反壓）；0（預設）= 4。一格 4K F16 為 50 MB：'
+      + '解碼比編碼快，不加限制時會佔滿記憶體'],
+  'port.avf-load-video.frames': ['',
+      '每帧一个平面 TensorBeat [3|4,H,W]，F16、U8 或 F32，其 sideband 携带文件的'
+      + '色彩（color_primaries、color_transfer、color_matrix、alpha_mode、'
+      + 'source_bits、mastering_display、content_light）与时间信息（fps、'
+      + 'fps_num、fps_den、frame、frames、pts_us）',
+      '每格一個平面 TensorBeat [3|4,H,W]，F16、U8 或 F32，其 sideband 攜帶檔案的'
+      + '色彩（color_primaries、color_transfer、color_matrix、alpha_mode、'
+      + 'source_bits、mastering_display、content_light）與時間資訊（fps、'
+      + 'fps_num、fps_den、frame、frames、pts_us）'],
+  'stage.avf-save-video.name': ['', '保存视频（AVFoundation）',
+      '儲存影片（AVFoundation）'],
+  'stage.avf-save-video.doc': ['',
+      '汇聚节点：通过 AVFoundation / VideoToolbox（Apple）把图片写成影片——'
+      + '带 alpha 的 ProRes 4444、ProRes 422、带 PQ/HLG 与 HDR10 元数据的 HEVC '
+      + 'Main10、H.264——文件按各帧的色彩标记声明。流结束时完成。仅视频。',
+      '匯聚節點：透過 AVFoundation / VideoToolbox（Apple）把影像寫成影片——'
+      + '帶 alpha 的 ProRes 4444、ProRes 422、帶 PQ/HLG 與 HDR10 中繼資料的 '
+      + 'HEVC Main10、H.264——檔案按各格的色彩標記宣告。串流結束時完成。僅影片。'],
+  'cfg.avf-save-video.path': ['',
+      '要写入的影片：.mov（任意编解码器）或 .mp4 / .m4v（HEVC、H.264）。'
+      + '已存在的文件会被替换',
+      '要寫入的影片：.mov（任意編解碼器）或 .mp4 / .m4v（HEVC、H.264）。'
+      + '已存在的檔案會被取代'],
+  'cfg.avf-save-video.codec': ['',
+      'prores4444 | prores4444xq | prores422hq | prores422 | prores422lt | '
+      + 'prores422proxy | hevc（Main10；帧为 PQ 或 HLG 时即 HDR）| hevc8 | '
+      + 'h264。留空：.mov 用 prores4444，.mp4 用 hevc',
+      'prores4444 | prores4444xq | prores422hq | prores422 | prores422lt | '
+      + 'prores422proxy | hevc（Main10；格為 PQ 或 HLG 時即 HDR）| hevc8 | '
+      + 'h264。留空：.mov 用 prores4444，.mp4 用 hevc'],
+  'cfg.avf-save-video.fps': ['',
+      '每秒帧数；0（默认）取帧自身的（sideband fps_num/fps_den 或 fps），'
+      + '否则为 24',
+      '每秒格數；0（預設）取格自身的（sideband fps_num/fps_den 或 fps），'
+      + '否則為 24'],
+  'cfg.avf-save-video.alpha': ['',
+      'keep | drop。keep（默认）把 4 通道图片的 alpha 写入 ProRes 4444；其他'
+      + '编解码器没有 alpha',
+      'keep | drop。keep（預設）把 4 通道影像的 alpha 寫入 ProRes 4444；其他'
+      + '編解碼器沒有 alpha'],
+  'cfg.avf-save-video.quality': ['',
+      'HEVC / H.264 质量 0..1；0（默认）= 编码器自定',
+      'HEVC / H.264 品質 0..1；0（預設）= 編碼器自定'],
+  'cfg.avf-save-video.bitrate': ['',
+      'HEVC / H.264 平均每秒比特数；0（默认）= 自动',
+      'HEVC / H.264 平均每秒位元數；0（預設）= 自動'],
+  'cfg.avf-save-video.color_primaries': ['',
+      '要声明的色彩，覆盖帧的标记（CICP：1 BT.709、9 BT.2020、12 Display P3）'
+      + '；0（默认）= 帧自身的',
+      '要宣告的色彩，覆寫格的標記（CICP：1 BT.709、9 BT.2020、12 Display '
+      + 'P3）；0（預設）= 格自身的'],
+  'cfg.avf-save-video.color_transfer': ['',
+      '要声明的 CICP 传递函数（1 BT.709、16 PQ、18 HLG、8 线性）；0（默认）= '
+      + '帧自身的。它说明样本是什么——不做任何转换',
+      '要宣告的 CICP 轉換函數（1 BT.709、16 PQ、18 HLG、8 線性）；0（預設）'
+      + '= 格自身的。它說明樣本是什麼——不做任何轉換'],
+  'cfg.avf-save-video.color_matrix': ['',
+      'CICP YCbCr 矩阵（1 BT.709、9 BT.2020）；0（默认）= 帧自身的，否则按其'
+      + '原色推断',
+      'CICP YCbCr 矩陣（1 BT.709、9 BT.2020）；0（預設）= 格自身的，否則按其'
+      + '原色推斷'],
+  'cfg.avf-save-video.frames': ['',
+      '预计的帧数，用于进度报告（“save video”：已写入的帧数 / 此数）；0（默认）'
+      + '= 取帧的 sideband frames，否则不计数。不会据此截断或补齐',
+      '預計的格數，用於進度回報（「save video」：已寫入的格數 / 此數）；0（預設）'
+      + '= 取格的 sideband frames，否則不計數。不會據此截斷或補齊'],
+  'port.avf-save-video.frames': ['',
+      '每帧一个平面 TensorBeat [3|4,H,W]，F16、U8 或 F32（0..1，video-to-rgb '
+      + '的默认格式），尺寸一致（avf-load-video / video-to-rgb / vae-decode '
+      + '的格式）',
+      '每格一個平面 TensorBeat [3|4,H,W]，F16、U8 或 F32（0..1，video-to-rgb '
+      + '的預設格式），尺寸一致（avf-load-video / video-to-rgb / vae-decode '
+      + '的格式）'],
+
+  // ---- Load Video (visual) ----
+  'stage.load-video.name': ['', '加载视频', '載入影片'],
+  'stage.load-video.doc': ['',
+      '源：解复用视频文件或网络 URL，在各自独立的每流时钟上发出编码的视频/'
+      + '音频数据包——相当于 rtsp-capture 的文件版。下游接 video-to-rgb / '
+      + 'audio-to-pcm，由它们负责解码。若给了多个文件，会按顺序把它们接成'
+      + '一条流。',
+      '來源：解多工影片檔案或網路 URL，在各自獨立的每串流時脈上發出編碼的視'
+      + '訊/音訊封包——相當於 rtsp-capture 的檔案版。下游接 video-to-rgb / '
+      + 'audio-to-pcm，由它們負責解碼。若給了多個檔案，會按順序把它們接成'
+      + '一條串流。'],
+  'cfg.load-video.input_url': ['',
+      '文件路径或网络 URL（rtsp/http/…），也可以是它们组成的**数组**。数组'
+      + '会按给定顺序**接成**一条流——各片段依次播放，两个输出端口都跨越接'
+      + '缝，start_s/duration_s 针对的是接好之后的时间线。在编辑器的文件浏'
+      + '览器里可以一次选多个文件。只有本地文件能这样拼接；网络 URL 请单独'
+      + '使用',
+      '檔案路徑或網路 URL（rtsp/http/…），也可以是它們組成的**陣列**。陣列'
+      + '會按給定順序**接成**一條串流——各片段依次播放，兩個輸出埠都跨越接'
+      + '縫，start_s/duration_s 針對的是接好之後的時間線。在編輯器的檔案瀏'
+      + '覽器裡可以一次選多個檔案。只有本機檔案能這樣拼接；網路 URL 請單獨'
+      + '使用'],
+  'cfg.load-video.format': ['',
+      '按名称强制指定解复用器；"" = 自动检测。拼接片段已经不再需要它——直'
+      + '接给 input_url 一个数组即可。concat 保留下来是为了数组表达不了的'
+      + '情形：一个由 file / inpoint / outpoint 行组成的列表文件，它在拼接'
+      + '的同时裁剪每个片段（这时绝对路径需配合 options: {"safe": "0"}）。'
+      + '与数组同时设置会报错，而不是让某一方悄悄胜出。若指定的名称没有对'
+      + '应的解复用器，同样会报错，而不会悄悄回退到自动探测',
+      '按名稱強制指定解多工器；"" = 自動偵測。拼接片段已經不再需要它——直'
+      + '接給 input_url 一個陣列即可。concat 保留下來是為了陣列表達不了的'
+      + '情形：一個由 file / inpoint / outpoint 行組成的清單檔，它在拼接的'
+      + '同時裁剪每個片段（這時絕對路徑需搭配 options: {"safe": "0"}）。與'
+      + '陣列同時設定會回報錯誤，而不是讓某一方悄悄勝出。若指定的名稱沒有'
+      + '對應的解多工器，同樣會回報錯誤，而不會悄悄退回自動偵測'],
+  'cfg.load-video.enable_video': ['', '发出视频输出端口', '發出視訊輸出埠'],
+  'cfg.load-video.enable_audio': ['', '发出音频输出端口', '發出音訊輸出埠'],
+  'cfg.load-video.video_stream_index': ['',
+      '要使用的流；-1 = 第一条视频流',
+      '要使用的串流；-1 = 第一條視訊串流'],
+  'cfg.load-video.audio_stream_index': ['',
+      '要使用的流；-1 = 第一条音频流',
+      '要使用的串流；-1 = 第一條音訊串流'],
+  'cfg.load-video.start_s': ['',
+      '读取第一个数据包前先定位到该媒体时间（自文件开头起的秒数）；0（默认'
+      + '）从头开始。精度到关键帧：关键帧与 start_s 之间的数据包仍会发出，'
+      + '因为其后的帧要靠它们解码',
+      '讀取第一個封包前先定位到該媒體時間（自檔案開頭起的秒數）；0（預設）'
+      + '從頭開始。精度到關鍵影格：關鍵影格與 start_s 之間的封包仍會發出，'
+      + '因為其後的影格要靠它們解碼'],
+  'cfg.load-video.duration_s': ['',
+      '在 start_s 之后这么多秒处停止；0（默认）读到文件结尾。每条启用的流各'
+      + '自越过终点后停止，两条都停止时本次运行结束',
+      '在 start_s 之後這麼多秒處停止；0（預設）讀到檔案結尾。每條啟用的串流'
+      + '各自越過終點後停止，兩條都停止時本次執行結束'],
+  'cfg.load-video.read_timeout_ms': ['',
+      '网络读取超时（毫秒）；0 = 不限时',
+      '網路讀取逾時（毫秒）；0 = 不限時'],
+  'cfg.load-video.options': ['',
+      '输入打开时使用的字符串选项 av_dict',
+      '輸入開啟時使用的字串選項 av_dict'],
+  'port.load-video.video': ['',
+      '每个视频数据包一个 EncodedSegment，携带该流的 codec_id / width / '
+      + 'height / fps_num / fps_den / extradata。请接到 video-to-rgb，由它'
+      + '负责解码',
+      '每個視訊封包一個 EncodedSegment，攜帶該串流的 codec_id / width / '
+      + 'height / fps_num / fps_den / extradata。請接到 video-to-rgb，由它'
+      + '負責解碼'],
+  'port.load-video.audio': ['',
+      '每个音频数据包一个 EncodedSegment，携带该流的 codec_id / sample_rate'
+      + ' / channels / extradata。请接到 audio-to-pcm，由它负责解码与重采样',
+      '每個音訊封包一個 EncodedSegment，攜帶該串流的 codec_id / sample_rate'
+      + ' / channels / extradata。請接到 audio-to-pcm，由它負責解碼與重新取'
+      + '樣'],
+
+  // ---- RGB to Video (visual) ----
+  'stage.rgb-to-video.name': ['', 'RGB → 视频', 'RGB → 視訊'],
+  'stage.rgb-to-video.doc': ['',
+      '把平面 RGB 或 RGBA 图像节拍（U8、F16、F32）适配成 save-video 编码器所读取的 '
+      + 'VideoStreamParams + FrameRef 流。生成式图像格式与 ffmpeg 之间的接'
+      + '缝。由于 yuv420p 与 rgb24 都不承载 alpha，RGBA 帧会被压平到白色；'
+      + '若要合成到别的底色或另一段素材上，请在本级之前接一个 alpha-mix。',
+      '把平面 RGB 或 RGBA 影像節拍（U8、F16、F32）轉接成 save-video 編碼器所讀取的 '
+      + 'VideoStreamParams + FrameRef 串流。生成式影像格式與 ffmpeg 之間的'
+      + '接縫。由於 yuv420p 與 rgb24 都不承載 alpha，RGBA 影格會被壓平到白'
+      + '色；若要合成到別的底色或另一段素材上，請在本級之前接一個 '
+      + 'alpha-mix。'],
+  'cfg.rgb-to-video.fps': ['',
+      '当生产者的边带未携带帧率时，声明使用的帧率。16 是 Wan 视频的默认值',
+      '當生產者的邊帶未攜帶影格率時，宣告使用的影格率。16 是 Wan 影片的預設'
+      + '值'],
+  'cfg.rgb-to-video.pix_fmt': ['',
+      '发出帧的像素格式。"yuv420p"（默认）就是 SDR H.264 片段的样子，也是'
+      + '所有编码器都接受的。"yuv422p" 和 "yuv444p" 保留更多色度——444 全'
+      + '部保留，所以经本阶段做 RGB 往返只受编码器限制——这对本图自己还要'
+      + '再读回去的中间文件很有价值，而在交付文件上会增加码率。"rgb24" 完'
+      + '全不做转换，供无损编码器使用。请确认编码器接受它：默认的 '
+      + 'h264_videotoolbox 只支持 yuv420p，所以 422 和 444 需要把 '
+      + 'video_codec 设为能接受它们的编码器（libx264、ffv1）。被下采样的'
+      + '那个轴不能是奇数——420 要求宽高都是偶数，422 只要求宽度——本阶段'
+      + '会拒绝而不是凑整',
+      '發出影格的像素格式。"yuv420p"（預設）就是 SDR H.264 片段的樣子，也'
+      + '是所有編碼器都接受的。"yuv422p" 和 "yuv444p" 保留更多色度——444 '
+      + '全部保留，所以經本階段做 RGB 往返只受編碼器限制——這對本圖自己還'
+      + '要再讀回去的中間檔案很有價值，而在交付檔案上會增加位元率。'
+      + '"rgb24" 完全不做轉換，供無失真編碼器使用。請確認編碼器接受它：預'
+      + '設的 h264_videotoolbox 只支援 yuv420p，所以 422 和 444 需要把 '
+      + 'video_codec 設為能接受它們的編碼器（libx264、ffv1）。被下取樣的'
+      + '那個軸不能是奇數——420 要求寬高都是偶數，422 只要求寬度——本階段'
+      + '會拒絕而不是湊整'],
+  'cfg.rgb-to-video.color_range': ['',
+      '本阶段写入并据以标记文件的 YUV 摆幅。"limited"（默认）是 16..235 的演'
+      + '播室摆幅，也是任何播放器对 SDR H.264 片段的默认假设，因此是安全的'
+      + '交付选择。"full" 是 0..255：它保留全部 256 个码值而不是 219，对本'
+      + '图自己还要再读回去的中间文件很有价值——比如一条多段视频链把每段交'
+      + '给下一段——但忽略范围标记的播放器会把它渲染成死黑。无论哪一种，文'
+      + '件都会声明自己是哪一种，所以 vpipe 读回时不会走样；这个选择关乎的'
+      + '是还有谁会打开它',
+      '本階段寫入並據以標記檔案的 YUV 擺幅。"limited"（預設）是 16..235 的'
+      + '演播室擺幅，也是任何播放器對 SDR H.264 片段的預設假設，因此是安全'
+      + '的交付選擇。"full" 是 0..255：它保留全部 256 個碼值而不是 219，對'
+      + '本圖自己還要再讀回去的中間檔案很有價值——比如一條多段影片鏈把每段'
+      + '交給下一段——但忽略範圍標記的播放器會把它算繪成死黑。無論哪一種，'
+      + '檔案都會聲明自己是哪一種，所以 vpipe 讀回時不會走樣；這個選擇關乎'
+      + '的是還有誰會打開它'],
+  'cfg.rgb-to-video.colorspace': ['',
+      '本阶段写入并据以标记文件的 YUV 矩阵。"bt601"（默认）是本阶段一直以'
+      + '来发出的，也是播放器对未声明的片段所假设的；"bt709" 才是 HD 交付'
+      + '的正确矩阵，也是文件不作声时播放器对 HD 的假设。这与 color_range '
+      + '是两个问题——矩阵影响色相和饱和度，范围影响对比度——而且两个错误'
+      + '不会互相抵消。改动它改的是像素而不只是标记：无论选哪个，文件都会'
+      + '声明自己用的是哪个矩阵，所以 vpipe 读回时都不会走样',
+      '本階段寫入並據以標記檔案的 YUV 矩陣。"bt601"（預設）是本階段一直以'
+      + '來發出的，也是播放器對未聲明的片段所假設的；"bt709" 才是 HD 交付'
+      + '的正確矩陣，也是檔案不作聲時播放器對 HD 的假設。這與 color_range '
+      + '是兩個問題——矩陣影響色相和飽和度，範圍影響對比度——而且兩個錯誤'
+      + '不會互相抵消。改動它改的是像素而不只是標記：無論選哪個，檔案都會'
+      + '聲明自己用的是哪個矩陣，所以 vpipe 讀回時都不會走樣'],
+  'port.rgb-to-video.image': ['',
+      '平面 RGB [3, H, W] 或 RGBA [4, H, W] TensorBeat，按呈现顺序每帧'
+      + '一个：U8，或 0..1 的 F16 / F32（avf-load-video、vae-decode、'
+      + 'video-to-rgb），舍入到 8 位。这里没有哪种视频像素格式承载 alpha，'
+      + '所以第四个平面会被压平到白色',
+      '平面 RGB [3, H, W] 或 RGBA [4, H, W] TensorBeat，按呈現順序每格'
+      + '一個：U8，或 0..1 的 F16 / F32（avf-load-video、vae-decode、'
+      + 'video-to-rgb），捨入到 8 位元。這裡沒有哪種視訊像素格式承載 '
+      + 'alpha，所以第四個平面會被壓平到白色'],
+  'port.rgb-to-video.video': ['',
+      '先一个 VideoStreamParams 头，然后每帧一个 FrameRef——即 save-video 读'
+      + '取的约定',
+      '先一個 VideoStreamParams 標頭，然後每格一個 FrameRef——即 save-video '
+      + '讀取的約定'],
+
+  // ---- Save Image (visual) ----
+  'stage.save-image.name': ['', '保存图片', '儲存影像'],
+  'stage.save-image.doc': ['',
+      '汇聚节点：把每个平面 RGB TensorBeat 编码为图片文件——U8 用 FFmpeg'
+      + '（PNG/JPEG/WebP/BMP/TIFF）；F16、16 位 PNG/TIFF 与 OpenEXR 用 '
+      + 'ImageIO，并嵌入图片所标记的色彩空间。load-image 的逆过程；质量/压缩'
+      + '旋钮控制落盘方式。',
+      '匯聚節點：把每個平面 RGB TensorBeat 編碼為影像檔——U8 用 FFmpeg'
+      + '（PNG/JPEG/WebP/BMP/TIFF）；F16、16 位元 PNG/TIFF 與 OpenEXR 用 '
+      + 'ImageIO，並嵌入影像所標記的色彩空間。load-image 的逆過程；品質/壓縮'
+      + '旋鈕控制存檔方式。'],
+  'cfg.save-image.path': ['',
+      '输出图片文件路径。路径中带 printf 整数格式（如 frame-%04d.png）时用'
+      + '于给图片序列编号，%t 则填入本地时间（%t{...} 可写 strftime 格式）；'
+      + '没有整数格式时，后续图片会自动加 -NNNNNN 后缀',
+      '輸出影像檔路徑。路徑中帶 printf 整數格式（如 frame-%04d.png）時用於'
+      + '給影像序列編號，%t 則填入本地時間（%t{...} 可寫 strftime 格式）；'
+      + '沒有整數格式時，後續影像會自動加 -NNNNNN 後綴'],
+  'cfg.save-image.no_overwrite': ['',
+      '绝不覆盖已存在的文件：序号从磁盘上所有已占用的名字之后开始，而不是'
+      + '从 0 开始。默认关闭，因为通常的流水线希望每次运行都重写同一个文件',
+      '絕不覆蓋已存在的檔案：序號從磁碟上所有已占用的名字之後開始，而不是'
+      + '從 0 開始。預設關閉，因為通常的管線希望每次執行都重寫同一個檔案'],
+  'cfg.save-image.software_host': ['',
+      '运行此流水线的应用程序的自称（"ExampleApp 1.0"）。生成图片的 EXIF '
+      + 'Software 随后写作 "<应用> (Vpipe <版本> <哈希> with <模型>)"。不是'
+      + '模型生成的图片一律不加标记',
+      '執行此管線的應用程式的自稱（"ExampleApp 1.0"）。生成影像的 EXIF '
+      + 'Software 隨後寫作 "<應用> (Vpipe <版本> <雜湊> with <模型>)"。不是'
+      + '模型生成的影像一律不加標記'],
+  'cfg.save-image.format': ['',
+      'png | jpeg (jpg) | webp | bmp | tiff | exr；默认取自路径扩展名，否则为'
+      + ' png。exr（OpenEXR，半精度浮点，线性光）由 ImageIO 写出',
+      'png | jpeg (jpg) | webp | bmp | tiff | exr；預設取自路徑副檔名，否則為'
+      + ' png。exr（OpenEXR，半精度浮點，線性光）由 ImageIO 寫出'],
+  'cfg.save-image.bit_depth': ['',
+      'png / tiff 每分量位数：8 或 16；0（默认）跟随图片——F16 图片为 16，U8 '
+      + '为 8。16 位、OpenEXR 以及任何 F16 图片都由 ImageIO 编码，并使用图片'
+      + '所标记的色彩空间（sideband color_primaries / color_transfer）',
+      'png / tiff 每分量位元數：8 或 16；0（預設）跟隨影像——F16 影像為 16，'
+      + 'U8 為 8。16 位元、OpenEXR 以及任何 F16 影像都由 ImageIO 編碼，並使用'
+      + '影像所標記的色彩空間（sideband color_primaries / color_transfer）'],
+  'cfg.save-image.quality': ['',
+      '有损编码（jpeg、有损 webp）：1..100，越大越好（默认 90）',
+      '失真編碼（jpeg、失真 webp）：1..100，越大越好（預設 90）'],
+  'cfg.save-image.compression': ['',
+      'PNG 的 zlib 压缩级别 0..9，越大文件越小、越慢（默认 6）',
+      'PNG 的 zlib 壓縮等級 0..9，越大檔案越小、越慢（預設 6）'],
+  'cfg.save-image.lossless': ['',
+      'webp 无损模式（默认 false）',
+      'webp 無失真模式（預設 false）'],
+  'port.save-image.image': ['',
+      '平面 RGB [3,H,W] 或 RGBA [4,H,W] TensorBeat，U8 或 F16（load-image / '
+      + 'vae-decode 的格式）',
+      '平面 RGB [3,H,W] 或 RGBA [4,H,W] TensorBeat，U8 或 F16（load-image / '
+      + 'vae-decode 的格式）'],
+  'port.save-image.metadata': ['',
+      '可选的 FlexData，携带 exif_tiff_b64（即 load-image 的 metadata 输出'
+      + '端口所发的内容）；接上后会把 EXIF 块写入每个输出文件。每张图片一个'
+      + '节拍',
+      '可選的 FlexData，攜帶 exif_tiff_b64（即 load-image 的 metadata 輸出'
+      + '埠所發的內容）；接上後會把 EXIF 區塊寫入每個輸出檔案。每張影像一個'
+      + '節拍'],
+
+  // ---- Save Video (visual) ----
+  'stage.save-video.name': ['', '保存视频', '儲存影片'],
+  'stage.save-video.doc': ['',
+      '汇聚节点：把传入的视频/音频帧编码（默认 H.264 + AAC）并封装进容器文'
+      + '件。无输出端口；各输入端口运行在各自独立的每流时钟上。',
+      '匯聚節點：把傳入的視訊/音訊影格編碼（預設 H.264 + AAC）並封裝進容器'
+      + '檔案。無輸出埠；各輸入埠執行在各自獨立的每串流時脈上。'],
+  'cfg.save-video.output_url': ['',
+      '输出文件路径 / URL。路径中带 printf 整数格式（如 clip-%03d.mp4）时'
+      + '用于给每次运行编号，%t 则填入本地时间（%t{...} 可写 strftime '
+      + '格式）',
+      '輸出檔案路徑 / URL。路徑中帶 printf 整數格式（如 clip-%03d.mp4）時'
+      + '用於給每次執行編號，%t 則填入本地時間（%t{...} 可寫 strftime '
+      + '格式）'],
+  'cfg.save-video.no_overwrite': ['',
+      '绝不覆盖已存在的文件：序号从磁盘上所有已占用的名字之后开始，而不是'
+      + '从 0 开始，这样第二次运行不会抹掉第一次的片段。默认关闭；网络 URL '
+      + '无法判断是否存在，因此忽略此项',
+      '絕不覆蓋已存在的檔案：序號從磁碟上所有已占用的名字之後開始，而不是'
+      + '從 0 開始，這樣第二次執行不會抹掉第一次的片段。預設關閉；網路 URL '
+      + '無法判斷是否存在，因此忽略此項'],
+  'cfg.save-video.format': ['',
+      '容器格式；"" = 自动推断',
+      '容器格式；"" = 自動推斷'],
+  'cfg.save-video.enable_video': ['', '编码一条视频流', '編碼一條視訊串流'],
+  'cfg.save-video.enable_audio': ['', '编码一条音频流', '編碼一條音訊串流'],
+  'cfg.save-video.video_codec': ['',
+      '视频编码器。默认值是 macOS 自带的、硬件加速的编码器，且不带授权义务—'
+      + '—libx264 属 GPL，无法随本项目再分发的 FFmpeg 一起发布。非 Apple 构'
+      + '建会在初始化时回退到 libx264。所链接的 libavcodec 提供的任何编码器'
+      + '都可接受',
+      '視訊編碼器。預設值是 macOS 內建、硬體加速的編碼器，且不帶授權義務——'
+      + 'libx264 屬 GPL，無法隨本專案再散布的 FFmpeg 一起發布。非 Apple 建'
+      + '置會在初始化時回退到 libx264。所連結的 libavcodec 提供的任何編碼器'
+      + '都可接受'],
+  'cfg.save-video.video_bitrate': ['',
+      '目标视频码率，单位比特/秒。以恒定质量模式运行的编码器会忽略它——参见 '
+      + 'video_crf',
+      '目標視訊位元率，單位位元/秒。以恆定品質模式執行的編碼器會忽略它——參'
+      + '見 video_crf'],
+  'cfg.save-video.video_preset': ['',
+      '编码速度/体积预设（ultrafast .. veryslow），仅对接受该选项的编码器有'
+      + '效；其余忽略',
+      '編碼速度/體積預設（ultrafast .. veryslow），僅對接受該選項的編碼器有'
+      + '效；其餘忽略'],
+  'cfg.save-video.video_crf': ['',
+      '以恒定质量目标代替码率：越小越好，0 为无损，常用范围约 18-28。-1（默'
+      + '认）表示不设置，由 video_bitrate 决定。仅支持 crf 的编码器会采用，'
+      + '其余忽略',
+      '以恆定品質目標取代位元率：越小越好，0 為無失真，常用範圍約 18-28。-1'
+      + '（預設）表示不設定，由 video_bitrate 決定。僅支援 crf 的編碼器會採'
+      + '用，其餘忽略'],
+  'cfg.save-video.video_gop_size': ['',
+      '关键帧间隔（帧数）。越小则跳转与恢复越快，代价是体积变大',
+      '關鍵影格間隔（影格數）。越小則跳轉與復原越快，代價是體積變大'],
+  'cfg.save-video.video_options': ['',
+      '传给视频编码器的额外 av_dict 选项，用于上面各项没有涵盖的设置',
+      '傳給視訊編碼器的額外 av_dict 選項，用於上面各項沒有涵蓋的設定'],
+  'cfg.save-video.audio_codec': ['', '音频编码器', '音訊編碼器'],
+  'cfg.save-video.audio_bitrate': ['',
+      '目标音频码率，单位比特/秒',
+      '目標音訊位元率，單位位元/秒'],
+  'cfg.save-video.audio_options': ['',
+      '传给音频编码器的额外 av_dict 选项',
+      '傳給音訊編碼器的額外 av_dict 選項'],
+  'cfg.save-video.muxer_options': ['',
+      '传给封装器的字符串选项 av_dict。没有展平成独立键：与上面的编码器设置'
+      + '不同，这些选项没有固定的名字集合——取决于所选的容器',
+      '傳給封裝器的字串選項 av_dict。沒有攤平成獨立鍵：與上面的編碼器設定不'
+      + '同，這些選項沒有固定的名稱集合——取決於所選的容器'],
+  'cfg.save-video.video': ['',
+      '已被 video_codec / video_bitrate / video_preset / video_crf / '
+      + 'video_gop_size / video_options 取代。仍会读取，但会给出警告；同时'
+      + '设置的扁平键优先',
+      '已被 video_codec / video_bitrate / video_preset / video_crf / '
+      + 'video_gop_size / video_options 取代。仍會讀取，但會給出警告；同時'
+      + '設定的扁平鍵優先'],
+  'cfg.save-video.audio': ['',
+      '已被 audio_codec / audio_bitrate / audio_options 取代。仍会读取，但'
+      + '会给出警告；同时设置的扁平键优先',
+      '已被 audio_codec / audio_bitrate / audio_options 取代。仍會讀取，但'
+      + '會給出警告；同時設定的扁平鍵優先'],
+  'port.save-video.video': ['',
+      '先一个 VideoStreamParams 头，随后是视频 FrameRef',
+      '先一個 VideoStreamParams 標頭，隨後是視訊 FrameRef'],
+  'port.save-video.audio': ['',
+      '先一个 AudioStreamParams 头，随后是音频 FrameRef；或者带 sample_rate'
+      + ' 边带的 f32 PCM TensorBeat [声道数, 采样数]',
+      '先一個 AudioStreamParams 標頭，隨後是音訊 FrameRef；或者帶 '
+      + 'sample_rate 邊帶的 f32 PCM TensorBeat [聲道數, 取樣數]'],
+
+  // ---- Frame Dropper (visual) ----
+  'stage.temporal-decimation.name': ['', '视频抽帧', '影片抽幀'],
+  'stage.temporal-decimation.doc': ['',
+      '令牌桶式抽帧器：在平均 FPS 上限之内保留帧，并偏向有运动的帧（1 号输'
+      + '入端口接了检测结果时，则偏向重点类别的运动）。保留下来的帧原样转发'
+      + '。',
+      '權杖桶式抽格器：在平均 FPS 上限之內保留影格，並偏向有動態的影格（1 '
+      + '號輸入埠接了偵測結果時，則偏向重點類別的動態）。保留下來的影格原樣'
+      + '轉發。'],
+  'cfg.temporal-decimation.max_avg_fps': ['',
+      '保留速率的上限；允许小于 1',
+      '保留速率的上限；允許小於 1'],
+  'cfg.temporal-decimation.target_fps': ['',
+      'max_avg_fps 的旧别名',
+      'max_avg_fps 的舊別名'],
+  'cfg.temporal-decimation.max_consecutive_drops': ['',
+      '强制保留的下限：最多可以连续丢弃多少帧',
+      '強制保留的下限：最多可以連續丟棄多少影格'],
+  'cfg.temporal-decimation.tile_w': ['',
+      '运动特征分块的列数，限制在 [1,1024]',
+      '動態特徵分塊的行數，限制在 [1,1024]'],
+  'cfg.temporal-decimation.tile_h': ['',
+      '运动特征分块的行数，限制在 [1,1024]',
+      '動態特徵分塊的列數，限制在 [1,1024]'],
+  'cfg.temporal-decimation.motion_threshold': ['',
+      '优先级达到该门槛以上的帧才可能被保留',
+      '優先度達到該門檻以上的影格才可能被保留'],
+  'cfg.temporal-decimation.focus_motion_gain': ['',
+      '重点类别运动占比的权重',
+      '重點類別動態占比的權重'],
+  'cfg.temporal-decimation.bucket_capacity': ['',
+      '令牌桶的突发上限，须大于等于 1',
+      '權杖桶的突發上限，須大於等於 1'],
+  'cfg.temporal-decimation.focus_classes': ['',
+      '重点类别列表，可混用整数 class_id 与字符串 class_name',
+      '重點類別清單，可混用整數 class_id 與字串 class_name'],
+  'port.temporal-decimation.in.frames': ['',
+      '平面 u8 RGB TensorBeat [3,H,W]',
+      '平面 u8 RGB TensorBeat [3,H,W]'],
+  'port.temporal-decimation.detections': ['',
+      '可选的 FlexData YOLO 检测结果，与帧一一对应读取',
+      '可選的 FlexData YOLO 偵測結果，與影格一一對應讀取'],
+  'port.temporal-decimation.out.frames': ['',
+      '被保留的帧（原样转发的 TensorBeat）；被丢弃的帧不产生任何输出',
+      '被保留的影格（原樣轉發的 TensorBeat）；被丟棄的影格不產生任何輸出'],
+
+  // ---- Temporal Resample (visual) ----
+  'stage.temporal-resample.name': ['', '时间重采样', '時間重新取樣'],
+  'stage.temporal-resample.doc': ['',
+      '通过一条 FFmpeg 滤镜链把平面 RGB 帧从一个帧率重采样到另一个帧率，并'
+      + '可选择被丢弃的信息如何处理：丢帧/复帧、混合、盒式平均（运动模糊）'
+      + '或运动补偿插值。它是 image-resample 在时间轴上的对应物。',
+      '透過一條 FFmpeg 濾鏡鏈把平面 RGB 影格從一個影格率重新取樣到另一個影'
+      + '格率，並可選擇被丟棄的資訊如何處理：丟格/複格、混合、盒式平均（動'
+      + '態模糊）或運動補償插值。它是 image-resample 在時間軸上的對應物。'],
+  'cfg.temporal-resample.output_fps': ['',
+      '要重采样到的目标帧率。必填且为正——它就是这条请求的全部，一个给它设默'
+      + '认值的阶段无非是顶着重采样器名字的直通。它会用连分数转换成真正的有'
+      + '理数，因此 29.97 到达滤镜时是 30000/1001 而不是 2997/100：滤镜正是'
+      + '拿它做除法的，而一个差之毫厘的帧率每几千帧就会丢一帧，还什么都不说',
+      '要重新取樣到的目標影格率。必填且為正——它就是這條請求的全部，一個給它'
+      + '設預設值的階段無非是頂著重新取樣器名字的直通。它會用連分數轉換成真'
+      + '正的有理數，因此 29.97 抵達濾鏡時是 30000/1001 而不是 2997/100：濾'
+      + '鏡正是拿它做除法的，而一個差之毫釐的影格率每幾千格就會丟一格，還什'
+      + '麼都不說'],
+  'cfg.temporal-resample.input_fps': ['',
+      '源帧率，用于节拍本身没有说明的情形。片段节拍带 `fps`，逐帧节拍带 `'
+      + 'fps_num`/`fps_den`，但只有在源知道的时候才有；这一项是后备值，而且'
+      + '一旦设置就会覆盖边带。设错会改变比例，于是片段的时长不对，而其中每'
+      + '一帧看上去都没问题。0（默认）：采用节拍自己的值',
+      '源影格率，用於節拍本身沒有說明的情形。片段節拍帶 `fps`，逐格節拍帶 `'
+      + 'fps_num`/`fps_den`，但只有在來源知道的時候才有；這一項是後備值，而'
+      + '且一旦設定就會覆寫邊帶。設錯會改變比例，於是片段的長度不對，而其中'
+      + '每一格看上去都沒問題。0（預設）：採用節拍自己的值'],
+  'cfg.temporal-resample.method': ['',
+      '帧率变化所丢弃的信息如何处理。"nearest"（默认）丢帧和复帧（ffmpeg 的'
+      + ' `fps`）——最省，但会产生混叠：大比例降帧会抖动，车轮会倒转。"blend'
+      + '" 把每个输出帧所落在的两个源帧混合起来（`framerate`）。"average" '
+      + '先把每个输出帧时间区间内的源帧做盒式平均再抽取（`tmix` + `fps`）——'
+      + '相当于空间上缩小时的面积平均，看起来就是运动模糊，因为它本来就是。'
+      + '"motion" 估计运动并合成中间帧（`minterpolate`），这是升帧时唯一有'
+      + '用的方式，因为那时根本没有东西可平均。开销依次递增，`motion` 远为'
+      + '昂贵',
+      '影格率變化所丟棄的資訊如何處理。"nearest"（預設）丟格和複格（ffmpeg '
+      + '的 `fps`）——最省，但會產生疊頻：大比例降格會抖動，車輪會倒轉。"'
+      + 'blend" 把每個輸出影格所落在的兩個來源影格混合起來（`framerate`）。'
+      + '"average" 先把每個輸出影格時間區間內的來源影格做盒式平均再抽取（`'
+      + 'tmix` + `fps`）——相當於空間上縮小時的面積平均，看起來就是動態模糊'
+      + '，因為它本來就是。"motion" 估計運動並合成中間影格（`minterpolate`'
+      + '），這是升格時唯一有用的方式，因為那時根本沒有東西可平均。開銷依次'
+      + '遞增，`motion` 遠為昂貴'],
+  'cfg.temporal-resample.average_frames': ['',
+      '`average` 的窗口长度，以源帧计。0（默认）由比例推导——round(input_fps'
+      + ' / output_fps)，也就是一个输出帧所覆盖的区间。调大相当于更长的快门'
+      + '，调小则更短',
+      '`average` 的視窗長度，以來源影格計。0（預設）由比例推導——round('
+      + 'input_fps / output_fps)，也就是一個輸出影格所涵蓋的區間。調大相當'
+      + '於更長的快門，調小則更短'],
+  'cfg.temporal-resample.stacked': ['',
+      'false（默认）：每个节拍一帧，[3, H, W]，输出端口自成一个时钟域，因为'
+      + '帧率变化并不是一个节拍进、一个节拍出。true：整段片段装在一个节拍里'
+      + '，[T, 3, H, W]——即 `temporal-stack` 构建的形状——于是本阶段是 1:1 '
+      + '的，输出端口与输入端口共用时钟，不跨越任何时钟域，也就可以放进反馈'
+      + '回路里。这是声明出来的而不是探测出来的：时钟分析在启动时就运行，那'
+      + '时还没有任何节拍存在',
+      'false（預設）：每個節拍一格，[3, H, W]，輸出埠自成一個時脈域，因為影'
+      + '格率變化並不是一個節拍進、一個節拍出。true：整段片段裝在一個節拍裡'
+      + '，[T, 3, H, W]——即 `temporal-stack` 建構的形狀——於是本階段是 1:1 '
+      + '的，輸出埠與輸入埠共用時脈，不跨越任何時脈域，也就可以放進回饋迴路'
+      + '裡。這是宣告出來的而不是探測出來的：時脈分析在啟動時就執行，那時還'
+      + '沒有任何節拍存在'],
+  'port.temporal-resample.in.frames': ['',
+      '平面 u8 RGB TensorBeat：每个节拍 [3, H, W]，或 `stacked` 时的单个 [T'
+      + ', 3, H, W] 片段',
+      '平面 u8 RGB TensorBeat：每個節拍 [3, H, W]，或 `stacked` 時的單個 [T'
+      + ', 3, H, W] 片段'],
+  'port.temporal-resample.out.frames': ['',
+      '同样的形状，位于 `output_fps`，边带中的帧率已重写。声明的时钟组是流'
+      + '式情形下的答案；真正的答案由 oport_clock_group() 决定——堆叠片段是 '
+      + '1:1 的，与输入端口共用时钟',
+      '同樣的形狀，位於 `output_fps`，邊帶中的影格率已重寫。宣告的時脈組是'
+      + '串流情形下的答案；真正的答案由 oport_clock_group() 決定——堆疊片段'
+      + '是 1:1 的，與輸入埠共用時脈'],
+
+  // ---- Temporal Slice (visual) ----
+  'stage.temporal-slice.name': ['', '时间切片', '時間切片'],
+  'stage.temporal-slice.doc': ['',
+      '对节拍流做 Python 的 seq[start:end:step]：保留切片指定的节拍，丢弃其'
+      + '余，并把保留的每一个原样转发。`start: -1` 接到 save-image 就是写出'
+      + '片段的最后一帧。负索引要到 EOS 才能解析，因此代价是要一直持有那么'
+      + '多个节拍。',
+      '對節拍串流做 Python 的 seq[start:end:step]：保留切片指定的節拍，丟棄'
+      + '其餘，並把保留的每一個原樣轉發。`start: -1` 接到 save-image 就是寫'
+      + '出片段的最後一格。負索引要到 EOS 才能解析，因此代價是要一直持有那'
+      + '麼多個節拍。'],
+  'cfg.temporal-slice.start': ['',
+      '切片的第一个节拍，Python 风格。负数从末尾往回数——-1 是最后一个节拍，'
+      + '-2 是倒数第二个——而这只有等源到达 EOS 才能确定，因此在那之前本阶段'
+      + '会一直持有那么多个节拍。不填：从第一个节拍开始',
+      '切片的第一個節拍，Python 風格。負數從末尾往回數——-1 是最後一個節拍，'
+      + '-2 是倒數第二個——而這只有等來源抵達 EOS 才能確定，因此在那之前本階'
+      + '段會一直持有那麼多個節拍。不填：從第一個節拍開始'],
+  'cfg.temporal-slice.step': ['',
+      '从 `start` 起每隔 step 个节拍保留一个。必须为正：流只能顺序读一次，'
+      + '负的步长意味着要发出本阶段早已放走的节拍。不填：1',
+      '從 `start` 起每隔 step 個節拍保留一個。必須為正：串流只能循序讀一次'
+      + '，負的步長意味著要發出本階段早已放走的節拍。不填：1'],
+  'cfg.temporal-slice.sequence': ['',
+      '切片索引作用于什么。"beats"（默认）是节拍流——保留一些节拍，丢弃其余'
+      + '。"frames" 是单个节拍的最前那个轴：送入一段堆叠片段 [T, 3, H, W]，'
+      + '取出选中的那些帧，一个节拍进、一个节拍出。frames 模式什么都不持有'
+      + '（T 从节拍本身即可得知，负索引当即就能解析），也不改变节拍速率，因'
+      + '此与流模式不同，它可以放进反馈回路里',
+      '切片索引作用於什麼。"beats"（預設）是節拍串流——保留一些節拍，丟棄其'
+      + '餘。"frames" 是單個節拍的最前那個軸：送入一段堆疊片段 [T, 3, H, W]'
+      + '，取出選中的那些影格，一個節拍進、一個節拍出。frames 模式什麼都不'
+      + '持有（T 從節拍本身即可得知，負索引當即就能解析），也不改變節拍速率'
+      + '，因此與串流模式不同，它可以放進回饋迴路裡'],
+  'cfg.temporal-slice.squeeze': ['',
+      '仅 frames 模式：当切片恰好选中一帧时，去掉时间轴，发出 [3, H, W]——一'
+      + '张静态图——而不是 [1, 3, H, W] 这样的单帧片段。对参考条件模型来说这'
+      + '是两种不同的请求，尺寸规则也不同，因此没有安全的默认值，只能做成一'
+      + '个开关而不是自动推断。要求对多帧做 squeeze 会得到一次警告，时间轴'
+      + '则予以保留',
+      '僅 frames 模式：當切片恰好選中一格時，去掉時間軸，發出 [3, H, W]——一'
+      + '張靜態圖——而不是 [1, 3, H, W] 這樣的單格片段。對參考條件模型來說這'
+      + '是兩種不同的請求，尺寸規則也不同，因此沒有安全的預設值，只能做成一'
+      + '個開關而不是自動推斷。要求對多格做 squeeze 會得到一次警告，時間軸'
+      + '則予以保留'],
+  'cfg.temporal-slice.end': ['',
+      '切片最后一个节拍的下一个位置，Python 风格，因此切片是 [start, end)。'
+      + '负数从末尾往回数，规则与 `start` 相同。不填：一直运行到源到达 EOS',
+      '切片最後一個節拍的下一個位置，Python 風格，因此切片是 [start, end)。'
+      + '負數從末尾往回數，規則與 `start` 相同。不填：一直執行到來源抵達 '
+      + 'EOS'],
+  'port.temporal-slice.in.beats': ['',
+      '任意节拍流；一个节拍就是序列中的一个位置',
+      '任意節拍串流；一個節拍就是序列中的一個位置'],
+  'port.temporal-slice.out.beats': ['',
+      '被选中的节拍，原样转发——负载、形状、边带都不变。不做堆叠：N 个节拍的'
+      + '切片仍是 N 个节拍，而不是一个多出时间轴的张量（那是 temporal-stack'
+      + ' 的事）',
+      '被選中的節拍，原樣轉發——負載、形狀、邊帶都不變。不做堆疊：N 個節拍的'
+      + '切片仍是 N 個節拍，而不是一個多出時間軸的張量（那是 temporal-stack'
+      + ' 的事）'],
+
+  // ---- Temporal Stack (visual) ----
+  'stage.temporal-stack.name': ['', '时间堆叠', '時間堆疊'],
+  'stage.temporal-stack.doc': ['',
+      '把许多时间切片节拍堆叠成一个张量：帧堆成片段，PCM 分块堆成完整波形。'
+      + '它是本代码树的流式约定与“需要一整段参考作为条件”的消费者之间的桥梁'
+      + '。跨越“节拍速率 -> 分组速率”两个时钟域。',
+      '把許多時間切片節拍堆疊成一個張量：影格堆成片段，PCM 分塊堆成完整波形'
+      + '。它是本程式碼樹的串流約定與「需要一整段參考作為條件」的消費者之間'
+      + '的橋樑。跨越「節拍速率 -> 分組速率」兩個時脈域。'],
+  'cfg.temporal-stack.mode': ['',
+      '如何堆叠：auto（默认）| video | audio | generic。video 在最前面新增'
+      + '一个轴（[3,H,W] x T -> [T,3,H,W]）；audio 在最后一个轴上拼接（[N] '
+      + 'x k -> [总 N]，平面的 [2,N] x k -> [2,总 N]）；generic 用 video 的'
+      + '规则但不做模态检查。auto 从第一个节拍读出模式——秩为 3 的 u8 是帧，'
+      + '秩小于等于 2 的 f32 或任何带 `sample_rate` 的都是音频——并把它锁定'
+      + '，因此中途改变形状的生产者会得到一个错误，而不是一个堆到一半的张量',
+      '如何堆疊：auto（預設）| video | audio | generic。video 在最前面新增'
+      + '一個軸（[3,H,W] x T -> [T,3,H,W]）；audio 在最後一個軸上串接（[N] '
+      + 'x k -> [總 N]，平面的 [2,N] x k -> [2,總 N]）；generic 用 video 的'
+      + '規則但不做模態檢查。auto 從第一個節拍讀出模式——秩為 3 的 u8 是影格'
+      + '，秩小於等於 2 的 f32 或任何帶 `sample_rate` 的都是音訊——並把它鎖'
+      + '定，因此中途改變形狀的生產者會得到一個錯誤，而不是一個堆到一半的張'
+      + '量'],
+  'cfg.temporal-stack.group_size': ['',
+      '每发出一组包含多少个节拍。0（默认）一直累积到源结束，然后发出一个节'
+      + '拍——这正是单个参考所需要的，同时也让本阶段成为一次性的：发完那个节'
+      + '拍它就结束了。要服务多次请求的图必须设置它，否则第一次之后的每次请'
+      + '求看到的都是一个已经结束的生产者',
+      '每發出一組包含多少個節拍。0（預設）一直累積到來源結束，然後發出一個'
+      + '節拍——這正是單個參考所需要的，同時也讓本階段成為一次性的：發完那個'
+      + '節拍它就結束了。要服務多次請求的圖必須設定它，否則第一次之後的每次'
+      + '請求看到的都是一個已經結束的生產者'],
+  'cfg.temporal-stack.overlap': ['',
+      '每组保留多少个节拍，好让下一组以它们开头——这段上下文让消费者能看到紧'
+      + '接其前的内容。单位是节拍而不是秒，与 group_size 相同：24 fps 下重'
+      + '叠 24 就是一秒。必须小于 group_size，此后每次发出前进 (group_size '
+      + '- overlap) 个节拍。仅 video 与 generic 分组适用——音频请改用 '
+      + 'audio-to-pcm 的 chunk_overlap_s，它以采样点为单位。0（默认）= 各组'
+      + '之间不共享任何内容',
+      '每組保留多少個節拍，好讓下一組以它們開頭——這段上下文讓消費者能看到緊'
+      + '接其前的內容。單位是節拍而不是秒，與 group_size 相同：24 fps 下重'
+      + '疊 24 就是一秒。必須小於 group_size，此後每次發出前進 (group_size '
+      + '- overlap) 個節拍。僅 video 與 generic 分組適用——音訊請改用 '
+      + 'audio-to-pcm 的 chunk_overlap_s，它以取樣點為單位。0（預設）= 各組'
+      + '之間不共用任何內容'],
+  'cfg.temporal-stack.max_mb': ['',
+      '累积器的上限，单位 MB（默认 256）。达到上限时会把已持有的内容发出、'
+      + '给出警告并结束该流——因为这一组已经不是当初要的那一组，继续下去只会'
+      + '发出一串悄悄变短的分组。这个上限在实践中是空间上的：256 MB 是 171 '
+      + '帧 960x544 的 u8 RGB，但 1080p 只有 43 帧、4K 只有 10 帧，而 f32 '
+      + '音频要 35 分钟才能填满。请在堆叠之前先把帧缩小，而不是调高这一项',
+      '累積器的上限，單位 MB（預設 256）。達到上限時會把已持有的內容發出、'
+      + '給出警告並結束該串流——因為這一組已經不是當初要的那一組，繼續下去只'
+      + '會發出一串悄悄變短的分組。這個上限在實務上是空間上的：256 MB 是 '
+      + '171 格 960x544 的 u8 RGB，但 1080p 只有 43 格、4K 只有 10 格，而 '
+      + 'f32 音訊要 35 分鐘才能填滿。請在堆疊之前先把影格縮小，而不是調高這'
+      + '一項'],
+  'cfg.temporal-stack.sideband': ['',
+      '一个 JSON 对象，会在本阶段自己的速率字段之后合并进每个发出分组的边带'
+      + '。用来说明关于这一组、而其任何一个节拍的生产者都无从知晓的事情——例'
+      + '如 MiniMax-H3 的参考端口会读音频节拍上的 `attach: true`，据此把它'
+      + '当作前一个参考的配乐而不是独立参考，而 audio-to-pcm 对这两者一无所'
+      + '知。这里给出的键优先于计算得到的键，因此也可以用它来纠正源给错的采'
+      + '样率',
+      '一個 JSON 物件，會在本階段自己的速率欄位之後合併進每個發出分組的邊帶'
+      + '。用來說明關於這一組、而其任何一個節拍的生產者都無從知曉的事情——例'
+      + '如 MiniMax-H3 的參考埠會讀音訊節拍上的 `attach: true`，據此把它當'
+      + '作前一個參考的配樂而不是獨立參考，而 audio-to-pcm 對這兩者一無所知'
+      + '。這裡給出的鍵優先於計算得到的鍵，因此也可以用它來糾正來源給錯的取'
+      + '樣率'],
+  'cfg.temporal-stack.fps': ['',
+      '仅视频：当各帧本身不带帧率时，在堆叠后的节拍上公布的帧率。逐帧节拍只'
+      + '有在源知道时才会写出 `fps_num`/`fps_den`，因此本阶段先从那一对推导'
+      + '，其次从 `timestamp_us` 的跨度推导，最后才用这一项。0（默认）表示'
+      + '不要凭空发明——需要帧率的消费者应当拒绝，而不是拿到一个看似合理的错'
+      + '误值',
+      '僅視訊：當各影格本身不帶影格率時，在堆疊後的節拍上公布的影格率。逐格'
+      + '節拍只有在來源知道時才會寫出 `fps_num`/`fps_den`，因此本階段先從那'
+      + '一對推導，其次從 `timestamp_us` 的跨度推導，最後才用這一項。0（預'
+      + '設）表示不要憑空發明——需要影格率的消費者應當拒絕，而不是拿到一個看'
+      + '似合理的錯誤值'],
+  'port.temporal-stack.beats': ['',
+      'TensorBeatPayload，每个节拍一个时间切片：平面 u8 RGB [3,H,W] 的帧、'
+      + 'f32 PCM 的 [N] 或 [声道数,N] 分块，或 generic 模式下形状一致的任意'
+      + '张量',
+      'TensorBeatPayload，每個節拍一個時間切片：平面 u8 RGB [3,H,W] 的影格'
+      + '、f32 PCM 的 [N] 或 [聲道數,N] 分塊，或 generic 模式下形狀一致的任'
+      + '意張量'],
+  'port.temporal-stack.stacked': ['',
+      '每组一个 TensorBeatPayload：video 与 generic 为 [节拍数, ...]，audio'
+      + ' 为 [..., 总和]。边带会按分组重建——`timestamp_us` 取自该组第一个节'
+      + '拍，音频给出 `sample_rate` 与 `duration_us`，视频给出解析后的 `fps'
+      + '`',
+      '每組一個 TensorBeatPayload：video 與 generic 為 [節拍數, ...]，audio'
+      + ' 為 [..., 總和]。邊帶會按分組重建——`timestamp_us` 取自該組第一個節'
+      + '拍，音訊給出 `sample_rate` 與 `duration_us`，視訊給出解析後的 `fps'
+      + '`'],
+
+  // ---- Video Capture (visual) ----
+  'stage.video-capture.name': ['', '视频采集', '視訊擷取'],
+  'stage.video-capture.doc': ['',
+      '源：通过 FFmpeg avfoundation 采集摄像头，每帧发出一个平面 RGB '
+      + 'TensorBeat。仅 Apple 平台。无输入端口。',
+      '來源：透過 FFmpeg avfoundation 擷取攝影機，每格發出一個平面 RGB '
+      + 'TensorBeat。僅 Apple 平台。無輸入埠。'],
+  'cfg.video-capture.device_id': ['',
+      'avfoundation 视频设备索引（与 device_name 互斥；视频索引与音频分开编'
+      + '号）',
+      'avfoundation 視訊裝置索引（與 device_name 互斥；視訊索引與音訊分開編'
+      + '號）'],
+  'cfg.video-capture.device_name': ['',
+      'avfoundation 视频设备名称；不区分大小写的子串匹配（与 device_id 互斥'
+      + '）',
+      'avfoundation 視訊裝置名稱；不區分大小寫的子字串比對（與 device_id 互'
+      + '斥）'],
+  'cfg.video-capture.width': ['',
+      '请求的采集宽度；需与 height 一同设置（avfoundation 的 video_size）。'
+      + '0 = 设备默认',
+      '請求的擷取寬度；需與 height 一同設定（avfoundation 的 video_size）。'
+      + '0 = 裝置預設'],
+  'cfg.video-capture.height': ['',
+      '请求的采集高度；需与 width 一同设置（avfoundation 的 video_size）。0'
+      + ' = 设备默认',
+      '請求的擷取高度；需與 width 一同設定（avfoundation 的 video_size）。0'
+      + ' = 裝置預設'],
+  'cfg.video-capture.framerate': ['',
+      '请求的每秒帧数（avfoundation 的 framerate）。0 = 设备默认',
+      '請求的每秒影格數（avfoundation 的 framerate）。0 = 裝置預設'],
+  'cfg.video-capture.pixel_format': ['',
+      '请求的采集像素格式（avfoundation 的 pixel_format），例如 uyvy422 / '
+      + 'nv12 / bgr0；留空 = 设备默认。无论如何输出都是 RGB',
+      '請求的擷取像素格式（avfoundation 的 pixel_format），例如 uyvy422 / '
+      + 'nv12 / bgr0；留空 = 裝置預設。無論如何輸出都是 RGB'],
+  'cfg.video-capture.output_dtype': ['',
+      '发出的元素类型："u8"（默认）或 "f32"（归一化到 [0,1]）',
+      '發出的元素型別："u8"（預設）或 "f32"（正規化到 [0,1]）'],
+  'cfg.video-capture.camera_name': ['',
+      '复制到每个节拍边带中的标签，好让多摄像头的图能区分来源',
+      '複製到每個節拍邊帶中的標籤，好讓多攝影機的圖能區分來源'],
+  'cfg.video-capture.reconnect_delay_ms': ['',
+      '出错后重新打开前的退避时间（毫秒）',
+      '出錯後重新開啟前的退避時間（毫秒）'],
+  'cfg.video-capture.oport_depth': ['',
+      '输出环形缓冲深度（丢弃最旧）',
+      '輸出環形緩衝深度（丟棄最舊）'],
+  'port.video-capture.frames': ['',
+      '平面 RGB TensorBeat [3,H,W]（U8 或 F32），每采集一帧一个——与 '
+      + 'video-to-rgb 发出的负载相同',
+      '平面 RGB TensorBeat [3,H,W]（U8 或 F32），每擷取一格一個——與 '
+      + 'video-to-rgb 發出的負載相同'],
+
+  // ---- Video → RGB (visual) ----
+  'stage.video-to-rgb.name': ['', '视频流 → RGB', '視訊串流 → RGB'],
+  'stage.video-to-rgb.doc': ['',
+      '把 H.264 的 EncodedSegment 解码（FFmpeg 软解/VideoToolbox）为平面 '
+      + 'RGB TensorBeat，每帧一个；可选裁剪与缩放。跨越“分段速率 -> 帧速率”'
+      + '两个时钟域。',
+      '把 H.264 的 EncodedSegment 解碼（FFmpeg 軟解/VideoToolbox）為平面 '
+      + 'RGB TensorBeat，每格一個；可選裁剪與縮放。跨越「分段速率 -> 影格速'
+      + '率」兩個時脈域。'],
+  'cfg.video-to-rgb.normalize': ['',
+      '仅 F32：把字节值除以 255 -> [0,1]',
+      '僅 F32：把位元組值除以 255 -> [0,1]'],
+  'cfg.video-to-rgb.oport_capacity': ['',
+      '输出端口缓冲深度',
+      '輸出埠緩衝深度'],
+  'cfg.video-to-rgb.hwaccel': ['',
+      'auto | videotoolbox | none',
+      'auto | videotoolbox | none'],
+  'cfg.video-to-rgb.output_dtype': ['', 'f32 | u8', 'f32 | u8'],
+  'cfg.video-to-rgb.output_width': ['',
+      '缩放目标宽度；需与 output_height 成对设置',
+      '縮放目標寬度；需與 output_height 成對設定'],
+  'cfg.video-to-rgb.output_height': ['',
+      '缩放目标高度；需与 output_width 成对设置',
+      '縮放目標高度；需與 output_width 成對設定'],
+  'port.video-to-rgb.segments': ['',
+      'EncodedSegment：AVCC 格式的 H.264 + extradata',
+      'EncodedSegment：AVCC 格式的 H.264 + extradata'],
+  'port.video-to-rgb.frames': ['',
+      '平面 RGB TensorBeat [3,H,W]（F32 或 U8）',
+      '平面 RGB TensorBeat [3,H,W]（F32 或 U8）'],
+};
+
+// The runtime-LoRA slots past the second (`lora3` .. `lora8`, with their
+// `_scale` and, on MiniMax-H3, `_qkv_layout` keys) read exactly as
+// `lora2` does and share one doc on the server (stages/lora-slots.h),
+// so their strings are made from one template here rather than written
+// out six times per stage.
+(() => {
+  const path = [
+    '又一个运行时 LoRA 槽位，用法与 `lora2` 完全相同：与其他槽位同时生效'
+    + '（每个被适配的投影按槽位各加一项 s B (A x)），可接受的写法相同，加载'
+    + '时生效，强度由对应的 `_scale` 键单独实时调节。最多可同时运行八个适配'
+    + '器；每多一个就多一对细长 GEMM，基础权重仍然只读一次',
+    '又一個執行階段 LoRA 槽位，用法與 `lora2` 完全相同：與其他槽位同時生效'
+    + '（每個被套用的投影按槽位各加一項 s B (A x)），可接受的寫法相同，載入'
+    + '時生效，強度由對應的 `_scale` 鍵單獨即時調整。最多可同時執行八個轉接'
+    + '器；每多一個就多一對細長 GEMM，基礎權重仍然只讀一次',
+  ];
+  // generate-image only: a family's model-config beat wins over it.
+  const overrides = [
+    '。模型族 model-config 节拍上的同名键会覆盖这里的设置',
+    '。模型族 model-config 節拍上的同名鍵會覆寫這裡的設定',
+  ];
+  const scale = [
+    '该槽位的强度，按每次前向生效，与其他每个槽位相互独立。填 0 会跳过它的'
+    + '两个 GEMM',
+    '該槽位的強度，按每次前向生效，與其他每個槽位相互獨立。填 0 會跳過它的'
+    + '兩個 GEMM',
+  ];
+  const qkv = [
+    '该槽位那个融合 attn.qkv_proj 的行顺序，含义与 `lora` 的 '
+    + '`lora_qkv_layout` 完全相同。之所以逐槽位设置，是因为行顺序是文件的属性',
+    '該槽位那個融合 attn.qkv_proj 的列順序，含義與 `lora` 的 '
+    + '`lora_qkv_layout` 完全相同。之所以逐槽位設定，是因為列順序是檔案的屬性',
+  ];
+  const stages = [
+    ['generate-image', true, false],
+    ['krea2-model-config', false, false],
+    ['flux2-model-config', false, false],
+    ['qwen-image-21-model-config', false, false],
+    ['minimax-h3-model-config', false, true],
+  ];
+  for (const [stage, over, h3] of stages) {
+    for (let n = 3; n <= 8; ++n) {
+      const k = `cfg.${stage}.lora${n}`;
+      STRINGS[k] = ['', ...path.map((p, i) => over ? p + overrides[i] : p)];
+      STRINGS[`${k}_scale`] = ['', ...scale];
+      if (h3) { STRINGS[`${k}_qkv_layout`] = ['', ...qkv]; }
+    }
+  }
+})();
+
+const TAGS = LOCALES.map((l) => l.tag);
+const listeners = new Set();
+let current = readInitial();
+
+function readInitial() {
+  try {
+    const v = localStorage.getItem(KEY);
+    if (TAGS.includes(v)) { return v; }
+  } catch (e) { /* storage blocked -- fall through */ }
+  // Fall back to the browser's preferred language, else en-us.
+  const nav = (navigator.language || 'en-us').toLowerCase();
+  if (nav.startsWith('zh')) {
+    return /hant|tw|hk|mo/.test(nav) ? 'zh-tw' : 'zh-cn';
+  }
+  return 'en-us';
+}
+
+export function getLocale() { return current; }
+export function locales() { return LOCALES; }
+
+// Translate `key` for the current locale (falling back to en-us, then to
+// the key itself). `params` (optional) fills {name} placeholders in the
+// string, so dynamic messages keep correct word order per language.
+export function t(key, params) {
+  const row = STRINGS[key];
+  let s;
+  if (row) {
+    const slot = SLOT[current] != null ? SLOT[current] : 0;
+    s = (row[slot] != null && row[slot] !== '') ? row[slot] : row[0];
+  } else {
+    s = key;
+  }
+  if (params) {
+    s = s.replace(/\{(\w+)\}/g, (m, k) =>
+      (params[k] != null ? String(params[k]) : m));
+  }
+  return s;
+}
+
+// Localized override for `key` if the catalogue carries one, else
+// `fallback` (a server-provided English string). Used for text that
+// originates in the C++ stage spec (config-key / stage / port doc
+// strings) and arrives over the API already in English: the catalogue
+// translates it WHEN a key exists, and otherwise the English text shows
+// through unchanged. This keeps the C++ `.doc` the source of truth and
+// makes the per-spec translations purely additive. Key conventions:
+//   cfg.<stage-type>.<attr-key>   attribute help
+//   stage.<stage-type>.doc        stage description
+//   stage.<stage-type>.name       stage display name
+//   port.<stage-type>.<port>      port help
+//   cat.<category>                stage category label
+export function tOr(key, fallback) {
+  const row = STRINGS[key];
+  if (!row) { return fallback; }
+  const slot = SLOT[current] != null ? SLOT[current] : 0;
+  const s = (row[slot] != null && row[slot] !== '') ? row[slot] : row[0];
+  return (s != null && s !== '') ? s : fallback;
+}
+
+// Merge a message catalogue contributed at runtime, in the same
+// [en-us, zh-cn, zh-tw] tuple shape as STRINGS. This is how a
+// STAGE-PROVIDED view supplies its own text (see stage-views.js): its
+// strings ship inside the view module, next to the stage's C++, instead
+// of being copied into the catalogue above. Existing keys are NOT
+// overwritten, so a view can never redefine an app string.
+export function addStrings(table) {
+  if (!table || typeof table !== 'object') { return; }
+  for (const [key, row] of Object.entries(table)) {
+    if (!Array.isArray(row) || key in STRINGS) { continue; }
+    STRINGS[key] = row;
+  }
+}
+
+// Change the active locale; persists, sets <html lang>, and notifies
+// listeners (registered via onLocaleChange) so views can re-render.
+export function setLocale(tag) {
+  const v = TAGS.includes(tag) ? tag : 'en-us';
+  if (v === current) { return v; }
+  current = v;
+  try { localStorage.setItem(KEY, v); } catch (e) { /* ignore */ }
+  document.documentElement.setAttribute('lang', v);
+  for (const fn of listeners) {
+    try { fn(v); } catch (e) { /* one bad listener shouldn't break others */ }
+  }
+  return v;
+}
+
+// Register a callback fired after the locale changes. Returns an
+// unsubscribe function.
+export function onLocaleChange(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}

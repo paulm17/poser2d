@@ -1,0 +1,582 @@
+#include "stages/audio-video/image-resample-stage.h"
+
+#include "apple-silicon/metal-compute/image-ops.h"
+#include "apple-silicon/metal-compute/metal-compute.h"
+#include "apple-silicon/tensor-beat.h"
+#include "common/flex-data.h"
+#include "common/job.h"
+#include "common/vpipe-format.h"
+#include "interfaces/session-context-intf.h"
+#include "interfaces/session-services-intf.h"
+#include "pipeline/runtime-context.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <utility>
+
+using namespace std;
+
+namespace vpipe {
+
+namespace {
+// Parse "#RRGGBB" / "RRGGBB" into r,g,b bytes. Defaults to 114 grey on a
+// malformed value (matching the historical letterbox pad).
+void parse_hex_color_(string s, uint8_t* r, uint8_t* g, uint8_t* b)
+{
+  *r = *g = *b = 114;
+  if (!s.empty() && s[0] == '#') { s = s.substr(1); }
+  if (s.size() >= 6) {
+    auto hx = [&](size_t off) -> long {
+      return strtol(s.substr(off, 2).c_str(), nullptr, 16);
+    };
+    *r = static_cast<uint8_t>(hx(0));
+    *g = static_cast<uint8_t>(hx(2));
+    *b = static_cast<uint8_t>(hx(4));
+  }
+}
+}  // namespace
+
+ImageResampleStage::ImageResampleStage(const SessionContextIntf* session,
+                                       string                    id,
+                                       vector<InEdge>            iports,
+                                       FlexData                  config)
+  : TypedStage<ImageResampleStage>(session, std::move(id), std::move(iports),
+                                   std::move(config))
+{
+  _out_w  = static_cast<int>(attr_int("width"));
+  _out_h  = static_cast<int>(attr_int("height"));
+  _src_x  = static_cast<int>(attr_int("src_x"));
+  _src_y  = static_cast<int>(attr_int("src_y"));
+  _scale  = attr_real("scale");
+  _gpu    = attr_bool("gpu");
+  parse_hex_color_(attr_str("pad_color"), &_pad_r, &_pad_g, &_pad_b);
+
+  const string fit = attr_str("fit");
+  if      (fit == "crop")    { _mode = 1; }
+  else if (fit == "stretch") { _mode = 2; }
+  else if (fit == "manual")  { _mode = 3; }
+  else                       { _mode = 0; }   // pad (default)
+
+  const string alg = attr_str("algorithm");
+  // LANCZOS unless bilinear is asked for by name. The fallback is the
+  // DEFAULT, so it has to be the declared one -- attr_str() hands back
+  // `def_str` for an absent key, but a key set to "" reaches here empty
+  // and would otherwise land on whichever branch the else happened to be.
+  if      (alg == "bilinear") { _alg = 0; }
+  else if (alg == "bicubic")  { _alg = 2; }
+  else                        { _alg = 1; }   // lanczos (default)
+  // Deferred validation: the ctor never throws (Stage::fail_config).
+  // At least one of width / height must be positive; a missing (<= 0)
+  // axis is inferred per-frame from the source aspect ratio.
+  if (_out_w <= 0 && _out_h <= 0) {
+    fail_config(fmt("ImageResampleStage('{}'): at least one of width / "
+                    "height must be > 0 (got {}x{})",
+                    this->id(), _out_w, _out_h));
+  } else if (!alg.empty() && alg != "bilinear" && alg != "lanczos" &&
+             alg != "bicubic") {
+    fail_config(fmt("ImageResampleStage('{}'): unknown algorithm '{}' "
+                    "(supported: 'bilinear', 'lanczos', 'bicubic')",
+                    this->id(), alg));
+  }
+  allocate_oports(spec().oports.size());
+}
+
+ImageResampleStage::~ImageResampleStage() = default;
+
+namespace {
+// The closed value sets, for the editor's dropdowns (see SpecExtra's
+// "choices" in stage-config.h). Named arrays because `extra` is a span:
+// a braced temporary would not outlive the declaration it is written in.
+//
+// These must agree with the ctor's own branch chains above, which stay
+// the authority on what is accepted.
+constexpr SpecExtra kFitChoices[] = {
+  {spec_key::kChoices, "pad,crop,stretch,manual"},
+};
+constexpr SpecExtra kAlgorithmChoices[] = {
+  {spec_key::kChoices, "lanczos,bilinear,bicubic"},
+};
+constexpr ConfigKey kAttrs[] = {
+  {.key = "width",  .type = ConfigType::Int,
+   .doc = "output width in pixels; omit (or set <= 0) to infer it from "
+          "height, preserving the source aspect ratio",
+   .def_int = 0},
+  {.key = "height", .type = ConfigType::Int,
+   .doc = "output height in pixels; omit (or set <= 0) to infer it from "
+          "width, preserving the source aspect ratio",
+   .def_int = 0},
+  {.key = "fit", .type = ConfigType::String,
+   .doc = "aspect-ratio handling: pad (match long side + pad_color) | "
+          "crop (match short side + centre-crop) | stretch (change AR) | "
+          "manual (sample from src_x,src_y at scale, pad the rest)",
+   .def_str = "pad", .extra = kFitChoices},
+  {.key = "pad_color", .type = ConfigType::String,
+   .doc = "#RRGGBB solid pad colour for pad / manual (f16 / f32 frames "
+          "treat it as 0..1 normalised)",
+   .def_str = "#727272"},
+  {.key = "src_x", .type = ConfigType::Int,
+   .doc = "manual: source origin x", .def_int = 0},
+  {.key = "src_y", .type = ConfigType::Int,
+   .doc = "manual: source origin y", .def_int = 0},
+  {.key = "scale", .type = ConfigType::Real,
+   .doc = "manual: resample ratio (output px per source px, > 0)",
+   .def_real = 1.0},
+  {.key = "algorithm", .type = ConfigType::String,
+   .doc = "interpolation algorithm: 'lanczos' (the DEFAULT -- Lanczos-3, "
+          "anti-aliased, matches PIL LANCZOS) | 'bilinear' (cheaper, and "
+          "aliases when downscaling) | 'bicubic' (matches PIL BICUBIC). "
+          "Most traffic through this stage is a downscale onto a model's "
+          "input canvas, where bilinear keeps the high frequencies it "
+          "should be removing -- so the good filter is the default and the "
+          "fast one is opted into. Pick 'bicubic' when a model's own "
+          "preprocessing used it and the pixels are what it conditions on: "
+          "a VOSR restoration upscales its input this way before anything "
+          "sees it, and a different filter there is a different input. It "
+          "runs on the GPU for f16 and f32 frames and on the CPU for u8",
+   .def_str = "lanczos", .extra = kAlgorithmChoices},
+  {.key = "gpu", .type = ConfigType::Bool,
+   .doc = "resample on the GPU where a kernel exists (the default): "
+          "every filter, fit and channel count for f16 and f32 frames; "
+          "bilinear and lanczos for u8 RGB. false pins the CPU path, which "
+          "implements all of them too -- what to set when comparing the "
+          "two",
+   .def_bool = true},
+};
+const PortSpec kIports[] = {
+  {.name = "frames", .doc = "planar RGB [3,H,W] or RGBA [4,H,W] "
+                            "TensorBeat (u8, f16 or f32)",
+   .type = &typeid(TensorBeatPayload),
+   .tags = "rgb-frames", .clock_group = 0},
+};
+const PortSpec kOports[] = {
+  {.name = "frames",
+   .doc = "resampled planar TensorBeat [3|4,height,width] (same dtype)",
+   .type = &typeid(TensorBeatPayload),
+   .tags = "rgb-frames", .clock_group = 0},
+};
+const StageSpec kSpec = {
+  .type_name = "image-resample",
+  .doc       = "Resample rgb-frames to a fixed width x height, with a "
+               "configurable aspect-ratio fit (pad / crop / stretch / "
+               "manual) and pad colour. Resamples with Lanczos-3 by "
+               "default; 'bilinear' is cheaper and 'bicubic' matches PIL. "
+               "f16 and f32 frames, RGB or RGBA, resample on the GPU with "
+               "every filter; u8 RGB with bilinear or lanczos; the rest on "
+               "the CPU. iport and oport share one clock domain (1:1).",
+  .display_name = "Resample",
+  .category  = StageCategory::Visual,
+  .iports    = kIports,
+  .oports    = kOports,
+  .attrs     = kAttrs,
+};
+}  // namespace
+
+const StageSpec&
+ImageResampleStage::spec() const noexcept
+{
+  return kSpec;
+}
+
+Job
+ImageResampleStage::initialize(RuntimeContext&)
+{
+  _mc = session() ? session()->services()->metal_compute() : nullptr;
+  const string ws = _out_w > 0 ? std::to_string(_out_w) : string("auto");
+  const string hs = _out_h > 0 ? std::to_string(_out_h) : string("auto");
+  // Name the FILTER and where it runs. "metal ok" alone reported the
+  // backend's availability, which is not the same question: bicubic has
+  // no GPU kernel and always takes the CPU path, so a graph that asked
+  // for it was told metal was fine and quietly did not use it.
+  //
+  // THIS RUNS BEFORE ANY BEAT, so it cannot know the dtype or the
+  // channel count -- and for u8 they decide it: the u8 kernels have
+  // three planes and no bicubic, so u8 RGBA and u8 bicubic take the CPU.
+  // f16 and f32 have kernels for all of it. Said here rather than left
+  // to contradict a later log line.
+  const char* alg = _alg == 0 ? "bilinear" : _alg == 2 ? "bicubic"
+                                                       : "lanczos";
+  const bool gpu = _gpu && _mc && _mc->valid();
+  session()->info(fmt(
+      "ImageResampleStage('{}'): -> {}x{}, fit={}, {} on the {}{}",
+      this->id(), ws, hs, _mode, alg, gpu ? "GPU" : "CPU",
+      !gpu ? "" : _alg == 2 ? " for f16/f32 frames (u8: the CPU)"
+                            : " (a u8 RGBA beat takes the CPU)"));
+  co_return;
+}
+
+void
+ImageResampleStage::resolve_out_dims_(int in_w, int in_h,
+                                      int* out_w, int* out_h) const noexcept
+{
+  int ow = _out_w, oh = _out_h;
+  if (ow <= 0 && oh <= 0) {          // both unset -> pass the source through
+    ow = in_w; oh = in_h;
+  } else if (ow <= 0) {              // infer width from height (keep AR)
+    ow = static_cast<int>(
+        llround(static_cast<double>(in_w) * oh / in_h));
+  } else if (oh <= 0) {              // infer height from width (keep AR)
+    oh = static_cast<int>(
+        llround(static_cast<double>(in_h) * ow / in_w));
+  }
+  *out_w = ow < 1 ? 1 : ow;
+  *out_h = oh < 1 ? 1 : oh;
+}
+
+void
+ImageResampleStage::cpu_resample_(const uint8_t* src, int in_w, int in_h,
+                                  int out_w, int out_h,
+                                  uint8_t* dst, bool is_f32, int C) const
+{
+  const metal_compute::ResampleGeom g =
+      metal_compute::compute_resample_geom(in_w, in_h, out_w, out_h,
+          _mode, _src_x, _src_y, static_cast<float>(_scale));
+  const int planeS = in_w * in_h;
+  const int planeD = out_w * out_h;
+  const float div = is_f32 ? 255.0f : 1.0f;   // f32 frames are 0..1
+  // A 4th pad entry for RGBA, and it is TRANSPARENT: a border invented
+  // to make an aspect fit is not part of the picture, so saying it is
+  // opaque would put a frame of `pad_rgb` around every letterboxed
+  // image instead of leaving it empty.
+  const float pad[4] = { _pad_r / div, _pad_g / div, _pad_b / div, 0.0f };
+  const float* sf = reinterpret_cast<const float*>(src);
+  float* df = reinterpret_cast<float*>(dst);
+  auto rd = [&](int c, int x, int y) -> float {
+    const int i = c * planeS + y * in_w + x;
+    return is_f32 ? sf[i] : static_cast<float>(src[i]);
+  };
+  auto wr = [&](int c, int x, int y, float v) {
+    const int i = c * planeD + y * out_w + x;
+    if (is_f32) { df[i] = v; }
+    else { dst[i] = static_cast<uint8_t>(clamp(v + 0.5f, 0.0f, 255.0f)); }
+  };
+  for (int y = 0; y < out_h; ++y) {
+    for (int x = 0; x < out_w; ++x) {
+      const bool out = x < g.pad_x || x >= g.pad_x + g.new_w
+                    || y < g.pad_y || y >= g.pad_y + g.new_h;
+      if (out) {
+        for (int c = 0; c < C; ++c) { wr(c, x, y, pad[c]); }
+        continue;
+      }
+      const float sxf =
+          (x - g.pad_x + 0.5f) * g.inv_x - 0.5f + g.src_x0;
+      const float syf =
+          (y - g.pad_y + 0.5f) * g.inv_y - 0.5f + g.src_y0;
+      int ix0 = static_cast<int>(floorf(sxf));
+      int iy0 = static_cast<int>(floorf(syf));
+      const float fx = sxf - ix0, fy = syf - iy0;
+      int ix1 = ix0 + 1, iy1 = iy0 + 1;
+      ix0 = clamp(ix0, 0, in_w - 1); ix1 = clamp(ix1, 0, in_w - 1);
+      iy0 = clamp(iy0, 0, in_h - 1); iy1 = clamp(iy1, 0, in_h - 1);
+      for (int c = 0; c < C; ++c) {
+        const float v00 = rd(c, ix0, iy0), v01 = rd(c, ix1, iy0);
+        const float v10 = rd(c, ix0, iy1), v11 = rd(c, ix1, iy1);
+        const float v0 = v00 + (v01 - v00) * fx;
+        const float v1 = v10 + (v11 - v10) * fx;
+        wr(c, x, y, v0 + (v1 - v0) * fy);
+      }
+    }
+  }
+}
+
+void
+ImageResampleStage::cpu_lanczos_(const uint8_t* src, int in_w, int in_h,
+                                 int out_w, int out_h,
+                                 uint8_t* dst, bool is_f32, bool cubic,
+                                 int C) const
+{
+  const metal_compute::ResampleGeom g =
+      metal_compute::compute_resample_geom(in_w, in_h, out_w, out_h,
+          _mode, _src_x, _src_y, static_cast<float>(_scale));
+  const int planeS = in_w * in_h;
+  const int planeD = out_w * out_h;
+  const float div = is_f32 ? 255.0f : 1.0f;   // f32 frames are 0..1
+  // A 4th pad entry for RGBA, and it is TRANSPARENT: a border invented
+  // to make an aspect fit is not part of the picture, so saying it is
+  // opaque would put a frame of `pad_rgb` around every letterboxed
+  // image instead of leaving it empty.
+  const float pad[4] = { _pad_r / div, _pad_g / div, _pad_b / div, 0.0f };
+  const float* sf = reinterpret_cast<const float*>(src);
+  float* df = reinterpret_cast<float*>(dst);
+  auto rd = [&](int c, int x, int y) -> float {
+    const int i = c * planeS + y * in_w + x;
+    return is_f32 ? sf[i] : static_cast<float>(src[i]);
+  };
+  auto wr = [&](int c, int x, int y, float v) {
+    const int i = c * planeD + y * out_w + x;
+    if (is_f32) { df[i] = v; }
+    else { dst[i] = static_cast<uint8_t>(clamp(v + 0.5f, 0.0f, 255.0f)); }
+  };
+  if (g.new_w <= 0 || g.new_h <= 0) {           // degenerate -> all pad
+    for (int y = 0; y < out_h; ++y) {
+      for (int x = 0; x < out_w; ++x) {
+        for (int c = 0; c < C; ++c) { wr(c, x, y, pad[c]); }
+      }
+    }
+    return;
+  }
+  std::vector<int> bx, by;
+  std::vector<float> wx, wy;
+  const int ksx = cubic
+      ? metal_compute::build_cubic_coeffs(in_w, g.src_x0, g.new_w, g.inv_x,
+                                          bx, wx)
+      : metal_compute::build_lanczos_coeffs(in_w, g.src_x0, g.new_w, g.inv_x,
+                                            bx, wx);
+  const int ksy = cubic
+      ? metal_compute::build_cubic_coeffs(in_h, g.src_y0, g.new_h, g.inv_y,
+                                          by, wy)
+      : metal_compute::build_lanczos_coeffs(in_h, g.src_y0, g.new_h, g.inv_y,
+                                            by, wy);
+  for (int y = 0; y < out_h; ++y) {
+    for (int x = 0; x < out_w; ++x) {
+      const bool out = x < g.pad_x || x >= g.pad_x + g.new_w
+                    || y < g.pad_y || y >= g.pad_y + g.new_h;
+      if (out) {
+        for (int c = 0; c < C; ++c) { wr(c, x, y, pad[c]); }
+        continue;
+      }
+      const int cx = x - g.pad_x, cy = y - g.pad_y;
+      const int xmin = bx[static_cast<size_t>(cx)];
+      const int ymin = by[static_cast<size_t>(cy)];
+      for (int c = 0; c < C; ++c) {
+        float acc = 0.0f;
+        for (int ty = 0; ty < ksy; ++ty) {
+          const float wyt = wy[static_cast<size_t>(cy) * ksy + ty];
+          if (wyt == 0.0f) { continue; }
+          const int sy = clamp(ymin + ty, 0, in_h - 1);
+          float racc = 0.0f;
+          for (int tx = 0; tx < ksx; ++tx) {
+            const int sx = clamp(xmin + tx, 0, in_w - 1);
+            racc += wx[static_cast<size_t>(cx) * ksx + tx] * rd(c, sx, sy);
+          }
+          acc += wyt * racc;
+        }
+        wr(c, x, y, acc);
+      }
+    }
+  }
+}
+
+Job
+ImageResampleStage::process(RuntimeContext& ctx)
+{
+  auto in0 = co_await ctx.read(0);
+  if (!in0) { ctx.signal_done(); co_return; }
+
+  const auto* tin = dynamic_cast<const TensorBeatPayload*>(in0.get());
+  if (tin == nullptr || tin->shape.size() != 3
+      || (tin->shape[0] != 3 && tin->shape[0] != 4)
+      || (tin->dtype != TensorBeat::DType::U8
+          && tin->dtype != TensorBeat::DType::F16
+          && tin->dtype != TensorBeat::DType::F32)) {
+    session()->warn(fmt(
+        "ImageResampleStage('{}'): expected planar RGB [3,H,W] or RGBA "
+        "[4,H,W] u8/f16/f32 TensorBeat; dropping beat", this->id()));
+    co_return;
+  }
+  using DType = TensorBeat::DType;
+  const int CH = static_cast<int>(tin->shape[0]);
+  const int in_h = static_cast<int>(tin->shape[1]);
+  const int in_w = static_cast<int>(tin->shape[2]);
+  if (in_w <= 0 || in_h <= 0) { co_return; }
+
+  // Resolve the output size against this frame: an axis left at 0 is
+  // inferred from the other so the source aspect ratio is preserved.
+  int out_w = 0, out_h = 0;
+  resolve_out_dims_(in_w, in_h, &out_w, &out_h);
+
+  // Both the resample kernel and the CPU fallback assume a tightly
+  // packed planar source (row pitch == in_w). Producers can hand us
+  // padded rows -- load-image forwards FFmpeg's GBRP linesize, which is
+  // 32-byte aligned, so a width that isn't a multiple of 32 gives
+  // strides with pitch > in_w. Reading that as tight shears every row
+  // (slanted colour bands). Materialise a contiguous copy when needed.
+  AlignedVector<uint8_t> contig;
+  const uint8_t* src_tight = tin->bytes_();
+  const bool contiguous = tin->is_contiguous();
+  if (!contiguous) {
+    contig = tin->materialize_contiguous();
+    src_tight = contig.data();
+  }
+
+  // The source as the GPU reads it: the beat's own Metal buffer when it
+  // has one and is tight, else a reused staging buffer.
+  const bool gpu = _gpu && _mc && _mc->valid();
+  const size_t esz = TensorBeat::byte_size_of(tin->dtype);
+  const size_t src_bytes = static_cast<size_t>(CH) * in_w * in_h * esz;
+  auto gpu_source = [&]() -> const ExternalStorageHandle* {
+    if (tin->external && contiguous) { return tin->external.get(); }
+    if (!_src_stage || _stage_bytes < src_bytes) {
+      _src_stage =
+          metal_compute::make_shared_storage(*_mc, src_bytes, session());
+      _stage_bytes = _src_stage ? src_bytes : 0;
+    }
+    if (!_src_stage) { return nullptr; }
+    std::memcpy(_src_stage->contents, src_tight, src_bytes);
+    return _src_stage.get();
+  };
+
+  // GPU, FLOAT FRAMES: every filter, every fit, RGB or RGBA (resampled
+  // premultiplied inside the kernel), in the frame's own element type --
+  // nothing passes through 8 bits or through a CPU conversion.
+  if (gpu && tin->dtype != DType::U8) {
+    const ExternalStorageHandle* src_h = gpu_source();
+    auto dst = metal_compute::make_shared_storage(
+        *_mc, static_cast<size_t>(CH) * out_w * out_h * esz, session());
+    // A border invented to make an aspect fit is not part of the
+    // picture, so an RGBA pad is TRANSPARENT (the CPU path's rule).
+    const float pad[4] = { _pad_r / 255.0f, _pad_g / 255.0f,
+                           _pad_b / 255.0f, 0.0f };
+    if (src_h && dst
+        && metal_compute::resample_planar_float(
+               *_mc, *src_h,
+               tin->dtype == DType::F16 ? metal_compute::PlanarFloat::F16
+                                        : metal_compute::PlanarFloat::F32,
+               CH, in_w, in_h, *dst, out_w, out_h, _mode, _src_x, _src_y,
+               static_cast<float>(_scale), _alg, pad, session())) {
+      TensorBeat tb;
+      tb.dtype = tin->dtype;
+      tb.shape = { CH, out_h, out_w };
+      tb.sideband = tin->sideband;
+      tb.external = std::move(dst);
+      co_await ctx.write(0, make_payload<TensorBeatPayload>(std::move(tb)));
+      co_return;
+    }
+    // fall through to the CPU path on any GPU failure
+  }
+
+  // GPU, U8 FRAMES via the (generalised) letterbox and Lanczos kernels.
+  // RGB ONLY -- they take three pad bytes and three planes, and an RGBA
+  // resample additionally has to run PREMULTIPLIED, which they have no
+  // notion of. Four channels take the CPU path below; a still is not a
+  // video loop, so what that costs is milliseconds.
+  // No u8 bicubic kernel either: _alg 2 takes the CPU path below.
+  if (gpu && CH == 3 && tin->dtype == DType::U8 && _alg != 2) {
+    const ExternalStorageHandle* src_h = gpu_source();
+    if (src_h) {
+      auto dst = metal_compute::make_shared_storage(
+          *_mc, static_cast<size_t>(3) * out_w * out_h, session());
+      const bool ok = dst && (_alg == 1
+          ? metal_compute::resample_lanczos_planar_u8_to_u8(
+                *_mc, *src_h, in_w, in_h, *dst, out_w, out_h,
+                _mode, _src_x, _src_y, static_cast<float>(_scale),
+                _pad_r, _pad_g, _pad_b, session())
+          : metal_compute::resample_planar_u8_to_u8(
+                *_mc, *src_h, in_w, in_h, *dst, out_w, out_h,
+                _mode, _src_x, _src_y, static_cast<float>(_scale),
+                _pad_r, _pad_g, _pad_b, session()));
+      if (ok) {
+        TensorBeat tb;
+        tb.dtype = TensorBeat::DType::U8;
+        tb.shape = { 3, out_h, out_w };
+        tb.sideband = tin->sideband;
+        tb.external = std::move(dst);
+        co_await ctx.write(0,
+            make_payload<TensorBeatPayload>(std::move(tb)));
+        co_return;
+      }
+    }
+    // fall through to the CPU path on any GPU failure
+  }
+
+  // CPU path: `gpu: false`, no-metal builds, u8 RGBA or bicubic, or a
+  // GPU miss. F16 runs as F32 here -- widened in, narrowed back out --
+  // so the CPU code has two element types, not three.
+  const bool is_f16 = tin->dtype == DType::F16;
+  AlignedVector<uint8_t> wide;
+  if (is_f16) {
+    const size_t n = static_cast<size_t>(CH) * in_w * in_h;
+    wide.resize(n * sizeof(float));
+    const auto* h = reinterpret_cast<const _Float16*>(src_tight);
+    float* f = reinterpret_cast<float*>(wide.data());
+    for (size_t i = 0; i < n; ++i) { f[i] = static_cast<float>(h[i]); }
+    src_tight = wide.data();
+  }
+  TensorBeat tb;
+  tb.dtype = is_f16 ? DType::F32 : tin->dtype;
+  tb.shape = { CH, out_h, out_w };
+  tb.sideband = tin->sideband;
+  tb.resize_contiguous(static_cast<size_t>(CH) * out_w * out_h);
+  const bool is_f32 = tb.dtype == DType::F32;
+
+  // RGBA RESAMPLES PREMULTIPLIED. Averaging colour and alpha
+  // independently pulls the colour of fully transparent pixels into
+  // the edge -- a dark halo around everything on an image whose
+  // transparent region is black, which is what a generated RGBA
+  // picture usually has. Premultiply, resample all four planes, then
+  // divide back out.
+  AlignedVector<uint8_t> pm;
+  if (CH == 4) {
+    const size_t plane = static_cast<size_t>(in_w) * in_h;
+    pm.resize(4 * plane * (is_f32 ? sizeof(float) : 1));
+    const float amax = is_f32 ? 1.0f : 255.0f;
+    const float* sf = reinterpret_cast<const float*>(src_tight);
+    float* pf = reinterpret_cast<float*>(pm.data());
+    for (size_t i = 0; i < plane; ++i) {
+      const float a = is_f32 ? sf[3 * plane + i]
+                             : static_cast<float>(src_tight[3 * plane + i]);
+      const float a01 = amax > 0.0f ? a / amax : 0.0f;
+      for (int c = 0; c < 3; ++c) {
+        const float v = is_f32 ? sf[c * plane + i]
+                               : static_cast<float>(src_tight[c * plane + i]);
+        if (is_f32) { pf[c * plane + i] = v * a01; }
+        else {
+          pm[c * plane + i] =
+              static_cast<uint8_t>(clamp(v * a01 + 0.5f, 0.0f, 255.0f));
+        }
+      }
+      if (is_f32) { pf[3 * plane + i] = a; }
+      else { pm[3 * plane + i] = src_tight[3 * plane + i]; }
+    }
+    src_tight = pm.data();
+  }
+
+  if (_alg == 1 || _alg == 2) {
+    cpu_lanczos_(src_tight, in_w, in_h, out_w, out_h, tb.bytes_(), is_f32,
+                 _alg == 2, CH);
+  } else {
+    cpu_resample_(src_tight, in_w, in_h, out_w, out_h, tb.bytes_(), is_f32,
+                  CH);
+  }
+  if (CH == 4) {
+    const size_t plane = static_cast<size_t>(out_w) * out_h;
+    const float amax = is_f32 ? 1.0f : 255.0f;
+    uint8_t* d8 = tb.bytes_();
+    float* df = reinterpret_cast<float*>(d8);
+    for (size_t i = 0; i < plane; ++i) {
+      const float a = is_f32 ? df[3 * plane + i]
+                             : static_cast<float>(d8[3 * plane + i]);
+      const float a01 = amax > 0.0f ? a / amax : 0.0f;
+      if (a01 <= 1e-4f) { continue; }        // nothing to recover
+      for (int c = 0; c < 3; ++c) {
+        if (is_f32) { df[c * plane + i] /= a01; }
+        else {
+          d8[c * plane + i] = static_cast<uint8_t>(
+              clamp(d8[c * plane + i] / a01 + 0.5f, 0.0f, 255.0f));
+        }
+      }
+    }
+  }
+  if (is_f16) {
+    TensorBeat narrow;
+    narrow.dtype = DType::F16;
+    narrow.shape = tb.shape;
+    narrow.sideband = std::move(tb.sideband);
+    const size_t n = static_cast<size_t>(CH) * out_w * out_h;
+    narrow.resize_contiguous(n);
+    const float* f = tb.as_f32();
+    auto* h = reinterpret_cast<_Float16*>(narrow.bytes_());
+    for (size_t i = 0; i < n; ++i) { h[i] = static_cast<_Float16>(f[i]); }
+    co_await ctx.write(0,
+        make_payload<TensorBeatPayload>(std::move(narrow)));
+    co_return;
+  }
+  co_await ctx.write(0, make_payload<TensorBeatPayload>(std::move(tb)));
+}
+
+VPIPE_REGISTER_STAGE(ImageResampleStage)
+VPIPE_REGISTER_SPEC(ImageResampleStage, kSpec)
+
+}

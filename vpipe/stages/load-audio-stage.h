@@ -1,0 +1,174 @@
+#ifndef LOAD_AUDIO_STAGE_H
+#define LOAD_AUDIO_STAGE_H
+
+#include "common/encoded-segment.h"
+#include "common/ffmpeg-libraries.h"
+#include "common/job.h"
+#include "pipeline/runtime-context.h"
+#include "pipeline/typed-stage.h"
+
+#include <cstdint>
+#include <string>
+
+namespace vpipe {
+
+// Reads an audio file (or network URL) and emits its ENCODED packets,
+// one Beat per packet -- the file-based sibling of `rtsp-capture`'s
+// audio oport, and the upstream `audio-to-pcm` was written for.
+//
+//   oport0  EncodedSegmentPayload, kind = Audio, ONE PACKET per beat,
+//           carrying `codec_id` / `sample_rate` / `channels` /
+//           `extradata` from the stream's parameters. That is exactly
+//           what audio-to-pcm's `ensure_decoder_` reads, so any codec
+//           FFmpeg can decode works -- mp3, AAC, FLAC, ALAC, Opus,
+//           Vorbis, or the PCM in a .wav.
+//
+//   load-audio -> audio-to-pcm -> (audio-transcribe | audio-tagging |
+//                                  audio-segment | audio-vae-encode)
+//
+// ---- WHY IT DEMUXES AND DOES NOT DECODE ----
+//
+// `audio-to-pcm` already owns the decode, the resample to a configured
+// rate and the accumulation into chunk-sized beats, and it is the stage
+// every PCM consumer in the tree is written against. Decoding here would
+// either duplicate that or produce a second, subtly different PCM
+// contract.
+//
+// `load-video` stops at packets for the same reason, and it did not
+// always: it decoded to FrameRefs, which no tensor-side stage could
+// read. Both file sources now publish rtsp-capture's EncodedSegments, so
+// a file and a camera are interchangeable inputs and the decode lives in
+// one place per modality.
+//
+// It is also why the beat granularity is ONE PACKET rather than one
+// file: audio-to-pcm feeds `seg.data` to the decoder as a single
+// AVPacket, so a beat holding a whole file's concatenated frames would
+// be one malformed packet.
+//
+// ---- TIMESTAMPS ARE MEDIA TIME ----
+//
+// `start_utc` / `end_utc` are the packet's presentation time measured
+// from the START OF THE FILE, expressed as an epoch offset because that
+// is the field's type. A file has no wall clock, and inventing "now"
+// would make two runs over the same file disagree about when its
+// samples happened. audio-to-pcm forwards this to `timestamp_us` on the
+// PCM beat, and `audio-segment` / `audio-transcribe` only ever compare
+// those to each other -- so a consistent media clock is what they need.
+//
+// ---- START AND DURATION ----
+//
+// `start_s` seeks before the first packet and `duration_s` bounds how
+// much is read, so a graph can work on a WINDOW of a long file without
+// decoding the whole thing:
+//
+//   start_s: 45.0, duration_s: 30.0   -- 45 s in, half a minute out
+//
+// Both are PACKET-accurate here, which is as exact as a demuxer can be.
+// The seek lands on the packet at or before `start_s`, and this stage
+// then drops packets that end at or before it -- safe for audio, whose
+// packets are independently decodable, and the reason load-video cannot
+// do the same for its video stream (see that header). So the first
+// sample is within one packet -- ~23 ms for AAC at 44.1 kHz -- of what
+// was asked for, and the last packet may straddle the end rather than
+// stop on it.
+//
+// TIMESTAMPS STAY MEDIA TIME FROM THE START OF THE FILE. A window
+// starting at 45 s emits `start_utc` = 45 s, not 0. Rebasing would make
+// the same samples carry different times depending on the window they
+// were read in, and `audio-segment` / `audio-transcribe` only ever
+// compare these to each other.
+//
+// Configuration (FlexData object on the 4th constructor parameter):
+//   input_url        (string, required)  -- file path or URL
+//   stream_index     (int, default -1)   -- ABSOLUTE stream index, video
+//                                           streams included; -1 = the first
+//                                           audio stream
+//   start_s          (real, default 0)   -- seek to this media time first
+//   duration_s       (real, default 0)   -- stop this many seconds past
+//                                           start_s; 0 = read to EOF
+//   read_timeout_ms  (int, default 0)    -- network open/read timeout
+//   options          (object<string,string>) -- av_dict for the open
+class LoadAudioStage final : public TypedStage<LoadAudioStage> {
+public:
+  static constexpr const char* kTypeName = "load-audio";
+
+  LoadAudioStage(const SessionContextIntf* session,
+                 std::string               id,
+                 std::vector<InEdge>       iports,
+                 FlexData                  config);
+
+  ~LoadAudioStage() override;
+
+  Job initialize(RuntimeContext& ctx) override;
+
+  // Per-LAUNCH reset. Stopping a pipeline destroys the runtime, not this
+  // stage, so a second launch used to find `_eof` still set from the
+  // first and end the stream before reading a packet -- and initialize()
+  // would open a SECOND AVFormatContext over the member holding the
+  // first, leaking it. Closing here means the next initialize() opens
+  // the input the way the first one did.
+  void reset_run_state() override;
+  Job process   (RuntimeContext& ctx) override;
+
+  const StageSpec& spec() const noexcept override;
+
+  // Test-only accessors.
+  std::uint64_t packets_emitted() const noexcept { return _packets; }
+  unsigned      codec_id()        const noexcept { return _codec_id; }
+  unsigned      sample_rate()     const noexcept { return _sample_rate; }
+  unsigned      channels()        const noexcept { return _channels; }
+
+private:
+  void open_input_();
+  std::string av_err_(int rc) const;
+  // The configured window, for the open log; empty when there is none.
+  std::string window_doc_() const;
+
+  const FFmpegLibraries* _libs = nullptr;
+
+  std::string _input_url;
+  int         _stream_index   = -1;
+  int         _read_timeout_ms = 0;
+  double      _start_s        = 0.0;
+  double      _duration_s     = 0.0;
+  FlexData    _open_options;
+
+  // The window in MEDIA microseconds, resolved once from the config.
+  // `_stop_us` is 0 when `duration_s` is 0, meaning "to EOF" -- a
+  // sentinel and not a time, so it is compared against only when
+  // `_has_stop` says it is one.
+  std::int64_t _start_us = 0;
+  std::int64_t _stop_us  = 0;
+  bool         _has_stop = false;
+
+  AVFormatContext* _fctx = nullptr;
+  AVPacket*        _pkt  = nullptr;
+  int              _idx  = -1;      // the chosen stream
+  AVRational       _tb   = {0, 1};  // its time base
+
+  // Cached stream parameters, copied onto every segment. Read once:
+  // they are the same for every packet, and a consumer that opened a
+  // decoder from the first beat must not see them change.
+  unsigned             _codec_id    = 0;
+  unsigned             _sample_rate = 0;
+  unsigned             _channels    = 0;
+  std::vector<uint8_t> _extradata;
+  // Gapless bookkeeping read off the source; see EncodedSegment.
+  // The true sample count a vpipe-written container records, or 0.
+  std::int64_t read_true_sample_count_(struct AVStream* st) const;
+
+  std::int64_t         _skip_head    = 0;
+  std::int64_t         _total_samples = 0;
+
+  bool          _eof     = false;
+  std::uint64_t _packets = 0;
+  // The last packet's media time, carried forward for one with no pts
+  // (some raw formats stamp none). Repeating the previous timestamp
+  // keeps the stream monotonic; falling back to zero would make time
+  // jump to the start of the file mid-clip.
+  std::int64_t  _last_us = 0;
+};
+
+}  // namespace vpipe
+
+#endif

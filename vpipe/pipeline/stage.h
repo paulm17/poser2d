@@ -1,0 +1,580 @@
+#ifndef STAGE_H
+#define STAGE_H
+
+#include "common/flex-data.h"
+#include "common/vertex.h"
+#include "common/vpipe-format.h"
+#include "interfaces/service-req.h"
+#include "interfaces/session-context-intf.h"
+#include "pipeline/memory-plan.h"
+#include "pipeline/resource-plan.h"
+#include "pipeline/stage-config.h"
+#include "pipeline/stage-spec.h"
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <typeinfo>
+#include <vector>
+
+#include "common/vpipe-api.h"
+
+VPIPE_API_BEGIN
+
+namespace vpipe {
+
+enum class StageTypeId : unsigned { unknown = 0 };
+
+class CommandInbox;
+class StageState;
+class Job;
+class RuntimeContext;
+class StageLifecycleAccess;
+
+class Stage : public Vertex {
+public:
+  // The 4th parameter is the stage's configuration as a FlexData
+  // tree. Defaulted to an empty object so call sites that predate
+  // configurable stages keep compiling unchanged. Derived stages
+  // read it through the protected `config()` accessor in their
+  // constructors.
+  Stage(const SessionContextIntf*, std::string id,
+        std::vector<InEdge> iports,
+        FlexData config = FlexData::make_object());
+  ~Stage() override;
+
+  // Numeric type id assigned at static init by TypedStage; unique
+  // in the running process but NOT stable across runs / builds.
+  // Persist stages by type_name(), never by type().
+  virtual StageTypeId      type()      const = 0;
+  // Stable, human-readable canonical name (e.g. "scale", "decode").
+  virtual std::string_view type_name() const = 0;
+
+  // Stage lifecycle, all driven from the per-stage driver coroutine
+  // on the Session ThreadPool:
+  //
+  //   initialize(ctx)         -- once, after the pipeline is fully
+  //                              assembled (every EdgeBuffer and
+  //                              RuntimeContext is wired). Use it
+  //                              for one-shot setup; may emit on
+  //                              output ports (e.g. send a stream
+  //                              params header). Default no-op.
+  //
+  //   process(ctx)            -- per iteration, looped until the
+  //                              runtime stops or the stage signals
+  //                              done via ctx.signal_done().
+  //                              Inside the body, use
+  //                                auto t = co_await ctx.read(p);
+  //                                co_await ctx.write(p, std::move(*t));
+  //                              and call ctx.signal_done() to exit
+  //                              the loop after the current call.
+  //
+  //   drain(ctx)              -- once after the loop exits (either
+  //                              the stage signalled done or stop
+  //                              was requested), before the runtime
+  //                              closes this stage's output edges.
+  //                              Use it to flush in-flight state:
+  //                              codec packet queues, file trailers,
+  //                              etc. Default no-op.
+  //
+  // A future process_batch(RuntimeContext&, unsigned n) sits beside
+  // process(); the driver will pick one based on a per-stage
+  // capability flag.
+  virtual Job initialize(RuntimeContext& ctx);
+  virtual Job process   (RuntimeContext& ctx) = 0;
+  virtual Job drain     (RuntimeContext& ctx);
+
+  // Called by the runtime at the start of EVERY launch, before
+  // initialize(), on every stage -- including one whose config failed
+  // validation, so a stage that will sit out this run still clears
+  // what the last one left.
+  //
+  // WHY THIS EXISTS. Stopping a pipeline destroys the RUNTIME, not the
+  // stages: only unload / re-materialize destroys a Stage. A stage
+  // object therefore sees many launches, and any member that means
+  // "something that happened during THIS run" is wrong on the second
+  // one unless it is cleared. That has bitten repeatedly and in ways
+  // that fail silently rather than loudly -- a one-shot source that
+  // never re-emits, a latched selection that ignores the new beat, a
+  // cached reference that makes run 2 edit run 1's picture, a filename
+  // counter that stops overwriting the file the user is watching, a
+  // closed broadcast channel that leaves a viewer waiting forever.
+  //
+  // THE RULE. Every member is exactly one of:
+  //   * CONFIG or an owned resource -- set in the constructor or
+  //     initialize(), untouched here;
+  //   * PER-RUN state -- reset here, unconditionally;
+  //   * genuinely PERSISTENT across launches -- then it does not belong
+  //     in a member at all; put it in the session's LMDB env keyed by
+  //     stage id, so it survives a process restart too and is visible
+  //     rather than implicit.
+  //
+  // Default no-op: a stage with no per-run state needs nothing. Keep it
+  // cheap and non-throwing -- it runs on the driver before any I/O.
+  virtual void reset_run_state() {}
+
+  // The session services this stage depends on, stated before anything
+  // runs.
+  //
+  // A stage that needs metal-compute, LMDB or the model manager used to
+  // find out by getting a null pointer from services() in the middle of
+  // initialize() -- after the launch had already committed, with the
+  // failure surfacing as whatever that stage did next. Declaring turns
+  // that into a refusal at launch that NAMES the stage and the service.
+  //
+  // Build entries with require_service<T>() / optional_service<T>()
+  // from interfaces/session-services-intf.h; the type is the service's
+  // own class, so a version bump is a compile error rather than a
+  // requirement that quietly stops matching.
+  //
+  // Optional is a real answer, not a cop-out: metal-compute legitimately
+  // is not there on a non-Apple build, and a stage that degrades should
+  // say so here instead of leaving a reader to infer it.
+  //
+  // Plugins CONSUME services this way; registering one is a separate
+  // path that does not exist yet, by design.
+  virtual std::vector<ServiceReq> declare_services() const { return {}; }
+
+  // The scarce, process-wide things this stage INTENDS to acquire,
+  // declared before any stage's initialize() runs. Model weights are
+  // the case that motivated this; see pipeline/resource-plan.h for the
+  // phase and stages/model-memory.h for the weight planner and the
+  // model_memory::weight_claims() helper most overrides use.
+  //
+  // Why it has to be a separate phase. Every driver runs initialize()
+  // concurrently, and that is where model-holding stages both decide
+  // how much memory they may use and then load. A stage sizing the box
+  // therefore sees whatever subset of its peers happens to have loaded
+  // at that instant -- so the same graph can decide differently run to
+  // run, and a stage cannot see a model held by a peer it has no
+  // configuration link to at all. Declaring up front replaces that race
+  // with a complete picture: by the time the first initialize() runs,
+  // the model manager knows every checkpoint the graph is about to
+  // open, whoever opens it.
+  //
+  // The declarations stand for the whole launch; they are NOT dropped
+  // when the init barrier opens. The tempting alternative -- that the
+  // real bytes are authoritative once loading is done -- is wrong here,
+  // because a weight set only accounts for what it CACHED, and the LMs
+  // read uncached (their weights live in the model's own members). So
+  // clearing would make a multi-GB checkpoint read as near-zero the
+  // instant it finished loading, which is exactly when peers start
+  // sizing the box against it. A declared checkpoint counts at the
+  // larger of its estimate and what it holds.
+  //
+  // A model that genuinely keeps less than its files weigh says so
+  // itself, via GenerativeModelManager::revise_declaration -- the
+  // streaming DiTs do. Each planner drops the previous launch's state
+  // when the next one begins, so nothing leaks between runs.
+  //
+  // Return claims, not sizes; the planner estimates. Keys that do not
+  // resolve to anything, or that this run will not actually load, are
+  // harmless -- an over-estimate makes a stage more cautious, which is
+  // the safe error. Default: nothing claimed.
+  // DESCRIBE ONLY. This runs while the picture is still being
+  // assembled, so it must not read the manager, size the box, or
+  // resolve a policy -- a stage visited first would see an empty graph
+  // and one visited last would see all of it, and the same graph would
+  // decide differently depending on the order the flattener happened to
+  // emit. Anything conditional belongs in decide_resources() below.
+  virtual std::vector<ResourceClaim> declare_resources() const
+  {
+    return {};
+  }
+
+  // Refine those claims once EVERY stage has declared.
+  //
+  // This is where a decision goes. By the time it runs the whole
+  // graph's intent is on the record, so every stage asking "does this
+  // box fit what we are about to load" gets the SAME answer, whatever
+  // order they are visited in -- which is the property declare_resources
+  // cannot offer and the reason the two are separate.
+  //
+  // Return claims whose `phase` refines what was declared; the key must
+  // name something already declared, and only the phase is read. The
+  // refinements are BUFFERED and applied together after every stage has
+  // been asked, so one stage's refinement can never be visible to
+  // another's decision. That is what keeps this pass order-free too:
+  // pass 1 writes and does not read, pass 2 reads and does not write.
+  //
+  // Default: nothing to refine.
+  virtual std::vector<ResourceClaim> decide_resources() const
+  {
+    return {};
+  }
+
+  // What this stage costs the box, in its own terms, for the plan the
+  // runtime derives from the TOPOLOGY rather than from a phase name.
+  //
+  // Same discipline as declare_resources: DESCRIBE ONLY. It runs while
+  // the picture is being assembled, so it must not read the manager or
+  // size the box -- a stage visited first would see an empty graph.
+  //
+  // The difference is what it does NOT have to say. It states what it
+  // holds, what it holds at least, whether it lets go, what it allocates
+  // while running, and how big its outputs are. It does not say when any
+  // of that is live relative to anyone else, because the runtime works
+  // that out from the edges -- which is the part a stage cannot know:
+  // it has no idea whether it is the only DiT in the graph or the second
+  // of three.
+  //
+  // Default: nothing, which is what every stage that holds nothing
+  // durable should say.
+  virtual StageMemory declare_memory() const
+  {
+    return {};
+  }
+
+  // What this stage ACTUALLY costs, now that it is running and knows.
+  //
+  // The counterpart to declare_memory: that one is asked before anything
+  // loads, from configuration alone, so its unknowns -- an arena sized by
+  // the first beat's geometry, a streaming model's real resident set --
+  // are unknowable rather than merely unknown. This is where they are
+  // corrected, and the plan is recomputed against every peer's figures
+  // rather than only this stage's.
+  //
+  // Safe to call from process(): the sink is thread-safe, and a stage
+  // with no sink (one constructed outside a launch, which every unit
+  // test does) simply drops the revision.
+  //
+  // Report the WHOLE StageMemory, not a delta. A revision that adjusted
+  // one field would have to be merged against a snapshot the caller
+  // cannot see, and two revisions racing would interleave into a figure
+  // neither stage stated.
+  void revise_memory(const StageMemory& m) const;
+
+  // CONSTANT OUTPUTS -- the beat this stage will emit on `oport` when
+  // that beat is invariant for the whole run and already determined by
+  // configuration, so it can be known before anything executes.
+  //
+  // `model-select` is the motivating case: it is a source (no iports)
+  // whose single beat is a pure function of its `hf_dir` config, and
+  // four downstream stages take their model choice from it. Those
+  // stages therefore had an EMPTY hf_dir at declare_resources() time
+  // and every one of them declared nothing -- so on the shipped
+  // MiniMax-H3 graph the resource-planning phase ran, bracketed every
+  // planner, and put ZERO bytes on the manager's books. The whole
+  // mechanism was inert in exactly the pipelines it exists for.
+  //
+  // Folding is an ANALYSIS, not a rewrite: the constant is delivered to
+  // consumers before planning, and the stage still emits the beat at
+  // run time exactly as before. In a compiler, propagating a constant
+  // lets you delete the instruction that computed it; here it does not,
+  // because a beat is both a value and an EVENT -- its arrival is what
+  // releases the consumer's process(). Removing the edge would change
+  // control flow, so nothing about the data path changes.
+  //
+  // Contract: return a value only if this stage would emit exactly this
+  // beat on this oport, for every beat, for the life of the run. A
+  // stage whose output depends on an iport, on wall clock, or on
+  // anything it discovers while running is NOT constant and must
+  // return nullopt -- a wrong answer here is read as configuration by
+  // stages that then size the box against it.
+  virtual std::optional<FlexData> constant_output(unsigned /*oport*/) const
+  {
+    return std::nullopt;
+  }
+
+  // Receive a constant an upstream source WILL emit on `iport`,
+  // delivered before the resource-planning phase and before any
+  // driver starts. Implement it on any stage that latches something
+  // from an iport which later decisions -- declare_resources() above,
+  // most of all -- need to have seen.
+  //
+  // Called at most once per iport per launch, from the launching
+  // thread with no drivers running, so an implementation needs no
+  // locking. It must be pure bookkeeping: the pipeline is not yet
+  // assembled, so do NOT load, allocate or touch a device here. The
+  // runtime latch that reads the same beat at run time stays in place
+  // and must remain idempotent with this.
+  virtual void apply_constant(unsigned /*iport*/, const FlexData& /*beat*/)
+  {
+  }
+
+  // Per-port clock group. Ports with the same clock_group on the
+  // same stage share a clock; the graph analyzer (see
+  // pipeline/clock-domain.h) walks fanout edges and unifies
+  // connected port-groups into globally-numbered *clock domains*.
+  //
+  // Default: read the clock group from spec().{i,o}ports[p] (0 when
+  // the port isn't declared) -- so a "single-clock" stage and any
+  // stage that declares its ports in kSpec needs no override. A stage
+  // can still override these directly if it computes groups
+  // dynamically. The numeric value is local to the stage; only
+  // same-stage equality matters.
+  virtual unsigned
+  iport_clock_group(unsigned p) const noexcept
+  {
+    const StageSpec& s = spec();
+    return p < s.iports.size() ? s.iports[p].clock_group : 0;
+  }
+  virtual unsigned
+  oport_clock_group(unsigned p) const noexcept
+  {
+    const StageSpec& s = spec();
+    return p < s.oports.size() ? s.oports[p].clock_group : 0;
+  }
+
+  // Per-port payload type declaration. PipelineRuntime checks that
+  // every wired edge has a compatible producer-output / consumer-
+  // input pair: equality is required when both sides declare a
+  // type; a null on either side is treated as "untyped" (legacy /
+  // test stages) and skipped. Default: read from spec().{i,o}ports[p]
+  // (nullptr when the port isn't declared), so declaring ports in
+  // kSpec opts a stage into type-checking.
+  virtual const std::type_info*
+  iport_payload_type(unsigned p) const noexcept
+  {
+    const StageSpec& s = spec();
+    return p < s.iports.size() ? s.iports[p].type : nullptr;
+  }
+  virtual const std::type_info*
+  oport_payload_type(unsigned p) const noexcept
+  {
+    const StageSpec& s = spec();
+    return p < s.oports.size() ? s.oports[p].type : nullptr;
+  }
+
+  // Per-port payload TAGS: an optional finer-grained constraint on top of
+  // the beat type (comma-separated, OR semantics; see PortSpec::tags and
+  // port_tags_compatible). PipelineRuntime and the web-ui composer require
+  // a producer oport's tags and a consumer iport's tags to be compatible
+  // in addition to the beat types. Default: read from spec().{i,o}ports[p]
+  // (empty when undeclared -> no constraint).
+  virtual std::string_view
+  iport_payload_tags(unsigned p) const noexcept
+  {
+    const StageSpec& s = spec();
+    return p < s.iports.size() ? s.iports[p].tags : std::string_view{};
+  }
+  virtual std::string_view
+  oport_payload_tags(unsigned p) const noexcept
+  {
+    const StageSpec& s = spec();
+    return p < s.oports.size() ? s.oports[p].tags : std::string_view{};
+  }
+
+  // Read-only access to the configuration tree the stage was
+  // constructed with. Public so pipeline serialization can
+  // round-trip a stage's config back into the spec; derived
+  // stages also use it from their ctor bodies.
+  const FlexData& config() const noexcept;
+
+  // ---- Stage specification ------------------------------------
+  //
+  // The formal description of this stage type: category, docs, ports
+  // (name/doc/beat-type/clock), and config attributes. A stage
+  // returns a reference to its file-static `kSpec`; the base default
+  // is an empty Generic spec. The same object is registered with the
+  // StageRegistry via VPIPE_REGISTER_SPEC so tooling can read it
+  // without constructing an instance. See pipeline/stage-spec.h.
+  virtual const StageSpec& spec() const noexcept;
+
+  StageCategory    category()    const noexcept { return spec().category; }
+  std::string_view description() const noexcept { return spec().doc; }
+
+  // ---- Configuration introspection ----------------------------
+  //
+  // Static, type-level declaration of the configuration keys this
+  // stage understands: their declared types, defaults, and one-line
+  // docs. Default: spec().attrs -- a stage declares its attributes
+  // once in kSpec. (A stage with no spec advertises no schema.)
+  virtual std::span<const ConfigKey>
+  config_spec() const noexcept { return spec().attrs; }
+
+  // Per-instance resolved view: every key from config_spec() paired
+  // with its declared type, default, and the current value this
+  // instance was given (config(), falling back to the default). This
+  // is what a client requests to learn a stage's configuration keys,
+  // types, and current values.
+  std::vector<ConfigParam> config_params() const;
+
+  // config_params() serialised to a FlexData array of objects, for
+  // JSON transport across the binding (see config_params_to_flex).
+  FlexData config_schema() const;
+
+  // ---- Deferred configuration validation -----------------------
+  //
+  // A stage MUST construct successfully for ANY configuration --
+  // including an empty/default one -- so tools can build, inspect and
+  // edit a stage graph before required fields are supplied. Instead of
+  // throwing from the constructor, a stage records the first problem
+  // via fail_config(). The pipeline runtime checks config_error()
+  // before launch: a stage with a non-empty error is logged and
+  // skipped (its initialize() and process() never run), while the rest
+  // of the pipeline launches normally. Empty => the configuration is
+  // valid.
+  const std::string& config_error() const noexcept;
+
+  // ---- Lifecycle state (driven by PipelineRuntime) ------------
+  //
+  // A stage is "running" from the moment the PipelineRuntime schedules
+  // its driver at launch() until the runtime has stopped and every
+  // driver has drained. Topology edits to a running stage are unsafe
+  // (the edge buffers are frozen at launch), so Graph::move_iport_to
+  // refuses them via Pipeline::can_move_iport.
+  bool running() const noexcept;
+
+  // True when this stage's wiring changed since it was last
+  // initialized -- i.e. an iport was moved (Pipeline::on_iport_moved)
+  // after the last successful initialize(). A tool can read this to
+  // know a re-launch is required for the edit to take effect; the
+  // runtime clears it once initialize() runs against the new
+  // topology. A freshly constructed stage reports false (its initial
+  // wiring is its ctor wiring).
+  bool needs_init() const noexcept;
+
+  // The stage's command inbox while its pipeline runs -- from launch
+  // until stop, and only when spec().commands is non-empty; null
+  // otherwise. A caller posts through it (open_stage_command in
+  // pipeline/stage-command.h); the stage itself reads its commands from
+  // its RuntimeContext, never from here.
+  std::shared_ptr<CommandInbox> command_inbox() const;
+
+  // ---- Performance tracing ------------------------------------
+  //
+  // Producer hot path. The event is routed into the calling
+  // thread's per-worker PerfBuffer owned by the session (or the
+  // overflow buffer for non-worker callers). When profiling is
+  // off, this is a single virtual call into a no-op default impl
+  // on SessionContextIntf -- but we early-out via an atomic-flag
+  // check first so the disabled cost is one load + branch.
+  //
+  // `type` is a stage-local id; override perf_event_name() to
+  // translate it to a string at dump time. `value` is an optional
+  // uint64 payload (frame number, byte count, queue depth, etc.).
+  void
+  record_perf_event(std::uint32_t type, std::uint64_t value = 0) noexcept
+  {
+    if (auto* sess = session()) {
+      if (sess->profiling_enabled()) {
+        sess->record_perf_event(
+            VertexGraphAccess::gvid(this), type, value);
+      }
+    }
+  }
+
+  // Auxiliary-lane variant: records into a logical activity timeline
+  // (perf-event.h PerfAuxLane, e.g. the ANE lane for CoreML jobs)
+  // rather than the calling worker's lane, but still tagged with THIS
+  // stage's gvid so the viewer names + colors it by the stage. `type`
+  // follows the begin/end parity convention (even begin, odd end).
+  void
+  record_perf_event_aux(unsigned      lane,
+                        std::uint32_t type,
+                        std::uint64_t value = 0) noexcept
+  {
+    if (auto* sess = session()) {
+      if (sess->profiling_enabled()) {
+        sess->record_perf_event_aux(
+            lane, VertexGraphAccess::gvid(this), type, value);
+      }
+    }
+  }
+
+  // Translate a stage-local event type id to a human-readable
+  // name. Default returns a synthetic "event_<N>" string. Stages
+  // override to give meaningful names; the override is non-static
+  // and may produce instance-specific labels. Called only at dump
+  // time, so cost is irrelevant.
+  virtual std::string perf_event_name(std::uint32_t type) const;
+
+protected:
+  // Record a configuration problem from a constructor instead of
+  // throwing. Keeps the first message; later calls are ignored. Never
+  // throws, so the rest of the constructor still runs (with defaults).
+  // Takes the same VpipeFormat as session()->error() so existing
+  // `fail_config(fmt("...", ...))` call sites read identically.
+  void fail_config(const VpipeFormat& message);
+
+  // ---- Attribute resolution (defaults live in the spec) --------
+  //
+  // Read a configuration attribute: the value from config() when the
+  // key is present (coerced to the requested kind), else the schema
+  // default from config_spec()'s matching ConfigKey.def_* (false / 0 /
+  // 0.0 / "" / empty container when the key is unknown). Stages call
+  // these in their constructor so no non-zero attribute default lives
+  // in a member initializer -- the spec is the single source of truth.
+  // Must be called from the derived stage's own constructor body (the
+  // vtable resolves spec()/config_spec() to the derived overrides
+  // there).
+  bool        attr_bool(std::string_view key) const;
+  std::int64_t  attr_int (std::string_view key) const;
+  std::uint64_t attr_uint(std::string_view key) const;
+  double      attr_real(std::string_view key) const;
+  std::string attr_str (std::string_view key) const;
+  // Like attr_str, but for a LOCAL file path: the value is confined to
+  // the session file sandbox (chroot-like) via
+  // session()->confine_path. A network URL (rtsp/http(s)/...) is
+  // returned unchanged (it is not a filesystem path); a file:// prefix
+  // is stripped before confining. On a sandbox escape the stage's config
+  // is failed (fail_config) and "" is returned. When `for_write` the
+  // parent directory is created. Non-const because it may fail_config.
+  std::string attr_path(std::string_view key, bool for_write);
+  // Confine one already-read path/URL string to the file sandbox (the
+  // shared core of attr_path). Network URLs pass through; file:// is
+  // stripped; a sandbox escape calls fail_config and returns "". For
+  // stages that parse their own path arrays (load-image / load-text).
+  std::string confine_local_(std::string_view raw, bool for_write);
+  // Composite / any-typed attribute as a FlexData (the configured
+  // value, else the schema default container).
+  FlexData    attr     (std::string_view key) const;
+
+private:
+  friend class StageLifecycleAccess;
+
+  // Fetch the raw config value for `key` into `out`; true iff present.
+  bool attr_present_(std::string_view key, FlexData& out) const;
+
+  // EVERYTHING a Stage keeps for itself, behind one pointer. A plugin's
+  // stage derives from this class, so its members sit after Stage's: a
+  // field added HERE would move every one of them. Behind the pointer,
+  // the host can grow its bookkeeping without moving a plugin's layout.
+  std::unique_ptr<StageState> _st;
+
+public:
+  // EXTENSION POINT (plugin ABI; docs/PLUGINS.md, "Versioning"). A host
+  // newer than the plugin asks for a capability this interface did not
+  // have when the plugin was built, by name ("vpipe.<what>/<rev>"); null
+  // means "not provided" and the host keeps the older behaviour. A new
+  // virtual added here instead would move this vtable under every plugin
+  // in the support window.
+  virtual void* query_extension(std::string_view id) noexcept
+  {
+    (void)id;
+    return nullptr;
+  }
+};
+
+using StagePtr = std::unique_ptr<Stage>;
+
+// Privileged setters for the two lifecycle flags above, mirroring
+// VertexGraphAccess: the PipelineRuntime marks a stage running across
+// its launch/stop span and clears needs_init after initialize(), and
+// Pipeline sets needs_init when an iport move changes the stage's
+// inputs. Kept out of the public surface so ordinary stage code can
+// only observe the flags, never forge them.
+class StageLifecycleAccess {
+public:
+  static void set_running(Stage* s, bool running);
+  static void set_needs_init(Stage* s, bool needs_init);
+  // The runtime hands each stage the plan to revise into at launch, and
+  // takes it back at stop -- a stage outlives the launch it ran in, and
+  // a revision arriving after the plan is gone must not find a dangling
+  // one.
+  static void set_memory_sink(Stage* s, MemoryPlanSink* sink);
+  // The command inbox for the span of a launch; null clears it.
+  static void set_command_inbox(Stage* s,
+                                std::shared_ptr<CommandInbox> inbox);
+};
+
+}
+
+VPIPE_API_END
+
+#endif

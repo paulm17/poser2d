@@ -1,0 +1,111 @@
+set(VPIPE_WEBUI_SOURCES
+    main.cc
+    http-server.cc
+    api-common.cc
+    file-api.cc
+    database-api.cc
+    pipeline-api.cc
+    plugin-api.cc
+    io-api.cc
+    log-api.cc
+    profiler-api.cc
+    session-api.cc
+    system-api.cc
+    view-api.cc
+    web-ui-delegate.cc
+    web-ui-log-delegate.cc
+    db-browser.cc
+    model-browser.cc
+    qr-code.cc
+    startup-checks.cc
+)
+# Microphone permission probe (AVCaptureDevice authorization status) is
+# Objective-C++; Apple-only. The non-Apple fallback lives in
+# startup-checks.cc (#if !defined(__APPLE__)).
+if(APPLE)
+    list(APPEND VPIPE_WEBUI_SOURCES startup-checks-mac.mm)
+endif()
+
+# Embed the web/ asset tree into the binary: it is the ONLY source the
+# server reads the UI from, so a packaged build is self-contained.
+# CONFIGURE_DEPENDS re-globs at build time, so adding/removing an asset
+# file is picked up automatically; an edit to an existing file triggers
+# regeneration via the DEPENDS list.
+file(GLOB_RECURSE VPIPE_WEBUI_ASSET_FILES CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/web/*")
+set(VPIPE_WEBUI_ASSETS_CC
+    "${CMAKE_CURRENT_BINARY_DIR}/web-assets-generated.cc")
+add_custom_command(
+    OUTPUT  "${VPIPE_WEBUI_ASSETS_CC}"
+    COMMAND "${CMAKE_COMMAND}"
+            -D "WEB_DIR=${CMAKE_CURRENT_SOURCE_DIR}/web"
+            -D "OUTPUT=${VPIPE_WEBUI_ASSETS_CC}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed-web-assets.cmake"
+    DEPENDS ${VPIPE_WEBUI_ASSET_FILES}
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed-web-assets.cmake"
+    COMMENT "Embedding web-ui assets into the binary"
+    VERBATIM)
+
+add_executable(vpipe-web-ui
+    ${VPIPE_WEBUI_SOURCES}
+    ${VPIPE_WEBUI_ASSETS_CC})
+
+target_include_directories(vpipe-web-ui
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/include
+)
+
+# lmdb for the read-only Database browser (db-browser.cc). The lmdb
+# target exposes its headers as a PUBLIC (SYSTEM) include dir; vpipe
+# links it PRIVATE so it isn't propagated -- link it here too.
+target_link_libraries(vpipe-web-ui PRIVATE vpipe lmdb)
+
+# The status bar's GPU / ANE readings are the library's now
+# (vpipe/system-monitor.h, stages/system-status.cc), which links IOKit
+# itself; the IOReport private framework is resolved there at runtime
+# via dlopen. These stay for the web UI's own IOKit / CF use.
+if(APPLE)
+    target_link_libraries(vpipe-web-ui PRIVATE
+        "-framework IOKit"
+        "-framework CoreFoundation")
+    # AVFoundation for the microphone authorization-status probe;
+    # CoreAudio for the audio-input device enumeration
+    # (startup-checks-mac.mm).
+    target_link_libraries(vpipe-web-ui PRIVATE
+        "-framework AVFoundation"
+        "-framework CoreAudio")
+endif()
+
+# HTTPS support (opt-in at runtime via --tls). Requires OpenSSL; when it
+# isn't found the web-ui still builds and runs, but --tls reports a clear
+# "built without TLS" error. Homebrew keeps openssl keg-only, so hint its
+# prefix on Apple. Why HTTPS matters here: browser WebCodecs (the
+# low-latency Preview view) is only exposed in a secure context (HTTPS or
+# localhost), so LAN viewers need this to use Preview at all.
+if(APPLE AND NOT OPENSSL_ROOT_DIR AND EXISTS /opt/homebrew/opt/openssl@3)
+    set(OPENSSL_ROOT_DIR /opt/homebrew/opt/openssl@3)
+endif()
+# The metal-compute facet of /api/system/status (this PROCESS's GPU
+# allocation, the never-evicted kernel caches, the residency set) needs
+# the same guard the library is built under -- it is PRIVATE there, so
+# without this the block compiles out silently and the endpoint simply
+# reports fewer fields than it looks like it does.
+if(APPLE AND VPIPE_BUILD_APPLE_SILICON)
+    target_compile_definitions(vpipe-web-ui PRIVATE VPIPE_BUILD_APPLE_SILICON=1)
+endif()
+
+find_package(OpenSSL QUIET)
+if(OpenSSL_FOUND)
+    target_sources(vpipe-web-ui PRIVATE tls-context.cc)
+    target_compile_definitions(vpipe-web-ui PRIVATE VPIPE_WEBUI_TLS=1)
+    target_link_libraries(vpipe-web-ui PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    message(STATUS "vpipe-web-ui: HTTPS enabled (OpenSSL ${OPENSSL_VERSION})")
+else()
+    message(STATUS "vpipe-web-ui: OpenSSL not found; --tls unavailable")
+endif()
+
+# The UI assets are embedded in the binary (above), so this is the whole
+# install: the executable is self-contained and the raw asset tree is
+# never shipped -- nothing reads it at runtime.
+install(TARGETS vpipe-web-ui RUNTIME DESTINATION bin)

@@ -1,0 +1,228 @@
+# stages: all pipeline stage implementations. Grouped on disk:
+#   audio-video/  -- multimedia (ffmpeg) capture / decode / encode / stream
+#   vision/       -- traditional computer vision (detection / tracking / overlay)
+#   (root)        -- generic, LM-driven, and CoreML audio-ML stages
+# Each stage keeps its original build gate (always / APPLE / VPIPE_BUILD_
+# APPLE_SILICON); the gate, not the directory, decides where its sources go.
+
+set(LOCAL_SOURCES
+  # vpipe/system-monitor.h: every build (a stub off Apple Silicon).
+  system-monitor.cc
+  # generic (always built)
+  buffer-stage.cc
+  call-stage.cc
+  chrono-stage.cc
+  external-input-stage.cc
+  external-tap-stage.cc
+  load-audio-stage.cc
+  load-image-stage.cc
+  image-decode.cc
+  training-dataset-stage.cc
+  optimizer-select-stage.cc
+  train-lora-stage.cc
+  load-text-stage.cc
+  load-video-stage.cc
+  lora-fuse-stage.cc
+  model-select-stage.cc
+  diffusion-sampler-select-stage.cc
+  sampler-select-stage.cc
+  save-image-stage.cc
+  save-video-stage.cc
+  rgb-to-video-stage.cc
+  generate-video-stage.cc
+  latent-preview.cc
+  wan2-model-config-stage.cc
+  minimax-h3-model-config-stage.cc
+  flashvsr-src-encoder-stage.cc
+  flux2-model-config-stage.cc
+  krea2-model-config-stage.cc
+  boogu-image-model-config-stage.cc
+  qwen-image-21-model-config-stage.cc
+  z-image-model-config-stage.cc
+  qwen-image-edit-model-config-stage.cc
+  vosr-model-config-stage.cc
+  flashvsr-model-config-stage.cc
+  scheduler-select-stage.cc
+  diffusion-conditioner-stage.cc
+  generate-image-stage.cc
+  audio-vae-decode-stage.cc
+  audio-vae-encode-stage.cc
+  vae-decode-stage.cc
+  vae-encode-stage.cc
+  video-ref-encoder-stage.cc
+  model-catalog.cc
+  model-memory.cc
+  output-path.cc
+  model-detect.cc
+  model-fetch-stage.cc
+  model-register-stage.cc
+  model-remove-stage.cc
+  model-registry.cc
+  model-source.cc
+  passthrough-stage.cc
+  qwen-asr-tokenizer.cc
+  rest-client-stage.cc
+  resumable-fetch.cc
+  xet-fetch.cc
+  save-text-stage.cc
+  shell-stage.cc
+  text-input-stage.cc
+  tensor-buffer.cc
+  text-prompt-stage.cc
+  videos-db-cleanup-stage.cc
+  # vision (always built)
+  vision/byte-track-stage.cc
+  vision/detection-overlay-stage.cc
+  # audio-video (always built; ffmpeg dlopen'd at runtime)
+  audio-video/audio-to-pcm-stage.cc
+  audio-video/compare-image-stage.cc
+  audio-video/create-mask-stage.cc
+  audio-video/hls-broadcast-stage.cc
+  audio-video/preview-stage.cc
+  audio-video/video-to-rgb-stage.cc
+)
+set(LOCAL_HEADERS
+  # generic
+  buffer-stage.h
+  call-stage.h
+  chrono-stage.h
+  load-audio-stage.h
+  load-image-stage.h
+  image-decode.h
+  training-dataset-stage.h
+  optimizer-select-stage.h
+  train-lora-stage.h
+  load-text-stage.h
+  load-video-stage.h
+  model-catalog.h
+  model-detect.h
+  model-fetch-stage.h
+  model-register-stage.h
+  model-remove-stage.h
+  model-registry.h
+  model-select-stage.h
+  output-path.h
+  passthrough-stage.h
+  qwen-asr-tokenizer.h
+  rest-client-stage.h
+  save-image-stage.h
+  save-text-stage.h
+  save-video-stage.h
+  rgb-to-video-stage.h
+  generate-video-stage.h
+  wan2-model-config-stage.h
+  minimax-h3-model-config-stage.h
+  latent-preview.h
+  flashvsr-src-encoder-stage.h
+  flux2-model-config-stage.h
+  krea2-model-config-stage.h
+  boogu-image-model-config-stage.h
+  qwen-image-21-model-config-stage.h
+  qwen-image-edit-model-config-stage.h
+  model-config-source.h
+  shell-stage.h
+  external-input-stage.h
+  external-tap-stage.h
+  tensor-buffer.h
+  text-input-stage.h
+  text-prompt-stage.h
+  trigger-beat.h
+  videos-db-cleanup-stage.h
+  # vision
+  vision/byte-track-stage.h
+  vision/detection-overlay-stage.h
+  vision/detection-overlay-font5x7.h
+  # audio-video
+  audio-video/audio-to-pcm-stage.h
+  audio-video/compare-image-stage.h
+  audio-video/create-mask-stage.h
+  audio-video/hls-broadcast-stage.h
+  audio-video/preview-stage.h
+  audio-video/video-to-rgb-stage.h
+  audio-video/video-tokens.h
+)
+if(APPLE)
+  # avfoundation device capture + ONVIF discovery (Apple-only APIs).
+  list(APPEND LOCAL_SOURCES audio-video/audio-capture-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-video/audio-capture-stage.h)
+  list(APPEND LOCAL_SOURCES audio-video/video-capture-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-video/video-capture-stage.h)
+  list(APPEND LOCAL_SOURCES audio-video/rtsp-capture-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-video/rtsp-capture-stage.h)
+  list(APPEND LOCAL_SOURCES onvif-discovery-stage.cc)
+  list(APPEND LOCAL_HEADERS onvif-discovery-stage.h)
+endif()
+# Stages on the apple-silicon axis (VPIPE_BUILD_APPLE_SILICON): the metal/
+# no-MLX LM stages, the apple-silicon-typed AV stages, and the CoreML-driven
+# stages (moved from apple-silicon/coreml/ -- they keep using that dir's
+# coreml-model-manager / coreml-cpp library).
+if(VPIPE_BUILD_APPLE_SILICON)
+  # audio-video on the apple-silicon axis (TensorBeatPayload / metal image ops)
+  list(APPEND LOCAL_SOURCES save-audio-stage.cc)
+  list(APPEND LOCAL_HEADERS save-audio-stage.h)
+  list(APPEND LOCAL_SOURCES audio-video/temporal-decimation-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-video/temporal-decimation-stage.h)
+  list(APPEND LOCAL_SOURCES audio-video/image-resample-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-video/image-resample-stage.h)
+  list(APPEND LOCAL_SOURCES audio-video/image-levels-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-video/image-levels-stage.h)
+  list(APPEND LOCAL_SOURCES audio-video/content-aware-continuation-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-video/content-aware-continuation-stage.h)
+  list(APPEND LOCAL_SOURCES audio-video/alpha-mix-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-video/alpha-mix-stage.h)
+  list(APPEND LOCAL_SOURCES save-tensor-stage.cc)
+  list(APPEND LOCAL_HEADERS save-tensor-stage.h)
+  list(APPEND LOCAL_SOURCES load-tensor-stage.cc)
+  list(APPEND LOCAL_HEADERS load-tensor-stage.h)
+  list(APPEND LOCAL_SOURCES tensor-list-stage.cc)
+  list(APPEND LOCAL_HEADERS tensor-list-stage.h)
+  list(APPEND LOCAL_SOURCES audio-video/temporal-resample-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-video/temporal-resample-stage.h)
+  list(APPEND LOCAL_SOURCES audio-video/audio-temporal-resample-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-video/audio-temporal-resample-stage.h)
+  list(APPEND LOCAL_SOURCES audio-video/temporal-stack-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-video/temporal-stack-stage.h)
+  list(APPEND LOCAL_SOURCES audio-video/temporal-slice-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-video/temporal-slice-stage.h)
+  # LM-driven stages (self-contained metal/no-MLX path)
+  list(APPEND LOCAL_SOURCES audio-transcribe-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-transcribe-stage.h)
+  list(APPEND LOCAL_SOURCES realtime-vqa-stage.cc)
+  list(APPEND LOCAL_HEADERS realtime-vqa-stage.h)
+  list(APPEND LOCAL_SOURCES text-chat-stage.cc)
+  list(APPEND LOCAL_HEADERS text-chat-stage.h)
+  list(APPEND LOCAL_SOURCES text-to-speech-stage.cc)
+  list(APPEND LOCAL_HEADERS text-to-speech-stage.h)
+  list(APPEND LOCAL_SOURCES generate-audio-stage.cc)
+  list(APPEND LOCAL_HEADERS generate-audio-stage.h)
+  list(APPEND LOCAL_SOURCES model-quantize-stage.cc)
+  list(APPEND LOCAL_HEADERS model-quantize-stage.h)
+  list(APPEND LOCAL_SOURCES model-eval-stage.cc)
+  list(APPEND LOCAL_HEADERS model-eval-stage.h)
+  list(APPEND LOCAL_SOURCES model-benchmark-stage.cc gpu-telemetry.mm)
+  # The status bar's readings (vpipe/system-monitor.h), once the web UI's.
+  list(APPEND LOCAL_SOURCES system-status.cc)
+  list(APPEND LOCAL_HEADERS system-status.h)
+  # The Apple-native video path (apple-silicon/media).
+  list(APPEND LOCAL_SOURCES avf-load-video-stage.cc avf-save-video-stage.cc)
+  list(APPEND LOCAL_HEADERS avf-load-video-stage.h avf-save-video-stage.h)
+  list(APPEND LOCAL_HEADERS model-benchmark-stage.h gpu-telemetry.h)
+  list(APPEND LOCAL_SOURCES visual-qa-stage.cc)
+  list(APPEND LOCAL_HEADERS visual-qa-stage.h)
+  # CoreML-driven stages
+  list(APPEND LOCAL_SOURCES audio-segment-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-segment-stage.h)
+  list(APPEND LOCAL_SOURCES audio-tagging-stage.cc)
+  list(APPEND LOCAL_HEADERS audio-tagging-stage.h ced-audioset-labels.h)
+  list(APPEND LOCAL_SOURCES coreml-inference-stage.cc)
+  list(APPEND LOCAL_HEADERS coreml-inference-stage.h)
+  list(APPEND LOCAL_SOURCES vision/yolo-detection-stage.cc)
+  list(APPEND LOCAL_HEADERS vision/yolo-detection-stage.h)
+endif()
+
+list(TRANSFORM LOCAL_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+list(TRANSFORM LOCAL_HEADERS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+list(APPEND VPIPE_SOURCES ${LOCAL_SOURCES})
+list(APPEND VPIPE_HEADERS ${LOCAL_HEADERS})
+set(VPIPE_SOURCES ${VPIPE_SOURCES} PARENT_SCOPE)
+set(VPIPE_HEADERS ${VPIPE_HEADERS} PARENT_SCOPE)

@@ -1,0 +1,180 @@
+#include "stages/flux2-model-config-stage.h"
+#include "stages/latent-preview.h"
+#include "stages/lora-slots.h"
+#include "stages/model-registry.h"
+
+#include "common/flex-data.h"
+#include "common/vpipe-format.h"
+
+#include <string>
+#include <utility>
+
+namespace vpipe {
+
+namespace {
+
+const ConfigKey kAttrs[] = {
+  {.key = "klein_kv", .type = ConfigType::Bool, .required = false,
+   .doc = "the checkpoint is FLUX.2-klein-9b-kv rather than plain klein-9B: "
+          "reference tokens are attention-isolated and modulated at a fixed "
+          "timestep 0, and their K/V are cached across denoise steps (BFL "
+          "measure 1.21-2.66x on multi-reference edits). REQUIRED for that "
+          "checkpoint and WRONG for any other -- the two are indistinguishable "
+          "on disk (same config.json, same tensor names), so it cannot be "
+          "detected. Default false"},
+  {.key = "lora", .type = ConfigType::String, .required = false,
+   .doc = "a LoRA applied AT RUNTIME -- every adapted projection computes "
+          "W x + scale * B (A x) rather than having the delta folded into "
+          "the weights, which for a 4-bit base is the difference between "
+          "keeping a small correction and rounding it away. A registered "
+          "model, a directory holding one .safetensors, or a path to one. "
+          "Module names must be the DIFFUSERS spelling the checkpoint "
+          "itself uses (transformer_blocks.N.attn.to_q, "
+          "single_transformer_blocks.N.attn.to_qkv_mlp_proj, ...), "
+          "optionally under a `diffusion_model.` prefix; a BFL/ComfyUI "
+          "repack that renames the modules binds nothing and says so. "
+          "LOAD-time: an adapter on a fused projection turns the "
+          "fused-SwiGLU weave off, so it is read before the DiT is built "
+          "and a beat that changes it afterwards is reported and ignored",
+   .suggest_db = kModelRegistryDb,
+   // Named for the same reason H3's is: a typeless field falls back to
+   // plain models and shows no adapter at all, and the type is what
+   // keeps a Krea-2 or H3 adapter out of a FLUX.2 field.
+   .suggest_db_type = "flux2-lora",
+   // AND a file browser: a LoRA is as often a download sitting in
+   // the sandbox (Civitai) as a catalogued model, and the editor
+   // offers both pickers when a field carries both hints.
+   .is_path = true, .path_filter = "weights"},
+  {.key = "lora_scale", .type = ConfigType::Real, .required = false,
+   .doc = "the adapter's strength, applied PER FORWARD. Live: it rides the "
+          "GEMM as a constant, so it can be swept without a reload. 1.0 = "
+          "as trained; 0 skips both adapter GEMMs, so off is exactly off",
+   .def_real = 1.0},
+  {.key = "lora2", .type = ConfigType::String, .required = false,
+   .doc = "a SECOND runtime LoRA, applied alongside the first: every "
+          "adapted projection computes W x + s1 B1 (A1 x) + s2 B2 (A2 x). "
+          "The pairing this exists for is a distillation or identity "
+          "adapter in `lora` and a style one here, which is the one "
+          "actually being dialled -- but nothing distinguishes the slots: "
+          "either may hold either, and `lora2` alone is an ordinary "
+          "request. Same accepted forms and same DIFFUSERS module naming "
+          "as `lora`. Costs one more pair of skinny GEMMs; the base weight "
+          "is still read once. LOAD-time like `lora`",
+   .suggest_db = kModelRegistryDb,
+   .suggest_db_type = "flux2-lora",
+   // AND a file browser: a LoRA is as often a download sitting in
+   // the sandbox (Civitai) as a catalogued model, and the editor
+   // offers both pickers when a field carries both hints.
+   .is_path = true, .path_filter = "weights"},
+  {.key = "lora2_scale", .type = ConfigType::Real, .required = false,
+   .doc = "`lora2`'s strength, per FORWARD and independent of "
+          "`lora_scale` -- which is the point of a second slot: one "
+          "adapter stays where it was trained while the other is swept. "
+          "0 skips its two GEMMs", .def_real = 1.0},
+  // Slots 3..8, which read exactly as `lora2` does.
+  lora_slots::path_key(2, "flux2-lora"), lora_slots::scale_key(2),
+  lora_slots::path_key(3, "flux2-lora"), lora_slots::scale_key(3),
+  lora_slots::path_key(4, "flux2-lora"), lora_slots::scale_key(4),
+  lora_slots::path_key(5, "flux2-lora"), lora_slots::scale_key(5),
+  lora_slots::path_key(6, "flux2-lora"), lora_slots::scale_key(6),
+  lora_slots::path_key(7, "flux2-lora"), lora_slots::scale_key(7),
+  // The live-preview keys every family's config source shares; see
+  // stages/latent-preview.h. FLUX.2's TAE is madebyollin's
+  // `taef2`, which reads the DiT's latent unpatchified and NOT
+  // un-normalized.
+  {.key = latent_preview::kVaeKey, .type = ConfigType::String,
+   .required = false, .doc = latent_preview::kVaeDoc,
+   .suggest_db = kModelRegistryDb,
+   // Typed, so the picker offers a TAE for THIS latent space only.
+   .suggest_db_type = "flux2-tae"},
+  {.key = latent_preview::kEveryKey, .type = ConfigType::Int,
+   .required = false, .doc = latent_preview::kEveryDoc, .def_int = 1},
+  {.key = latent_preview::kMaxEdgeKey, .type = ConfigType::Int,
+   .required = false, .doc = latent_preview::kMaxEdgeDoc, .def_int = 512},
+};
+const PortSpec kIports[] = {
+  {.name = "trigger",
+   .doc = "OPTIONAL beat that gates re-emitting the config (a chrono tick, a "
+          "prompt source, a feedback loop). Any payload -- receipt is the "
+          "signal. Unwired, the stage emits once for the run",
+   .type = nullptr, .clock_group = 0},
+};
+const PortSpec kOports[] = {
+  {.name = "model_config",
+   .doc = "FLUX.2 parameters as one FlexData object {model_family: flux2, "
+          "klein_kv, +lora .. +lora8 and their scales, +preview_vae and "
+          "its knobs}, for a generate-image model_config iport",
+   .type = &typeid(FlexDataPayload),
+   .tags = "model-config", .clock_group = 0},
+};
+const StageSpec kSpec = {
+  .type_name = "flux2-model-config",
+  .doc       = "Source: the FLUX.2-specific parameters -- which today means "
+               "declaring a klein-9b-kv checkpoint, whose isolated-reference "
+               "recipe nothing on disk reveals and which produces wrong "
+               "images if it is run either way by accident. One beat then "
+               "done; with a trigger iport, one beat per inbound beat.",
+  .display_name = "FLUX.2 Model Config",
+  .category  = StageCategory::ModelSpecificConfig,
+  .iports    = kIports,
+  .oports    = kOports,
+  .attrs     = kAttrs,
+};
+
+}  // namespace
+
+Flux2ModelConfigStage::Flux2ModelConfigStage(const SessionContextIntf* s,
+                                             std::string               id,
+                                             std::vector<InEdge>       iports,
+                                             FlexData                  config)
+  : ModelConfigSourceStage<Flux2ModelConfigStage>(s, std::move(id),
+                                                  std::move(iports),
+                                                  std::move(config))
+{
+  _klein_kv = attr_bool("klein_kv");
+  _preview.vae      = attr_str(latent_preview::kVaeKey);
+  _preview.every    = (int)attr_int(latent_preview::kEveryKey);
+  _preview.max_edge = (int)attr_int(latent_preview::kMaxEdgeKey);
+  if (_preview.every < 0 || _preview.max_edge < 0) {
+    fail_config(fmt(
+        "Flux2ModelConfigStage('{}'): preview_every and "
+        "preview_max_edge must be >= 0 (got {} / {})", this->id(),
+        _preview.every, _preview.max_edge));
+  }
+  allocate_oports(spec().oports.size());
+}
+
+const StageSpec&
+Flux2ModelConfigStage::spec() const noexcept
+{
+  return kSpec;
+}
+
+FlexData
+Flux2ModelConfigStage::resolved_config() const
+{
+  FlexData fd = model_config::make_config("flux2");
+  fd.as_object().insert_or_assign("klein_kv", FlexData::make_bool(_klein_kv));
+  // The adapter, written only when SET. This family builds its beat by
+  // hand, so declaring the keys above emits nothing on its own -- and a
+  // default emitted as though it were a choice would read downstream as
+  // "the graph asked for scale 1.0" when the graph said nothing at all.
+  {
+    auto in = config().as_object();
+    auto o  = fd.as_object();
+    for (int i = 0; i < lora_slots::kSlots; ++i) {
+      for (std::string_view k :
+           {lora_slots::kPath[i], lora_slots::kScale[i]}) {
+        if (in.contains(k)) { o.insert_or_assign(k, in.at(k)); }
+      }
+    }
+  }
+  // Emitted only when a preview VAE is named, like the adapter keys.
+  _preview.emit(fd);
+  return fd;
+}
+
+VPIPE_REGISTER_STAGE(Flux2ModelConfigStage)
+VPIPE_REGISTER_SPEC(Flux2ModelConfigStage, kSpec)
+
+}  // namespace vpipe

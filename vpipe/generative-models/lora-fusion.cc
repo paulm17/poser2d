@@ -1,0 +1,537 @@
+#include "generative-models/lora-fusion.h"
+
+#include "apple-silicon/metal-compute/metal-compute.h"
+#include "apple-silicon/metal-compute/shared-buffer.h"
+#include "common/flex-data.h"
+#include "common/vpipe-format.h"
+#include "generative-models/llama3/metal-llama-weights.h"
+#include "generative-models/quantize/safetensors-writer.h"
+#include "generative-models/shared/comfy-output-config.h"
+#include "generative-models/shared/fp8-layout.h"
+#include "generative-models/shared/lora-names.h"
+#include "interfaces/session-context-intf.h"
+
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+namespace vpipe {
+namespace genai {
+
+using metal_compute::MetalCompute;
+using metal_compute::SharedBuffer;
+
+namespace {
+
+float
+bf16_to_f32(std::uint16_t b)
+{
+  std::uint32_t u = (std::uint32_t)b << 16;
+  float f;
+  std::memcpy(&f, &u, 4);
+  return f;
+}
+
+std::uint16_t
+f32_to_bf16(float f)
+{
+  std::uint32_t u;
+  std::memcpy(&u, &f, 4);
+  // round-to-nearest-even.
+  const std::uint32_t r = (u >> 16) & 1;
+  u += 0x7fff + r;
+  return (std::uint16_t)(u >> 16);
+}
+
+// Read a raw tensor buffer (dtype BF16/F16/F32) into f32.
+std::vector<float>
+to_f32(const SharedBuffer& buf, const std::string& dtype, std::size_t n)
+{
+  std::vector<float> v(n);
+  if (dtype == "F32") {
+    std::memcpy(v.data(), buf.contents(), n * 4);
+  } else if (dtype == "F16") {
+    const auto* s = static_cast<const _Float16*>(buf.contents());
+    for (std::size_t i = 0; i < n; ++i) { v[i] = (float)s[i]; }
+  } else if (dtype == "BF16") {
+    const auto* s = static_cast<const std::uint16_t*>(buf.contents());
+    for (std::size_t i = 0; i < n; ++i) { v[i] = bf16_to_f32(s[i]); }
+  } else if (dtype == "I64") {
+    // musubi-tuner's diffusers -> native conversion writes alpha as
+    // `torch.tensor(rank)`, an int64 scalar.
+    const auto* s = static_cast<const std::int64_t*>(buf.contents());
+    for (std::size_t i = 0; i < n; ++i) { v[i] = (float)s[i]; }
+  } else if (dtype == "I32") {
+    const auto* s = static_cast<const std::int32_t*>(buf.contents());
+    for (std::size_t i = 0; i < n; ++i) { v[i] = (float)s[i]; }
+  } else {
+    v.clear();
+  }
+  return v;
+}
+
+// Encode an f32 weight back to `dtype`, returning the raw bytes.
+std::vector<std::uint8_t>
+from_f32(const std::vector<float>& w, const std::string& dtype)
+{
+  std::vector<std::uint8_t> out;
+  if (dtype == "F32") {
+    out.resize(w.size() * 4);
+    std::memcpy(out.data(), w.data(), out.size());
+  } else if (dtype == "F16") {
+    out.resize(w.size() * 2);
+    auto* d = reinterpret_cast<_Float16*>(out.data());
+    for (std::size_t i = 0; i < w.size(); ++i) { d[i] = (_Float16)w[i]; }
+  } else {   // BF16
+    out.resize(w.size() * 2);
+    auto* d = reinterpret_cast<std::uint16_t*>(out.data());
+    for (std::size_t i = 0; i < w.size(); ++i) { d[i] = f32_to_bf16(w[i]); }
+  }
+  return out;
+}
+
+// The low-rank factor spellings: peft / diffusers / ai-toolkit, kohya's
+// (sd-scripts, musubi-tuner), which calls A `lora_down` and B `lora_up`,
+// and TaoMate-H3's bare lowercase `lora_a` / `lora_b`.
+const std::pair<std::string, std::string> kFactorSpellings[] = {
+    {".lora_A.weight", ".lora_B.weight"},
+    {".lora_down.weight", ".lora_up.weight"},
+    {".lora_a", ".lora_b"},
+};
+
+// kohya names a module `lora_unet_` + its path with every '.' flattened
+// to '_' -- the same rule shared/runtime-lora.cc reads.
+const std::string kKohyaPrefix = "lora_unet_";
+
+std::string
+kohya_flat(const std::string& module)
+{
+  std::string k = kKohyaPrefix + module;
+  for (std::size_t i = kKohyaPrefix.size(); i < k.size(); ++i) {
+    if (k[i] == '.') { k[i] = '_'; }
+  }
+  return k;
+}
+
+// A resolved LoRA/LoKr adapter targeting one base weight.
+struct Adapter {
+  bool        lokr = false;
+  // Low-rank LoRA: base += scale * (B @ A).
+  std::string a, b;
+  // LoKr: base += scale * kron(w1, w2); each factor is either a full matrix
+  // (`w1`/`w2`) or a low-rank product (`w1a @ w1b` / `w2a @ w2b`).
+  std::string w1, w1a, w1b, w2, w2a, w2b;
+  std::string alpha;   // optional scalar; "" when absent
+};
+
+bool
+ends_with(const std::string& s, const std::string& suf)
+{
+  return s.size() >= suf.size() &&
+         s.compare(s.size() - suf.size(), suf.size(), suf) == 0;
+}
+
+}  // namespace
+
+bool
+fuse_lora(MetalCompute* mc, const std::string& base_dir,
+          const std::string& lora_path, const std::string& out_dir,
+          float scale, std::string* err, const std::function<bool()>& stop,
+          const std::function<void(std::size_t, std::size_t)>& progress)
+{
+  auto fail = [&](const std::string& m) {
+    if (err != nullptr) { *err = m; }
+    return false;
+  };
+  namespace fs = std::filesystem;
+  if (mc == nullptr) { return fail("lora-fuse: null metal-compute"); }
+
+  // A Comfy-Org repack is ONE file per component, and a repo's
+  // diffusion_models/ holds several of them -- MiniMax-H3's holds both
+  // task partitions, 66 GB each. open_model() over that directory would
+  // merge two models under one set of tensor names, so a single file is
+  // named directly and opened as itself. `is_comfy_file` also decides
+  // where the output's config.json comes from: a repack has none.
+  std::error_code fec;
+  const bool is_comfy_file = fs::is_regular_file(fs::path(base_dir), fec) &&
+                             !fec;
+  auto baseopt = is_comfy_file ? MetalLlamaWeights::open(base_dir)
+                               : MetalLlamaWeights::open_model(base_dir);
+  if (!baseopt.has_value()) {
+    return fail("lora-fuse: cannot open base model: " + base_dir);
+  }
+  auto loraopt = MetalLlamaWeights::open(lora_path);
+  if (!loraopt.has_value()) {
+    return fail("lora-fuse: cannot open LoRA: " + lora_path);
+  }
+  const MetalLlamaWeights& base = *baseopt;
+  const MetalLlamaWeights& lora = *loraopt;
+  // An FP8 LoRA -- plain, or scaled (shared/fp8-layout.h) -- is decoded
+  // factor by factor below; one in an encoding that cannot be decoded is
+  // refused here, by name.
+  {
+    fp8::Layout l;
+    std::string ferr;
+    if (!fp8::scan(lora, &l, &ferr)) {
+      return fail("lora-fuse: " + lora_path + ": " + ferr);
+    }
+  }
+
+  // kohya's flattened module name -> the base weight it means. The
+  // flattening loses the dots, so it cannot be undone from the FILE's
+  // side; it is run over the BASE's names instead, which is exact. A
+  // flattened name two base weights share is AMBIGUOUS and maps to
+  // nothing -- guessing would fuse a delta into the wrong projection.
+  // Built on first use, so a file in any other convention never pays
+  // for it.
+  std::unordered_map<std::string, std::string> kohya_base;
+  bool kohya_built = false;
+  auto kohya_lookup = [&](const std::string& module) -> std::string {
+    if (!kohya_built) {
+      kohya_built = true;
+      std::unordered_set<std::string> ambiguous;
+      auto add = [&](const std::string& mod, const std::string& weight) {
+        const std::string k = kohya_flat(mod);
+        auto it = kohya_base.find(k);
+        if (it == kohya_base.end()) {
+          if (ambiguous.count(k) == 0) { kohya_base.emplace(k, weight); }
+        } else if (it->second != weight) {
+          kohya_base.erase(it);
+          ambiguous.insert(k);
+        }
+      };
+      for (const std::string& t : base.tensor_names()) {
+        if (!ends_with(t, ".weight")) { continue; }
+        const std::string mod = t.substr(0, t.size() - 7);
+        add(mod, t);
+        // The same leading-segment strip find_base applies below.
+        const auto dot = mod.find('.');
+        if (dot != std::string::npos) { add(mod.substr(dot + 1), t); }
+      }
+    }
+    const auto it = kohya_base.find(module);
+    return it == kohya_base.end() ? std::string() : it->second;
+  };
+
+  // Match an adapter `<module>` to a base weight: try <module>.weight, strip
+  // the leading component segment (diffusers' "transformer." etc.), then the
+  // ai-toolkit / ComfyUI name remap (diffusion_model.* -> diffusers), then
+  // kohya's flattened `lora_unet_*`.
+  auto find_base = [&](const std::string& module) -> std::string {
+    if (base.info(module + ".weight") != nullptr) { return module + ".weight"; }
+    const auto dot = module.find('.');
+    if (dot != std::string::npos) {
+      const std::string s = module.substr(dot + 1) + ".weight";
+      if (base.info(s) != nullptr) { return s; }
+    }
+    const std::string rm = lora::remap_ai_toolkit_module(module);
+    if (!rm.empty() && base.info(rm + ".weight") != nullptr) {
+      return rm + ".weight";
+    }
+    if (module.compare(0, kKohyaPrefix.size(), kKohyaPrefix) == 0) {
+      return kohya_lookup(module);
+    }
+    return {};
+  };
+
+  // Load a LoRA-side tensor into f32 (empty on miss / unsupported dtype).
+  // An FP8 factor decodes to what a bf16 copy of the file would hold --
+  // exact when plain, code * scale rounded once to bf16 when scaled -- so
+  // fusing it and fusing that copy give the same weights.
+  auto load_f32 = [&](const std::string& tn) -> std::vector<float> {
+    const auto* ti = lora.info(tn);
+    if (ti == nullptr) { return {}; }
+    std::size_t n = 1;
+    for (auto d : ti->shape) { n *= (std::size_t)d; }
+    SharedBuffer b = lora.load(tn, mc);
+    if (b.empty()) { return {}; }
+    fp8::Weight fw;
+    if (fp8::resolve(lora, tn, &fw, nullptr)) {
+      const std::size_t rows =
+          ti->shape.empty() ? 1 : (std::size_t)ti->shape[0];
+      std::vector<float> sc;
+      if (rows == 0 || n % rows != 0 ||
+          !fp8::read_scale(lora, fw, rows, &sc, nullptr)) {
+        return {};
+      }
+      std::vector<std::uint16_t> bf(n);
+      fp8::decode_bf16(static_cast<const std::uint8_t*>(b.contents()),
+                       bf.data(), rows, n / rows, fw.format, sc);
+      std::vector<float> out(n);
+      for (std::size_t i = 0; i < n; ++i) {
+        const std::uint32_t u = (std::uint32_t)bf[i] << 16;
+        std::memcpy(&out[i], &u, 4);
+      }
+      return out;
+    }
+    return to_f32(b, ti->dtype, n);
+  };
+
+  // Build base_weight_name -> Adapter (low-rank LoRA or LoKr).
+  std::unordered_map<std::string, Adapter> fuse;
+  // Low-rank LoRA: <module>.lora_A.weight + <module>.lora_B.weight, or
+  // kohya's <module>.lora_down.weight + <module>.lora_up.weight.
+  for (const std::string& name : lora.tensor_names()) {
+    for (const auto& sp : kFactorSpellings) {
+      if (!ends_with(name, sp.first)) { continue; }
+      const std::string module =
+          name.substr(0, name.size() - sp.first.size());
+      const std::string bname = module + sp.second;
+      if (lora.info(bname) == nullptr) { break; }
+      const std::string base_name = find_base(module);
+      if (base_name.empty()) { break; }
+      Adapter ad;
+      ad.a = name;
+      ad.b = bname;
+      if (lora.info(module + ".alpha") != nullptr) {
+        ad.alpha = module + ".alpha";
+      }
+      fuse[base_name] = ad;
+      break;
+    }
+  }
+  // LoKr: <module>.lokr_w{1,2}[ _a/_b ] (+ optional <module>.alpha).
+  {
+    std::unordered_set<std::string> lokr_modules;
+    for (const std::string& name : lora.tensor_names()) {
+      for (const char* suf : {".lokr_w1", ".lokr_w2", ".lokr_w1_a",
+                              ".lokr_w1_b", ".lokr_w2_a", ".lokr_w2_b"}) {
+        if (ends_with(name, suf)) {
+          lokr_modules.insert(name.substr(0, name.size() - std::strlen(suf)));
+          break;
+        }
+      }
+    }
+    for (const std::string& module : lokr_modules) {
+      const std::string base_name = find_base(module);
+      if (base_name.empty() || fuse.count(base_name) != 0) { continue; }
+      Adapter ad;
+      ad.lokr = true;
+      ad.w1  = lora.info(module + ".lokr_w1") ? module + ".lokr_w1" : "";
+      ad.w1a = lora.info(module + ".lokr_w1_a") ? module + ".lokr_w1_a" : "";
+      ad.w1b = lora.info(module + ".lokr_w1_b") ? module + ".lokr_w1_b" : "";
+      ad.w2  = lora.info(module + ".lokr_w2") ? module + ".lokr_w2" : "";
+      ad.w2a = lora.info(module + ".lokr_w2_a") ? module + ".lokr_w2_a" : "";
+      ad.w2b = lora.info(module + ".lokr_w2_b") ? module + ".lokr_w2_b" : "";
+      if (lora.info(module + ".alpha") != nullptr) { ad.alpha = module + ".alpha"; }
+      fuse[base_name] = ad;
+    }
+  }
+  if (fuse.empty()) {
+    return fail(
+        "lora-fuse: no LoRA tensors matched the base model. This path "
+        "reads `<module>.lora_{A,B}.weight` (or kohya / musubi-tuner's "
+        "`lora_unet_<module>.lora_{down,up}.weight`) against the base's "
+        "own module names; a peft/diffusers export spells its factors "
+        "`.lora_A.<adapter>.weight` and may DECOMPOSE a projection the "
+        "base fuses (separate to_q/to_k/to_v against one qkv_proj), "
+        "which is a conversion and not a name match. Those load through "
+        "the RUNTIME adapter instead -- the `lora` key on the model's "
+        "config stage");
+  }
+
+  std::error_code ec;
+  fs::create_directories(out_dir, ec);
+  SafetensorsWriter wr(out_dir, 5ull << 30);
+
+  // Resolve a LoKr factor to a dense [rows,cols] matrix: a full `w` tensor, or
+  // the low-rank product `wa[rows,r] @ wb[r,cols]`.
+  auto lokr_factor = [&](const std::string& w, const std::string& wa,
+                         const std::string& wb, std::vector<float>& out,
+                         int& rows, int& cols) -> bool {
+    if (!w.empty()) {
+      const auto* ti = lora.info(w);
+      if (ti == nullptr || ti->shape.size() != 2) { return false; }
+      rows = (int)ti->shape[0];
+      cols = (int)ti->shape[1];
+      out = load_f32(w);
+      return !out.empty();
+    }
+    const auto* ai = lora.info(wa);
+    const auto* bi = lora.info(wb);
+    if (ai == nullptr || bi == nullptr || ai->shape.size() != 2 ||
+        bi->shape.size() != 2 || ai->shape[1] != bi->shape[0]) {
+      return false;
+    }
+    rows = (int)ai->shape[0];
+    cols = (int)bi->shape[1];
+    const int r = (int)ai->shape[1];
+    const std::vector<float> A = load_f32(wa), B = load_f32(wb);
+    if (A.empty() || B.empty()) { return false; }
+    out.assign((std::size_t)rows * cols, 0.0f);
+    for (int i = 0; i < rows; ++i) {
+      for (int t = 0; t < r; ++t) {
+        const float av = A[(std::size_t)i * r + t];
+        if (av == 0.0f) { continue; }
+        const float* bp = B.data() + (std::size_t)t * cols;
+        float* op = out.data() + (std::size_t)i * cols;
+        for (int j = 0; j < cols; ++j) { op[j] += av * bp[j]; }
+      }
+    }
+    return true;
+  };
+
+  std::vector<std::string> names = base.tensor_names();
+  int n_fused = 0, n_pass = 0, n_lokr = 0;
+  for (std::size_t idx = 0; idx < names.size(); ++idx) {
+    const std::string& name = names[idx];
+    if (progress) { progress(idx, names.size()); }
+    if (stop()) { return fail("lora-fuse: stopped"); }
+    const auto* ti = base.info(name);
+    if (ti == nullptr) { continue; }
+    SharedBuffer wb = base.load(name, mc);
+    if (wb.empty()) { return fail("lora-fuse: base load failed: " + name); }
+
+    auto it = fuse.find(name);
+    if (it == fuse.end() || ti->shape.size() != 2) {
+      // pass through byte-for-byte.
+      if (!wr.add(name, ti->dtype, ti->shape, wb.contents(), ti->nbytes)) {
+        return fail("lora-fuse: passthrough write failed: " + name);
+      }
+      ++n_pass;
+      continue;
+    }
+
+    const int N = (int)ti->shape[0], K = (int)ti->shape[1];
+    // An FP8 BASE is not fused here: the result could not be written back
+    // as FP8 without a second rounding, and the base's own scales would
+    // then describe weights that are no longer codes. Said plainly rather
+    // than as an unknown dtype.
+    {
+      fp8::Weight fw;
+      std::string ferr;
+      if (fp8::resolve(base, name, &fw, &ferr) || !ferr.empty()) {
+        return fail("lora-fuse: base weight '" + name + "' is FP8 -- apply "
+                    "the LoRA at runtime (generate-image's `lora`), or fuse "
+                    "into a bf16 copy (model-quantize with bits: 16)" +
+                    (ferr.empty() ? std::string() : " (" + ferr + ")"));
+      }
+    }
+    std::vector<float> W = to_f32(wb, ti->dtype, (std::size_t)N * K);
+    if (W.empty()) { return fail("lora-fuse: unsupported dtype for " + name); }
+    const Adapter& ad = it->second;
+
+    if (!ad.lokr) {
+      const auto* ai = lora.info(ad.a);
+      const auto* bi = lora.info(ad.b);
+      if (ai == nullptr || bi == nullptr || ai->shape.size() != 2 ||
+          bi->shape.size() != 2) {
+        return fail("lora-fuse: bad LoRA shapes for " + name);
+      }
+      const int rank = (int)ai->shape[0];
+      if ((int)ai->shape[1] != K || (int)bi->shape[0] != N ||
+          (int)bi->shape[1] != rank) {
+        return fail("lora-fuse: LoRA/base shape mismatch for " + name);
+      }
+      const std::vector<float> A = load_f32(ad.a), B = load_f32(ad.b);
+      if (A.empty() || B.empty()) {
+        return fail("lora-fuse: LoRA load failed for " + name);
+      }
+      // Effective scale: user scale, times alpha/rank if the adapter carries an
+      // alpha (kohya / ai-toolkit); diffusers LoRAs omit alpha (scale=1).
+      float s = scale;
+      if (!ad.alpha.empty()) {
+        const std::vector<float> av = load_f32(ad.alpha);
+        if (!av.empty() && rank > 0) { s *= av[0] / (float)rank; }
+      }
+      // W += s * (B @ A): rank-1 updates (cache-friendly over A/W rows).
+      for (int n = 0; n < N; ++n) {
+        float* wr_ = W.data() + (std::size_t)n * K;
+        const float* br = B.data() + (std::size_t)n * rank;
+        for (int r = 0; r < rank; ++r) {
+          const float b = s * br[r];
+          if (b == 0.0f) { continue; }
+          const float* ar = A.data() + (std::size_t)r * K;
+          for (int k = 0; k < K; ++k) { wr_[k] += b * ar[k]; }
+        }
+      }
+    } else {
+      // LoKr: W += s * kron(w1[a,b], w2[c,d]); N=a*c, K=b*d.
+      std::vector<float> w1, w2;
+      int a = 0, b = 0, c = 0, d = 0;
+      if (!lokr_factor(ad.w1, ad.w1a, ad.w1b, w1, a, b) ||
+          !lokr_factor(ad.w2, ad.w2a, ad.w2b, w2, c, d)) {
+        return fail("lora-fuse: bad LoKr factors for " + name);
+      }
+      if ((std::int64_t)a * c != N || (std::int64_t)b * d != K) {
+        return fail("lora-fuse: LoKr/base shape mismatch for " + name);
+      }
+      // Full-matrix LoKr uses no alpha rescaling (LyCORIS sets scale=1); a
+      // low-rank factor contributes alpha/rank when an alpha is present.
+      float s = scale;
+      const bool decomposed = ad.w1.empty() || ad.w2.empty();
+      if (decomposed && !ad.alpha.empty()) {
+        const std::vector<float> av = load_f32(ad.alpha);
+        const int r = ad.w2.empty() ? (int)lora.info(ad.w2a)->shape[1]
+                                    : (int)lora.info(ad.w1a)->shape[1];
+        if (!av.empty() && r > 0) { s *= av[0] / (float)r; }
+      }
+      for (int I = 0; I < N; ++I) {
+        const int i1 = I / c, i2 = I % c;
+        float* wr_ = W.data() + (std::size_t)I * K;
+        const float* w1r = w1.data() + (std::size_t)i1 * b;
+        const float* w2r = w2.data() + (std::size_t)i2 * d;
+        for (int j1 = 0; j1 < b; ++j1) {
+          const float w1v = s * w1r[j1];
+          if (w1v == 0.0f) { continue; }
+          float* wp = wr_ + (std::size_t)j1 * d;
+          for (int j2 = 0; j2 < d; ++j2) { wp[j2] += w1v * w2r[j2]; }
+        }
+      }
+      ++n_lokr;
+    }
+
+    const std::vector<std::uint8_t> bytes = from_f32(W, ti->dtype);
+    if (!wr.add(name, ti->dtype, ti->shape, bytes.data(), bytes.size())) {
+      return fail("lora-fuse: fused write failed: " + name);
+    }
+    ++n_fused;
+  }
+  if (progress) { progress(names.size(), names.size()); }
+  if (!wr.close()) { return fail("lora-fuse: finalize shards failed"); }
+
+  // The output's config.json.
+  //
+  // A directory base has one to copy. A Comfy-Org single file does not:
+  // its config rides in the safetensors `__metadata__`, and the output
+  // here is a DIRECTORY of shards, so it needs a real config.json or no
+  // loader can read it. Same lift the quantizer does, and for the same
+  // two load-bearing fields -- `qkv_per_head` and, for MiniMax-H3, the
+  // task partition, both of which are invisible in the tensors and both
+  // of which lived only in the source filename.
+  if (is_comfy_file) {
+    FlexData cfg;
+    std::string cerr;
+    if (!comfy_output_config(base_dir, cfg, &cerr)) {
+      return fail("lora-fuse: " + cerr);
+    }
+    std::ofstream co(fs::path(out_dir) / "config.json");
+    if (!co) { return fail("lora-fuse: cannot write config.json"); }
+    co << cfg.to_json();
+    if (!co) { return fail("lora-fuse: writing config.json failed"); }
+  } else {
+    for (const char* sc : {"config.json"}) {
+      const fs::path src = fs::path(base_dir) / sc;
+      if (fs::exists(src)) {
+        fs::copy_file(src, fs::path(out_dir) / sc,
+                      fs::copy_options::overwrite_existing, ec);
+      }
+    }
+  }
+
+  if (mc->session() != nullptr) {
+    mc->session()->log_normal(fmt(
+        "lora-fuse: {} weights fused ({} LoKr, scale {}), {} passthrough -> {}",
+        n_fused, n_lokr, scale, n_pass, out_dir));
+  }
+  return true;
+}
+
+}  // namespace genai
+}  // namespace vpipe

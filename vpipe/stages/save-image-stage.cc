@@ -1,0 +1,800 @@
+#include "stages/save-image-stage.h"
+
+#ifdef VPIPE_BUILD_APPLE_SILICON
+#include "apple-silicon/media/color-tags.h"
+#include "apple-silicon/media/image-io.h"
+#endif
+#include "stages/model-provenance.h"
+
+#include "apple-silicon/tensor-beat.h"
+#include "common/beat-payload-intf.h"
+#include "common/ffmpeg-libraries.h"
+#include "common/flex-data.h"
+#include "common/image-metadata.h"
+#include "common/media-line.h"
+#include "vpipe/vpipe.h"
+#include "common/vpipe-format.h"
+#include "interfaces/session-context-intf.h"
+#include "interfaces/session-services-intf.h"
+
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavutil/dict.h>
+#include <libavutil/error.h>
+#include <libavutil/frame.h>
+#include <libavutil/pixfmt.h>
+#include <libswscale/swscale.h>
+}
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
+
+using namespace std;
+
+namespace vpipe {
+
+namespace {
+
+// One small unique_ptr deleter per FFmpeg resource, each carrying the
+// FFmpegLibraries* so destruction routes through the right api table.
+struct CctxDeleter {
+  const FFmpegLibraries* libs;
+  void
+  operator()(AVCodecContext* p) const noexcept
+  {
+    if (p) { libs->avcodec().api.free_context(&p); }
+  }
+};
+using CctxPtr = unique_ptr<AVCodecContext, CctxDeleter>;
+
+struct PktDeleter {
+  const FFmpegLibraries* libs;
+  void
+  operator()(AVPacket* p) const noexcept
+  {
+    if (p) { libs->avcodec().api.packet_free(&p); }
+  }
+};
+using PktPtr = unique_ptr<AVPacket, PktDeleter>;
+
+struct FrameDeleter {
+  const FFmpegLibraries* libs;
+  void
+  operator()(AVFrame* p) const noexcept
+  {
+    if (p) { libs->avutil().api.frame_free(&p); }
+  }
+};
+using FramePtr = unique_ptr<AVFrame, FrameDeleter>;
+
+struct SwsDeleter {
+  const FFmpegLibraries* libs;
+  void
+  operator()(SwsContext* p) const noexcept
+  {
+    if (p) { libs->swscale().api.free_context(p); }
+  }
+};
+using SwsPtr = unique_ptr<SwsContext, SwsDeleter>;
+
+// One supported output format: its config key, the FFmpeg encoder name,
+// whether it is lossy (quality-controlled), and the preferred encode
+// pixel format (validated against the encoder's list at open time).
+// `alpha_pix_fmt` is what this format encodes an RGBA beat as, or
+// AV_PIX_FMT_NONE when it carries no alpha at all -- in which case the
+// beat is composited over white rather than silently losing its
+// transparency to a truncation.
+struct FormatDef {
+  const char*   key;
+  const char*   encoder;
+  bool          lossy;
+  AVPixelFormat pref_pix_fmt;
+  AVPixelFormat alpha_pix_fmt;
+};
+const FormatDef kFormats[] = {
+  {"png",  "png",   false, AV_PIX_FMT_RGB24,    AV_PIX_FMT_RGBA},
+  // JPEG has no alpha channel in any profile.
+  {"jpeg", "mjpeg", true,  AV_PIX_FMT_YUVJ444P, AV_PIX_FMT_NONE},
+  {"jpg",  "mjpeg", true,  AV_PIX_FMT_YUVJ444P, AV_PIX_FMT_NONE},
+  {"webp", "webp",  true,  AV_PIX_FMT_YUV420P,  AV_PIX_FMT_BGRA},
+  {"bmp",  "bmp",   false, AV_PIX_FMT_BGR24,    AV_PIX_FMT_BGRA},
+  {"tiff", "tiff",  false, AV_PIX_FMT_RGB24,    AV_PIX_FMT_RGBA},
+  {"tif",  "tiff",  false, AV_PIX_FMT_RGB24,    AV_PIX_FMT_RGBA},
+};
+
+const FormatDef*
+lookup_format(const string& key)
+{
+  for (const auto& f : kFormats) {
+    if (key == f.key) { return &f; }
+  }
+  return nullptr;
+}
+
+string
+lower_ext(const string& path)
+{
+  const auto dot = path.find_last_of('.');
+  if (dot == string::npos) { return {}; }
+  string ext = path.substr(dot + 1);
+  for (char& c : ext) { c = (char)tolower((unsigned char)c); }
+  return ext;
+}
+
+// The width of the "-NNNNNN" suffix this stage has always given the
+// second and later images of a stream when `path` carries no sequence
+// conversion of its own. See stages/output-path.h on why it is per
+// stage.
+constexpr int kSeqPad = 6;
+
+// FFmpeg, when this process can load it; else null, never a throw. The
+// session's own loader is REQUIRED-mode -- it throws, and logs an error,
+// at every ask while FFmpeg is missing -- and this stage is built for
+// every graph that saves a picture, so the answer is probed quietly
+// (optional mode: a warning) and kept for as long as the environment
+// that decides it -- VPIPE_NO_FFMPEG, VPIPE_FFMPEG_DIR -- is unchanged.
+const FFmpegLibraries*
+ffmpeg_if_present_(const SessionContextIntf* s)
+{
+  if (s == nullptr) { return nullptr; }
+  enum class Known { No, Present, Absent };
+  static std::mutex mu;
+  static Known known = Known::No;
+  static std::string known_for;   // the environment it was found in
+  std::string env;
+  for (const char* k : {"VPIPE_NO_FFMPEG", "VPIPE_FFMPEG_DIR"}) {
+    const char* v = std::getenv(k);
+    env += std::string(v != nullptr ? v : "") + '\n';
+  }
+  Known k = Known::No;
+  {
+    std::lock_guard<std::mutex> lk(mu);
+    if (known_for == env) { k = known; }
+  }
+  if (k == Known::Absent) { return nullptr; }
+  const FFmpegLibraries* libs = nullptr;
+  try {
+    if (k == Known::Present ||
+        LibAvUtil(s, LibraryHandle::LoadMode::Optional).valid()) {
+      libs = s->services()->ffmpeg_libraries();
+    }
+  } catch (...) {
+    libs = nullptr;
+  }
+  if (libs != nullptr && !libs->valid()) { libs = nullptr; }
+  std::lock_guard<std::mutex> lk(mu);
+  known = libs != nullptr ? Known::Present : Known::Absent;
+  known_for = env;
+  return libs;
+}
+
+}   // namespace
+
+SaveImageStage::SaveImageStage(const SessionContextIntf* s,
+                                 string                    id,
+                                 vector<InEdge>            iports,
+                                 FlexData                  config)
+  : TypedStage<SaveImageStage>(s, std::move(id), std::move(iports),
+                                std::move(config))
+  , _libs(ffmpeg_if_present_(s))
+{
+  // Deferred validation (see Stage::fail_config): construct for any config
+  // so a graph can be built/edited before `path` is supplied.
+  _path        = attr_path("path", true);
+  _format      = attr_str("format");
+  _quality     = (int)attr_int("quality");
+  _compression = (int)attr_int("compression");
+  _lossless    = attr_bool("lossless");
+  _no_overwrite = attr_bool("no_overwrite");
+  _software_host = attr_str("software_host");
+  // The template is checked HERE, not at the first write: a misspelt
+  // %t{...} is a config mistake and belongs in the editor's error line,
+  // where it can still be fixed, rather than in a log the run produced
+  // after it had already written somewhere unexpected.
+  if (!_path.empty()) {
+    const std::string bad = outpath::check(_path, &_tok);
+    if (!bad.empty()) {
+      fail_config(fmt(
+          "SaveImageStage('{}'): config.path '{}': {}",
+          this->id(), _path, bad));
+    }
+  }
+  _seq.configure(_no_overwrite);
+  if (_quality <= 0)     { _quality = 90; }
+  if (_compression <= 0) { _compression = 6; }
+  _quality     = std::clamp(_quality, 1, 100);
+  _compression = std::clamp(_compression, 0, 9);
+
+  if (_path.empty()) {
+    fail_config(fmt(
+        "SaveImageStage('{}'): config.path is required (the output image "
+        "file path)", this->id()));
+  }
+  // Resolve the format: explicit config wins, else the path extension,
+  // else png. Lower-case + validate against the supported set.
+  string key = _format;
+  for (char& c : key) { c = (char)tolower((unsigned char)c); }
+  if (key.empty()) { key = lower_ext(_path); }
+  if (key.empty()) { key = "png"; }
+  const FormatDef* fd = lookup_format(key);
+  if (key == "exr") {
+    // OpenEXR is ImageIO's (Apple), not FFmpeg's.
+#ifdef VPIPE_BUILD_APPLE_SILICON
+    _format = "exr";
+#else
+    fail_config(fmt("SaveImageStage('{}'): exr needs the Apple build",
+                    this->id()));
+#endif
+  } else if (fd == nullptr) {
+    fail_config(fmt(
+        "SaveImageStage('{}'): unsupported format '{}' (want one of "
+        "png, jpeg, webp, bmp, tiff, exr)", this->id(), key));
+  } else {
+    _format = fd->key;
+  }
+  _bit_depth = (int)attr_int("bit_depth");
+  if (_bit_depth != 0 && _bit_depth != 8 && _bit_depth != 16) {
+    fail_config(fmt("SaveImageStage('{}'): bit_depth must be 0, 8 or 16",
+                    this->id()));
+  }
+  if (_bit_depth == 16 && _format != "png" && _format != "tiff" &&
+      _format != "tif") {
+    fail_config(fmt("SaveImageStage('{}'): 16 bits is for png and tiff",
+                    this->id()));
+  }
+#ifndef VPIPE_BUILD_APPLE_SILICON
+  if (_bit_depth == 16) {
+    fail_config(fmt("SaveImageStage('{}'): 16 bits needs the Apple build",
+                    this->id()));
+  }
+#endif
+  if (_libs == nullptr) {
+#ifdef VPIPE_BUILD_APPLE_SILICON
+    // Without FFmpeg, ImageIO writes every format but WebP: a picture is
+    // still saved where no FFmpeg is installed.
+    if (_format == "webp") {
+      fail_config(fmt(
+          "SaveImageStage('{}'): webp needs FFmpeg, which this process "
+          "cannot load (ImageIO writes png, jpeg, tiff, bmp and exr)",
+          this->id()));
+    }
+#else
+    fail_config(fmt(
+        "SaveImageStage('{}'): FFmpegLibraries unavailable", this->id()));
+#endif
+  }
+}
+
+bool
+SaveImageStage::can_write_() const noexcept
+{
+#ifdef VPIPE_BUILD_APPLE_SILICON
+  return _libs != nullptr || _format != "webp";
+#else
+  return _libs != nullptr;
+#endif
+}
+
+SaveImageStage::~SaveImageStage() = default;
+
+namespace {
+// The keys of kFormats above, which stays the authority. Both spellings
+// of the two aliased formats are offered, because both are accepted and
+// a config may hold either.
+constexpr SpecExtra kFormatChoices[] = {
+  {spec_key::kChoices, "png,jpeg,jpg,webp,bmp,tiff,tif,exr"},
+};
+constexpr SpecExtra kBitDepthChoices[] = {
+  {spec_key::kChoices, "0,8,16"},
+};
+constexpr ConfigKey kAttrs[] = {
+  {.key = "path", .type = ConfigType::String, .required = true,
+   .doc = "output image file path. A printf integer conversion "
+          "(frame-%04d.png) numbers a stream of images and %t stamps the "
+          "local time (%t{...} takes a strftime format); without a "
+          "conversion later images get a -NNNNNN suffix",
+   .is_path = true, .path_write = true, .path_filter = "image"},
+  {.key = "software_host", .type = ConfigType::String, .required = false,
+   .doc = "the application that ran the graph, as it names itself "
+          "(\"ExampleApp 1.0\"). A generated image's EXIF Software then "
+          "reads \"<host> (Vpipe <version> <hash> with <model>)\". An "
+          "image no model made is left unmarked either way",
+   .def_str = ""},
+  {.key = "no_overwrite", .type = ConfigType::Bool, .required = false,
+   .doc = "never write over a file that already exists: the sequence "
+          "number starts past every name on disk instead of at 0. Off by "
+          "default, because the usual graph wants the same name rewritten "
+          "each run", .def_bool = false},
+  {.key = "format", .type = ConfigType::String, .required = false,
+   .doc = "png | jpeg (jpg) | webp | bmp | tiff | exr; default from the "
+          "path extension, else png. exr (OpenEXR, half float, linear "
+          "light) is written by ImageIO",
+   .extra = kFormatChoices},
+  {.key = "bit_depth", .type = ConfigType::Int, .required = false,
+   .doc = "png / tiff bits per component: 8 or 16; 0 (the default) "
+          "follows the picture -- 16 for an F16 picture, 8 for U8. 16 "
+          "bits, OpenEXR and any F16 picture are encoded by ImageIO with "
+          "the colour space the picture is tagged with (sideband "
+          "color_primaries / color_transfer)",
+   .def_int = 0, .extra = kBitDepthChoices},
+  {.key = "quality", .type = ConfigType::Int, .required = false,
+   .doc = "lossy codecs (jpeg, lossy webp): 1..100, higher is better "
+          "(default 90)"},
+  {.key = "compression", .type = ConfigType::Int, .required = false,
+   .doc = "PNG zlib level 0..9, higher is smaller + slower (default 6)"},
+  {.key = "lossless", .type = ConfigType::Bool, .required = false,
+   .doc = "webp lossless mode (default false)"},
+};
+const PortSpec kIports[] = {
+  {.name = "image", .doc = "planar RGB [3,H,W] or RGBA [4,H,W] "
+          "TensorBeat, U8 or F16 (load-image / vae-decode format)",
+   .type = &typeid(TensorBeatPayload),
+   .tags = "rgb-frames", .clock_group = 0},
+  {.name = "metadata", .doc = "OPTIONAL FlexData carrying exif_tiff_b64 (as "
+                              "load-image's metadata oport emits); when wired, "
+                              "the EXIF block is written into each output "
+                              "file. One beat per image",
+   .type = &typeid(FlexDataPayload),
+   .tags = "image-metadata", .clock_group = 0},
+};
+const StageSpec kSpec = {
+  .type_name = "save-image",
+  .doc       = "Sink: encodes each planar U8 RGB TensorBeat [3,H,W] to an "
+               "image file (PNG/JPEG/WebP/BMP/TIFF) via FFmpeg -- or, on "
+               "Apple, ImageIO where FFmpeg cannot be loaded (all but "
+               "WebP). The inverse of load-image; quality/compression "
+               "knobs control the store.",
+  .display_name = "Save Image",
+  .category  = StageCategory::Visual,
+  .iports    = kIports,
+  .oports    = {},
+  .attrs     = kAttrs,
+};
+}   // namespace
+
+const StageSpec&
+SaveImageStage::spec() const noexcept
+{
+  return kSpec;
+}
+
+string
+SaveImageStage::av_err_(int rc) const
+{
+  char buf[256];
+  _libs->avutil().api.strerror(rc, buf, sizeof buf);
+  return string(buf);
+}
+
+bool
+SaveImageStage::encode_apple_(const TensorBeat& pic,
+                              std::vector<std::uint8_t>* bytes)
+{
+#ifdef VPIPE_BUILD_APPLE_SILICON
+  apple_media::StillWriteOptions opt;
+  opt.format = _format == "tif" ? "tiff" : _format;
+  opt.bits = _bit_depth != 0 ? _bit_depth
+           : pic.dtype == TensorBeat::DType::F16 ? 16 : 8;
+  opt.quality = _quality / 100.0;
+  string err;
+  if (!apple_media::encode_still(pic,
+                                 apple_media::ColorTags::read(pic.sideband),
+                                 opt, bytes, &err)) {
+    session()->error(fmt("SaveImageStage('{}'): {}", this->id(), err));
+    return false;
+  }
+  return true;
+#else
+  (void)pic;
+  (void)bytes;
+  return false;
+#endif
+}
+
+bool
+SaveImageStage::encode_(const BeatPayloadIntf& beat, const string& out_path,
+                        std::span<const std::uint8_t> exif_tiff)
+{
+  const auto* tbp = dynamic_cast<const TensorBeatPayload*>(&beat);
+  if (tbp == nullptr ||
+      (tbp->dtype != TensorBeat::DType::U8 &&
+       tbp->dtype != TensorBeat::DType::F16) ||
+      tbp->shape.size() != 3 ||
+      (tbp->shape[0] != 3 && tbp->shape[0] != 4)) {
+    session()->warn(fmt(
+        "SaveImageStage('{}'): expected a U8 or F16 [3,H,W] RGB or "
+        "[4,H,W] RGBA TensorBeat, got {}; dropping beat", this->id(),
+        beat.describe()));
+    return false;
+  }
+#ifdef VPIPE_BUILD_APPLE_SILICON
+  // As deep as the picture, OpenEXR, or F16: ImageIO, the colour kept.
+  // And every picture where FFmpeg cannot be loaded.
+  if (_format == "exr" || _bit_depth == 16 ||
+      tbp->dtype == TensorBeat::DType::F16 || _libs == nullptr) {
+    std::vector<std::uint8_t> bytes;
+    if (!encode_apple_(*tbp, &bytes)) { return false; }
+    if (!exif_tiff.empty()) {
+      const bool ok =
+          (_format == "png")  ? imgmeta::png_set_exif(bytes, exif_tiff)
+        : (_format == "tiff" || _format == "tif")
+                              ? imgmeta::tiff_set_exif(bytes, exif_tiff)
+                              : imgmeta::jpeg_set_exif(bytes, exif_tiff);
+      if (!ok) {
+        session()->warn(fmt(
+            "SaveImageStage('{}'): could not write EXIF into '{}' ({}); "
+            "the image is still written without it", this->id(), out_path,
+            _format));
+      }
+    }
+    return write_file_(bytes, out_path);
+  }
+#else
+  if (tbp->dtype != TensorBeat::DType::U8) {
+    session()->warn(fmt("SaveImageStage('{}'): F16 pictures need the Apple "
+                        "build; dropping beat", this->id()));
+    return false;
+  }
+#endif
+  const int CH = (int)tbp->shape[0];
+  const int H = (int)tbp->shape[1];
+  const int W = (int)tbp->shape[2];
+  if (H <= 0 || W <= 0) {
+    session()->warn(fmt(
+        "SaveImageStage('{}'): invalid image dimensions {}x{}; dropping "
+        "beat", this->id(), W, H));
+    return false;
+  }
+
+  const FormatDef* fd = lookup_format(_format);
+  if (fd == nullptr) { return false; }   // ctor validated; defensive.
+
+  const AVCodec* codec =
+      _libs->avcodec().api.find_encoder_by_name(fd->encoder);
+  if (codec == nullptr) {
+    session()->error(fmt(
+        "SaveImageStage('{}'): FFmpeg has no '{}' encoder; cannot write "
+        "'{}'", this->id(), fd->encoder, out_path));
+    return false;
+  }
+
+  // Encode pixel format: the per-codec preferred one (open2 gives a clear
+  // error if the encoder rejects it). Lossless webp needs a full RGB
+  // format -- chroma-subsampled YUV would not round-trip -- so promote it.
+  AVPixelFormat pix = fd->pref_pix_fmt;
+  if (_format == "webp" && _lossless) { pix = AV_PIX_FMT_BGRA; }
+  // AN RGBA BEAT KEEPS ITS ALPHA where the format has one, and is
+  // COMPOSITED OVER WHITE where it does not. Truncating instead would
+  // write the model's raw colour under a transparent pixel, which for
+  // a generated RGBA image is usually black fringing around everything
+  // -- the failure looks like a bad model rather than a lost channel.
+  const bool want_alpha = CH == 4 && fd->alpha_pix_fmt != AV_PIX_FMT_NONE;
+  if (want_alpha) { pix = fd->alpha_pix_fmt; }
+  if (CH == 4 && !want_alpha) {
+    session()->log_normal(fmt(
+        "SaveImageStage('{}'): '{}' carries no alpha channel, so the "
+        "image is composited over white", this->id(), _format));
+  }
+
+  AVCodecContext* raw_cctx = _libs->avcodec().api.alloc_context3(codec);
+  if (raw_cctx == nullptr) {
+    session()->error(fmt(
+        "SaveImageStage('{}'): alloc_context3 failed", this->id()));
+    return false;
+  }
+  CctxPtr cctx(raw_cctx, CctxDeleter{_libs});
+  cctx->width     = W;
+  cctx->height    = H;
+  cctx->pix_fmt   = pix;
+  cctx->time_base = AVRational{1, 1};   // stills; must be non-zero.
+  cctx->compression_level = _compression;   // honoured by png (+ others).
+
+  AVDictionary* opts = nullptr;
+  if (fd->lossy) {
+    // Fixed-quality (qscale) mode. mjpeg qscale is 1 (best) .. 31 (worst);
+    // map quality 100->1, 1->31 linearly.
+    const int qscale = std::clamp(
+        (int)std::lround((100.0 - _quality) * 30.0 / 99.0) + 1, 1, 31);
+    cctx->flags |= AV_CODEC_FLAG_QSCALE;
+    cctx->global_quality = qscale * FF_QP2LAMBDA;
+    // libwebp reads its own 0..100 `quality` + `lossless` private options.
+    _libs->avutil().api.dict_set(
+        &opts, "quality", std::to_string(_quality).c_str(), 0);
+    if (_lossless) {
+      _libs->avutil().api.dict_set(&opts, "lossless", "1", 0);
+    }
+  }
+
+  int rc = _libs->avcodec().api.open2(cctx.get(), codec, &opts);
+  _libs->avutil().api.dict_free(&opts);
+  if (rc < 0) {
+    session()->error(fmt(
+        "SaveImageStage('{}'): avcodec_open2('{}') failed: {}",
+        this->id(), fd->encoder, av_err_(rc)));
+    return false;
+  }
+
+  FramePtr frame(_libs->avutil().api.frame_alloc(), FrameDeleter{_libs});
+  if (!frame) { return false; }
+  frame->format = pix;
+  frame->width  = W;
+  frame->height = H;
+  rc = _libs->avutil().api.frame_get_buffer(frame.get(), 32);
+  if (rc < 0) {
+    session()->error(fmt(
+        "SaveImageStage('{}'): frame_get_buffer failed: {}",
+        this->id(), av_err_(rc)));
+    return false;
+  }
+  if (fd->lossy) { frame->quality = cctx->global_quality; }
+
+  // Our tensor is planar R,G,B [3,H,W]; feed swscale as GBRP (plane order
+  // G,B,R). Handle both contiguous (strides empty -> row pitch W) and the
+  // padded 3-stride form load-image can hand back.
+  const uint8_t* base = tbp->as_u8();
+  const int64_t plane_stride =
+      tbp->strides.empty() ? (int64_t)H * W : tbp->strides[0];
+  const int row_pitch =
+      tbp->strides.empty() ? W : (int)tbp->strides[1];
+  const uint8_t* plane_r = base + 0 * plane_stride;
+  const uint8_t* plane_g = base + 1 * plane_stride;
+  const uint8_t* plane_b = base + 2 * plane_stride;
+  const uint8_t* plane_a =
+      CH == 4 ? base + 3 * plane_stride : nullptr;
+  // COMPOSITE OVER WHITE into a scratch when the format has no alpha:
+  // out = a*rgb + (1-a)*255, which is what every viewer does to show a
+  // transparent PNG and what the reference pipeline does to flatten
+  // one. Planar, so the three planes are independent.
+  std::vector<uint8_t> flat;
+  if (CH == 4 && !want_alpha) {
+    flat.resize((std::size_t)3 * H * row_pitch);
+    const uint8_t* srcp[3] = {plane_r, plane_g, plane_b};
+    for (int c = 0; c < 3; ++c) {
+      for (int y = 0; y < H; ++y) {
+        const uint8_t* sp = srcp[c] + (std::size_t)y * row_pitch;
+        const uint8_t* ap = plane_a + (std::size_t)y * row_pitch;
+        uint8_t* dp =
+            flat.data() + ((std::size_t)c * H + y) * row_pitch;
+        for (int x = 0; x < W; ++x) {
+          const int a = ap[x];
+          dp[x] = (uint8_t)((sp[x] * a + 255 * (255 - a) + 127) / 255);
+        }
+      }
+    }
+    plane_r = flat.data() + (std::size_t)0 * H * row_pitch;
+    plane_g = flat.data() + (std::size_t)1 * H * row_pitch;
+    plane_b = flat.data() + (std::size_t)2 * H * row_pitch;
+  }
+  // GBRP plane order is G, B, R -- and GBRAP appends A as plane 3.
+  const uint8_t* src_data[4]   = {plane_g, plane_b, plane_r,
+                                  want_alpha ? plane_a : nullptr};
+  int            src_pitch[4]  = {row_pitch, row_pitch, row_pitch,
+                                  want_alpha ? row_pitch : 0};
+
+  SwsPtr sws(_libs->swscale().api.get_context(
+                 W, H, want_alpha ? AV_PIX_FMT_GBRAP : AV_PIX_FMT_GBRP,
+                 W, H, pix,
+                 SWS_BILINEAR, nullptr, nullptr, nullptr),
+             SwsDeleter{_libs});
+  if (!sws) {
+    session()->error(fmt(
+        "SaveImageStage('{}'): sws_getContext (gbrp->{}) failed",
+        this->id(), (int)pix));
+    return false;
+  }
+  _libs->swscale().api.scale(sws.get(), src_data, src_pitch, 0, H,
+                             frame->data, frame->linesize);
+
+  PktPtr pkt(_libs->avcodec().api.packet_alloc(), PktDeleter{_libs});
+  if (!pkt) { return false; }
+
+  rc = _libs->avcodec().api.send_frame(cctx.get(), frame.get());
+  if (rc < 0) {
+    session()->error(fmt(
+        "SaveImageStage('{}'): send_frame failed: {}",
+        this->id(), av_err_(rc)));
+    return false;
+  }
+  // Flush: still-image encoders emit one packet after an EOF signal.
+  _libs->avcodec().api.send_frame(cctx.get(), nullptr);
+
+  // Collect the encoder output in memory rather than streaming it straight
+  // to the file: EXIF has to be spliced into the container bytes (an APP1
+  // segment after SOI / an eXIf chunk after IHDR), which needs the head of
+  // the file in hand. A still image is one packet, so this costs one buffer.
+  std::vector<std::uint8_t> bytes;
+  for (;;) {
+    rc = _libs->avcodec().api.receive_packet(cctx.get(), pkt.get());
+    if (rc == AVERROR(EAGAIN) || rc == AVERROR_EOF) { break; }
+    if (rc < 0) {
+      session()->error(fmt(
+          "SaveImageStage('{}'): receive_packet failed: {}",
+          this->id(), av_err_(rc)));
+      _libs->avcodec().api.packet_unref(pkt.get());
+      return false;
+    }
+    bytes.insert(bytes.end(), pkt->data, pkt->data + pkt->size);
+    _libs->avcodec().api.packet_unref(pkt.get());
+  }
+  if (bytes.empty()) {
+    session()->error(fmt(
+        "SaveImageStage('{}'): no encoded data produced for '{}'",
+        this->id(), out_path));
+    return false;
+  }
+
+  if (!exif_tiff.empty()) {
+    const bool ok =
+        (_format == "png")  ? imgmeta::png_set_exif(bytes, exif_tiff)
+      : (_format == "tiff" || _format == "tif")
+                            ? imgmeta::tiff_set_exif(bytes, exif_tiff)
+                            : imgmeta::jpeg_set_exif(bytes, exif_tiff);
+    if (!ok) {
+      // Never fail the image over its metadata -- the pixels are the point.
+      session()->warn(fmt(
+          "SaveImageStage('{}'): could not write {} bytes of EXIF into '{}' "
+          "({}); the image is still written without it",
+          this->id(), exif_tiff.size(), out_path, _format));
+    }
+  }
+
+  return write_file_(bytes, out_path);
+}
+
+bool
+SaveImageStage::write_file_(const std::vector<std::uint8_t>& bytes,
+                            const string& out_path)
+{
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path parent = fs::path(out_path).parent_path();
+  if (!parent.empty()) { fs::create_directories(parent, ec); }
+  std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
+  if (!out.is_open()) {
+    session()->error(fmt(
+        "SaveImageStage('{}'): cannot open '{}' for writing",
+        this->id(), out_path));
+    return false;
+  }
+  out.write(reinterpret_cast<const char*>(bytes.data()),
+            (std::streamsize)bytes.size());
+  out.flush();
+  if (!out.good()) {
+    session()->error(fmt(
+        "SaveImageStage('{}'): write to '{}' failed", this->id(), out_path));
+    return false;
+  }
+  return true;
+}
+
+void
+SaveImageStage::reset_run_state()
+{
+  // Per-launch reset. The picker holds the filename index: image 0
+  // writes `path` verbatim and every later one gets a `-%06u` suffix so
+  // a stream can't clobber itself WITHIN a run. Across runs that is
+  // wrong -- the stage survives a stop/relaunch, so without this the
+  // second launch starts at index 1 and writes `name-000001.jpeg`, the
+  // third `name-000002.jpeg`, and the file the user is actually
+  // watching is never rewritten.
+  //
+  // Under `no_overwrite` the reset costs nothing: the scan re-finds the
+  // first free name, which is now one past what the last run wrote.
+  _seq.reset();
+  _written = 0;
+
+}
+
+Job
+SaveImageStage::initialize(RuntimeContext& /*ctx*/)
+{
+  if (_path.empty() || !can_write_()) { co_return; }
+  session()->info(fmt(
+      "SaveImageStage('{}'): writing {} to '{}' (quality {}, compression "
+      "{}{}){}", this->id(), _format, _path, _quality, _compression,
+      _lossless ? ", lossless" : "",
+      _libs == nullptr ? " with ImageIO: FFmpeg cannot be loaded" : ""));
+  // A template is worth ECHOING RESOLVED. Anything this file does not
+  // recognise is copied verbatim into the name (see output-path.h), so
+  // a mistyped token is otherwise invisible until someone goes looking
+  // for a file that is not there.
+  if (_tok.sequence || _tok.time) {
+    session()->info(fmt(
+        "SaveImageStage('{}'): names files like '{}'{}", this->id(),
+        outpath::expand(_path, _seq.peek(), kSeqPad, std::time(nullptr)),
+        _no_overwrite ? "; existing names are skipped" : ""));
+  }
+  co_return;
+}
+
+Job
+SaveImageStage::process(RuntimeContext& ctx)
+{
+  auto in = co_await ctx.read(0);
+  if (!in) { ctx.signal_done(); co_return; }   // upstream EOS -> end.
+
+  // Metadata iport (optional): one beat per image, so read it in lockstep
+  // with the image. Only when wired -- an unwired graph behaves exactly as
+  // before. A producer that EOSes early just stops contributing EXIF; the
+  // images keep being written.
+  std::vector<std::uint8_t> exif_tiff;
+  if (ctx.num_iports() > 1 && ctx.iport_connected(1)) {
+    auto mb = co_await ctx.read(1);
+    const auto* fd = mb ? dynamic_cast<const FlexDataPayload*>(mb.get())
+                        : nullptr;
+    if (fd != nullptr && fd->data.is_object()) {
+      auto obj = fd->data.as_object();
+      if (obj.contains("exif_tiff_b64")) {
+        const std::string b64(obj.at("exif_tiff_b64").as_string(""));
+        if (auto raw = media_line::base64_decode(b64)) {
+          exif_tiff = std::move(*raw);
+        } else {
+          session()->warn(fmt(
+              "SaveImageStage('{}'): metadata exif_tiff_b64 is not valid "
+              "base64; ignoring", this->id()));
+        }
+      }
+    } else if (mb) {
+      session()->warn(fmt(
+          "SaveImageStage('{}'): metadata iport expects a FlexData object; "
+          "got {}, ignoring", this->id(), mb->describe()));
+    }
+  }
+  if (_path.empty() || !can_write_()) { co_return; }   // inert.
+
+  // Provenance: generate-image stamps the generating model onto the latent's
+  // sideband and vae-decode carries it onto the image, so a GENERATED image
+  // arrives knowing what made it. Record that in EXIF Software. Only when a
+  // model name is actually present -- a plain load-image -> save-image copy
+  // must not claim vpipe authored someone else's photo, and its own Software
+  // tag (if any) is left exactly as it was.
+  {
+    const auto* itb = dynamic_cast<const TensorBeatPayload*>(in.get());
+    const std::string model = itb != nullptr
+        ? provenance::model_name(itb->sideband) : std::string();
+    if (!model.empty()) {
+      // A host names itself first, and vpipe's line is in brackets: the
+      // application made the image, with vpipe and that model.
+      std::string sw = provenance::software_string(model);
+      if (!_software_host.empty()) { sw = _software_host + " (" + sw + ")"; }
+      exif_tiff = imgmeta::exif_set_software(exif_tiff, sw);
+    }
+  }
+
+  if (!exif_tiff.empty() && !imgmeta::format_supports_exif(_format)) {
+    session()->warn(fmt(
+        "SaveImageStage('{}'): {} cannot carry EXIF; the image is written "
+        "without it (use png or jpeg)", this->id(), _format));
+    exif_tiff.clear();
+  }
+
+  const string out_path = _seq.take(_path, kSeqPad);
+  if (out_path.empty()) {
+    session()->error(fmt(
+        "SaveImageStage('{}'): no_overwrite is set and '{}' has no free "
+        "sequence number left; nothing written", this->id(), _path));
+    co_return;
+  }
+  if (encode_(*in, out_path, exif_tiff)) {
+    ++_written;
+    session()->log_verbose(fmt(
+        "SaveImageStage('{}'): wrote '{}'", this->id(), out_path));
+  }
+  // Sink: no ctx.write.
+}
+
+VPIPE_REGISTER_STAGE(SaveImageStage)
+VPIPE_REGISTER_SPEC(SaveImageStage, kSpec)
+
+}

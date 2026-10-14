@@ -1,0 +1,91 @@
+{
+  "id": "minimax-h3-extend-concat",
+  "stages": [
+    {
+      "id": "load-parts",
+      "type": "load-video",
+      "iports": [],
+      "config": {
+        "input_url": [
+          "minimax-h3-extend-part1.mp4",
+          "minimax-h3-extend-part2.mp4",
+          "minimax-h3-extend-part3.mp4",
+          "minimax-h3-extend-part4.mp4"
+        ],
+        "enable_video": true,
+        "enable_audio": true,
+        "options": {
+          "safe": "0"
+        }
+      }
+    },
+    {
+      "id": "audio-to-pcm",
+      "type": "audio-to-pcm",
+      "iports": [
+        {
+          "src": "load-parts",
+          "oport": 1
+        }
+      ],
+      "config": {
+        "output_sample_rate": 32000,
+        "channels": 2,
+        "chunk_duration_s": 10.125,
+        "max_chunk_duration_s": 30
+      }
+    },
+    {
+      "id": "video-to-rgb",
+      "type": "video-to-rgb",
+      "iports": [
+        {
+          "src": "load-parts",
+          "oport": 0
+        }
+      ],
+      "config": {
+        "output_dtype": "u8"
+      }
+    },
+    {
+      "id": "rgb-to-video",
+      "type": "rgb-to-video",
+      "iports": [
+        {
+          "src": "video-to-rgb",
+          "oport": 0
+        }
+      ],
+      "config": {
+        "fps": 24
+      }
+    },
+    {
+      "id": "save-video",
+      "type": "save-video",
+      "iports": [
+        {
+          "src": "rgb-to-video",
+          "oport": 0
+        },
+        {
+          "src": "audio-to-pcm",
+          "oport": 0
+        }
+      ],
+      "config": {
+        "output_url": "minimax-h3-extend.mp4",
+        "enable_video": true,
+        "enable_audio": true,
+        "video_bitrate": 10240000,
+        "video_gop_size": 24,
+        "audio_bitrate": 192000,
+        "muxer_options": {
+          "movflags": "+faststart"
+        }
+      }
+    }
+  ],
+  "subpipelines": []
+}

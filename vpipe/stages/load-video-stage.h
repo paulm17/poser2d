@@ -1,0 +1,240 @@
+#ifndef LOAD_VIDEO_STAGE_H
+#define LOAD_VIDEO_STAGE_H
+
+#include "common/job.h"
+#include "pipeline/runtime-context.h"
+#include "pipeline/typed-stage.h"
+#include "common/encoded-segment.h"
+#include "common/ffmpeg-libraries.h"
+#include "stages/audio-video/video-tokens.h"
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace vpipe {
+
+// Reads a video file (or network URL: rtsp://, http://, ...), demuxes
+// it, and emits its ENCODED packets downstream. Source stage; 0 input
+// ports, 1 or 2 output ports depending on `enable_video` /
+// `enable_audio`.
+//
+// One EncodedSegment per packet, the same contract rtsp-capture
+// publishes -- so the file and the camera are interchangeable sources
+// for everything downstream, and `video-to-rgb` / `audio-to-pcm` own the
+// decode for both.
+//
+// It decoded, once, and emitted FrameRefs. Nothing consumed them: the
+// only FrameRef consumer in the tree is save-video, which is fed by
+// rgb-to-video, so a file could reach no stage that works in tensors.
+// Decoding here also duplicated video-to-rgb's decoder without its
+// hardware path, its format conversion, or its cadence sideband. Moving
+// the decode downstream is what gives a file the whole existing chain --
+// resample, decimate, stack, encode -- instead of a private one.
+//
+// ---- START AND DURATION ----
+//
+// `start_s` seeks before the first packet and `duration_s` bounds how
+// much is read, so a graph can take a WINDOW out of a long file:
+//
+//   start_s: 45.0, duration_s: 30.0   -- 45 s in, half a minute out
+//
+// THE START IS KEYFRAME-ACCURATE, NOT FRAME-ACCURATE, and that is a
+// property of demuxing rather than a shortcut. The seek lands on the
+// keyframe at or before `start_s`; the packets between it and
+// `start_s` are what the frames after `start_s` are DECODED FROM, so
+// dropping them here -- which is exactly what load-audio does, its
+// packets being independently decodable -- would hand video-to-rgb a
+// stream it cannot decode. They are emitted, and the run logs how much
+// lead-in the seek cost.
+//
+// A consumer that needs the window trimmed to the frame has the means
+// to do it: `start_utc` is media time from the start of the FILE, so
+// the lead-in frames are the ones stamped before `start_s`.
+//
+// Both streams are cut the same way, so audio and video stay aligned:
+// each stops when it passes the end, and the run ends when both have.
+//
+// Configuration (FlexData object on the 4th constructor parameter):
+//   input_url            (string, required)
+//   format               (string, default "")  -- forced demuxer; "" auto
+//   enable_video         (bool,   default true)
+//   enable_audio         (bool,   default true)
+//   video_stream_index   (int,    default -1)  -- -1 = first video
+//   audio_stream_index   (int,    default -1)
+//   start_s              (real,   default 0)   -- seek here first
+//   duration_s           (real,   default 0)   -- stop this far past
+//                                                 start_s; 0 = to EOF
+//   options              (object<string,string>) -- av_dict for open
+//   read_timeout_ms      (int,    default 0)   -- network timeout
+class LoadVideoStage final
+  : public TypedStage<LoadVideoStage>
+{
+public:
+  static constexpr const char* kTypeName = "load-video";
+
+  LoadVideoStage(const SessionContextIntf* session,
+                        std::string               id,
+                        std::vector<InEdge>       iports,
+                        FlexData                  config);
+
+  ~LoadVideoStage() override;
+
+  Job initialize(RuntimeContext& ctx) override;
+
+  // Per-LAUNCH reset, for the same reason load-audio has one: a stop
+  // destroys the runtime and not this stage, so a second launch found
+  // `_eof` still set from the first and ended the stream before reading
+  // a packet -- while initialize() opened a SECOND AVFormatContext over
+  // the member holding the first. Not caught by the relaunch sweep,
+  // which skips this stage for want of a video fixture; found by fixing
+  // the identical bug in its sibling.
+  void reset_run_state() override;
+  Job process   (RuntimeContext& ctx) override;
+
+  const StageSpec& spec() const noexcept override;
+
+  // Decoder is a source (no iports). Its video and audio oports
+  // advance on independent clocks -- video on the video stream's
+  // frame rate, audio on the audio stream's sample / frame rate --
+  // so each oport reports its own clock group. The port indices are
+  // assigned dynamically (video/audio optional), so this stays an
+  // explicit override rather than reading static groups from kSpec.
+  unsigned
+  oport_clock_group(unsigned p) const noexcept override
+  {
+    if (_video_port >= 0 &&
+        p == static_cast<unsigned>(_video_port)) {
+      return 0;
+    }
+    return 1;
+  }
+
+  // Test-only accessors.
+  int video_port() const noexcept { return _video_port; }
+  int audio_port() const noexcept { return _audio_port; }
+
+private:
+  bool open_input_();
+  int  pick_stream_(int media_type, int requested) const noexcept;
+  // Cache the per-stream metadata every emitted segment repeats:
+  // codec_id, extradata and the geometry or rate. Read once at open,
+  // because codecpar lives in _fctx and a segment must be readable
+  // after this stage is gone.
+  void cache_stream_(int stream_idx, bool video);
+  std::string av_err_(int rc) const;
+  // The configured window, for the open log; empty when there is none.
+  std::string window_doc_() const;
+  // The source for a log line, already quoted: the one URL, or how many
+  // inputs were joined and which they run between. Logging `_input_url`
+  // alone would name only the first of them.
+  std::string input_doc_() const;
+  // Have all the ENABLED streams passed the end of the window?
+  bool all_past_end_() const noexcept;
+
+  // Build one segment from the packet currently in `_pkt`.
+  std::unique_ptr<EncodedSegmentPayload> segment_(bool video);
+
+  // Refuse a join whose inputs decode differently -- see the definition.
+  void check_inputs_agree_();
+
+  // Feed `_concat_list` to the concat demuxer as if it were a file, so
+  // joining several inputs writes nothing to disk. `opaque` is the
+  // stage; static so they carry the AVIO C signatures while still
+  // reaching the members.
+  static int          concat_read_(void* opaque, std::uint8_t* buf,
+                                   int size);
+  static std::int64_t concat_seek_(void* opaque, std::int64_t offset,
+                                   int whence);
+
+  // Config attributes; defaults live in kSpec.attrs and are read in the
+  // constructor via attr_*. Declarations carry no non-zero default.
+  std::string _input_url;
+  std::string _format;
+  // Every configured input, sandbox-confined and in order. One entry is
+  // the ordinary case and opens exactly as it always did; two or more
+  // are JOINED, and `_concat_list` then holds the list the concat
+  // demuxer reads (through `_avio`, so nothing is written to disk).
+  std::vector<std::string> _inputs;
+  std::string              _concat_list;
+  std::size_t              _concat_pos = 0;
+
+  // JOINING SEVERAL INPUTS, one file at a time. The concat demuxer
+  // flattens the parts into one stream, which is exactly what makes a
+  // block codec's per-file padding unreachable: only the FIRST file's
+  // gapless metadata is visible, and every interior part then welds its
+  // encoder priming into the seam. Opening the parts in turn keeps each
+  // one's own metadata, at the cost of continuing the timeline here.
+  std::size_t              _seq_index   = 0;   // which input is open
+  std::int64_t             _seq_base_us = 0;   // joined-timeline offset
+
+  // Open the input at `_seq_index`. False when it cannot be opened.
+  bool advance_to_next_input_();
+  AVIOContext*             _avio       = nullptr;
+  bool        _enable_video{};
+  bool        _enable_audio{};
+  int         _video_stream_index{};
+  int         _audio_stream_index{};
+  FlexData    _open_options;
+  int         _read_timeout_ms{};
+  double      _start_s{};
+  double      _duration_s{};
+
+  // The window in MEDIA microseconds, resolved once from the config.
+  std::int64_t _start_us = 0;
+  std::int64_t _stop_us  = 0;
+  bool         _has_stop = false;
+
+  // Derived port indices: -1 = disabled.
+  int _video_port = -1;
+  int _audio_port = -1;
+
+  // FFmpeg API tables. Owned by the Session and shared across every
+  // stage that needs them; bound here in the ctor's member-init list
+  // and stable for the stage's lifetime. Non-null in a fully-
+  // constructed stage; ctor calls session()->error if the session
+  // can't supply one.
+  const FFmpegLibraries* _libs;
+  AVFormatContext*       _fctx          = nullptr;
+  int              _v_stream_idx  = -1;
+  int              _a_stream_idx  = -1;
+  AVPacket*        _pkt           = nullptr;
+
+  // Per-stream metadata, cached at open (see cache_stream_).
+  struct StreamMeta {
+    unsigned codec_id = 0;
+    unsigned width = 0, height = 0;
+    unsigned fps_num = 0, fps_den = 0;
+    unsigned sample_rate = 0, channels = 0;
+    // The container's colour description, video only; see
+    // EncodedSegment. UNSPECIFIED until cache_stream_ reads it.
+    int color_range = 0, colorspace = 2;
+    int color_primaries = 2, color_trc = 2;
+    int video_delay = 0;    // B-frame reorder depth; see EncodedSegment
+    // Gapless bookkeeping for an AUDIO stream; see EncodedSegment.
+    std::int64_t skip_head = 0, total_samples = 0;
+    std::vector<std::uint8_t> extradata;
+    AVRational time_base { 0, 1 };
+    // MEDIA time of the next packet, in microseconds from the start of
+    // the file. A packet with no pts repeats the previous one's end,
+    // which keeps the stream monotonic where a zero would jump it back
+    // to the start mid-clip.
+    std::int64_t last_us = 0;
+    // Set once this stream has passed `_stop_us`. The two streams do
+    // not interleave evenly, so one reaches the end well before the
+    // other; ending the RUN on the first to get there would truncate
+    // its partner.
+    bool past_end = false;
+  };
+  StreamMeta _vmeta, _ameta;
+
+  // Logged once, on the first packet out: what the keyframe seek
+  // actually cost in lead-in. See the header's START AND DURATION.
+  bool _lead_in_logged = false;
+  bool _eof = false;
+  std::uint64_t _v_packets = 0, _a_packets = 0;
+};
+
+}
+
+#endif

@@ -1,0 +1,216 @@
+#ifndef STAGES_MODEL_DETECT_H
+#define STAGES_MODEL_DETECT_H
+
+#include "common/flex-data.h"
+
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace vpipe {
+
+class SessionContextIntf;
+
+// What a model directory on disk turns out to BE. Produced by
+// detect_model_dir() for the model-register stage, so registering a
+// hand-downloaded / hand-built model needs a path and nothing else: the
+// runtime hint (`model_type`) and the I/O modalities that the stage
+// pickers and the web-ui model browser filter on are derived from the
+// directory rather than typed by the user.
+//
+// Every field is best-effort and may be empty; `model_type` is the one
+// that matters (the stages filter on it), and it is either exact (a
+// catalogue hit or a recognized config.json) or empty -- never guessed
+// into a wrong family, because a wrong runtime hint offers a model to a
+// stage that cannot load it.
+struct DetectedModel {
+  std::string model_type;    // runtime hint: "qwen3.5" / "flux2" / ...
+  std::string family;        // display: "Qwen", "Gemma", "FLUX.2"
+  std::string version;       // display: "3.5", "4"
+  std::string param_class;   // "4B", "E4B", "35B-A3B" (from the dir name)
+  std::string variant;       // "MLX 4-bit", "GGUF Q4_K", "bf16"
+  std::string category;      // "model" | "supplement" | "dataset"
+  std::vector<std::string> inputs;   // subset of text/image/audio/video
+  std::vector<std::string> outputs;
+  std::string parent_model_type;     // supplements: the model they attach to
+  std::string parent_param_class;
+  // The catalogue's pinned repo-relative files, when the directory was
+  // identified AS a catalogue entry. Empty for everything else.
+  //
+  // It is what told the entries of a multi-model repo apart (see
+  // catalog_pick_present_ in the .cc), and it is worth carrying out
+  // because a record that pins files RESOLVES to the subtree holding
+  // them -- `MiniMaxAI/MiniMax-H3` pins `FL2VA/...`, so the model root
+  // is `<dir>/FL2VA` and not `<dir>`. A registered model without this
+  // field resolves to the repo directory, which for a partitioned repo
+  // has no transformer/ in it at all.
+  std::vector<std::string> files;
+  // "comfyui" for a Comfy-Org repack (one .safetensors per component
+  // under diffusion_models/ | text_encoders/ | vae/, config in the
+  // safetensors __metadata__), empty for the upstream diffusers/HF
+  // layout. See ModelCatalogEntry::weight_format for why it is recorded.
+  std::string weight_format;
+  // How model_type was established, for the log line + summary beat:
+  //   "catalog"    -- the directory matches a catalogued repo (curated)
+  //   "config"     -- HF config.json model_type
+  //   "diffusers"  -- transformer/config.json _class_name (DiT pipeline)
+  //   "gguf"       -- a GGUF checkpoint's metadata/name
+  //   "coreml"     -- an .mlpackage / .mlmodelc supplement
+  //   ""           -- nothing recognizable
+  std::string detected_by;
+  // Layout facts, reported in the record so a later reader doesn't have
+  // to walk the tree again.
+  std::uint64_t file_count  = 0;
+  std::uint64_t total_bytes = 0;
+  bool          is_dir      = false;   // false for a bare .mlpackage/.gguf
+};
+
+// Inspect a model directory. `dir` is a filesystem path (a directory, or
+// a bare .mlpackage / .gguf file). `hf_path_hint` is the "owner/repo"
+// the caller believes this came from (empty -> derived from the two
+// trailing path components); a catalogue hit on it supplies the curated
+// metadata verbatim, which is always preferred over probing.
+//
+// Never throws: an unreadable / unrecognized directory yields a
+// DetectedModel with an empty model_type and empty I/O, which registers
+// fine -- it just carries no compatibility hint.
+DetectedModel
+detect_model_dir(const std::string& dir, const std::string& hf_path_hint = {});
+
+// Write a detection's descriptive fields into a registry record object:
+// model_type / family / version / param_class / variant / category /
+// parent linkage / detected_by, plus the inputs + outputs arrays. Only
+// non-empty fields are written, so a caller may fill in curated values
+// before or after without having to null out what it doesn't know.
+//
+// Shared by every stage that registers a model (model-register,
+// model-fetch, model-quantize, lora-fuse) so a record means the same
+// thing however the model got there.
+void
+record_detected_fields(FlexData::ObjectView& rec, const DetectedModel& d);
+
+// The loadable CoreML artifact for `path`.
+//
+// CoreML loads a *.mlpackage / *.mlmodelc BUNDLE, never the directory
+// that happens to contain one, so a registry record a CoreML stage can
+// use has to name the bundle itself. The vpipe-supplement archives
+// unpack to exactly one bundle under a per-model directory, and this is
+// the one place that layout is turned into a loadable path -- every
+// CoreML consumer (realtime-vqa, visual-qa, yolo-detection,
+// audio-tagging, audio-segment) just resolves its registry key and
+// trusts what comes back.
+//
+// Returns `path` unchanged when it is already a bundle; the single
+// top-level bundle directly under `path` when there is one; and an
+// EMPTY string otherwise. Empty is the normal answer for a plain
+// checkpoint directory -- a safetensors loader consumes the directory,
+// so there is nothing to resolve -- which is why callers treat it as
+// "keep what you had" rather than as an error.
+//
+// .mlpackage wins over .mlmodelc if a directory somehow holds both; the
+// search is the immediate level only, matching how the archives unpack.
+std::string coreml_artifact(const std::string& path);
+
+// Best-effort "owner/repo" for a local path, from its two trailing
+// components ("/models/mlx-community/gemma-4-e4b-it-4bit" ->
+// "mlx-community/gemma-4-e4b-it-4bit"). Empty when the path has fewer
+// than two components. Used both as the default registry key and as the
+// catalogue lookup for a directory laid out the way model-fetch writes.
+std::string hf_path_from_local(const std::string& dir);
+
+// The IMAGE/VIDEO VAE subdirectory of a model root, as the vae-encode /
+// vae-decode stages resolve it.
+//
+// Almost every checkpoint here follows diffusers and puts it in `vae/`.
+// MiniMax-H3 does not: its video VAE keeps the checkpoint's own layout,
+// `video_vae/` wrapping a `source/` that holds the weights, with a
+// config.json at BOTH levels. This returns the OUTER one -- the level
+// that names the class and carries latents_mean / latents_std -- and
+// the model loader descends the last step itself. A caller that
+// assumed `vae/` instead falls through to the model ROOT, finds no
+// config.json, reads the family as the default and then fails to open
+// a checkpoint: the H3 video path failing for a reason that has
+// nothing to do with H3.
+//
+// A MiniMax-H3 checkout can hold BOTH: the diffusers pipeline at its
+// root (`vae/`, AutoencoderKLMiniMaxH3) and the released partitions.
+// The released `video_vae/` answers then -- the same VAE, and the copy
+// every other H3 stage opens.
+//
+// Returns `root` unchanged when neither layout is present, so the
+// caller's existing "no checkpoint here" error still fires.
+std::string resolve_vae_dir(const std::string& root);
+
+// Which BUILT-IN decoder runs the VAE in `vae_dir` (as resolve_vae_dir
+// returns it): "krea2", "flux2", "wan" or "minimax-h3", read off its
+// config.json `_class_name` (or a Comfy-Org file's `__metadata__`).
+//
+// EMPTY when the config names a class no built-in decoder runs, with
+// that class in `*unknown_class`: a caller refuses it BY NAME. A VAE
+// with no class at all -- a standalone checkpoint whose config is
+// borrowed -- is "krea2", as it always was. Ask the plugin registry
+// (VaeModelRegistry::claim_for) first; a family it claims never gets
+// here.
+std::string builtin_vae_family(const std::string& vae_dir,
+                               std::string* unknown_class = nullptr);
+
+// The classes builtin_vae_family() knows, comma-separated, for the
+// message that refuses one it does not.
+std::string builtin_vae_classes();
+
+// WHAT TO OPEN A WeightSet ON, given a VAE directory.
+//
+// Usually the directory: MetalLlamaWeights globs a model dir for the
+// layouts a publisher uses -- an index.json, `model.safetensors`, the
+// diffusers `diffusion_pytorch_model*` spellings, numbered shards.
+//
+// A STANDALONE VAE checkpoint is none of those. It is one freely-named
+// safetensors (wikeeyang's `Krea2-HD-vae.safetensors`; ComfyUI's
+// `qwen_image_vae.safetensors`) sitting in a directory, so the glob
+// finds nothing and the dir reports "no readable checkpoint" -- and
+// MetalLlamaWeights already opens a checkpoint named by FILE, which is
+// how the Comfy-Org repacks are read. So: name the file.
+//
+// EXACTLY ONE, or the directory unchanged. Two freely-named safetensors
+// is a directory holding two things, and choosing between them by sort
+// order would load one VAE while the config beside it describes the
+// other -- which decodes, and is wrong. The caller's existing error is
+// the better answer.
+std::string resolve_vae_weights_path(const std::string& vae_dir);
+
+// WHERE THE LATENT STATISTICS COME FROM, when the VAE checkpoint does
+// not carry them itself.
+//
+// A VAE's per-channel `latents_mean` / `latents_std` are not in the
+// weights -- they live in a `config.json` beside them, and a STANDALONE
+// VAE is published without one. They cannot be defaulted: they describe
+// a specific latent space, and the wrong sixteen numbers decode a
+// plausible, wrongly-graded picture rather than failing.
+//
+// So they are BORROWED, in this order:
+//
+//   1. `<vae_dir>/config.json` -- the checkpoint's own, which always
+//      wins. A file someone put there is a statement; everything below
+//      is an inference.
+//   2. the `vae/config.json` of an installed model this VAE is
+//      catalogued as a SUPPLEMENT of. If the box already holds the model
+//      whose latent space this VAE serves, that model's config is the
+//      authority, and asking for a copy of a file already on disk is
+//      asking for a download nobody needs.
+//
+// `expect_class` (optional) is checked against the borrowed config's
+// `_class_name`, so a parent whose VAE is a DIFFERENT architecture --
+// same family, different latent statistics -- is skipped rather than
+// read. Empty accepts any.
+//
+// Returns "" when neither source answers, which is the caller's cue to
+// refuse: there is no third option that is not a guess.
+std::string resolve_vae_config_path(const SessionContextIntf* session,
+                                    const std::string&        model_ref,
+                                    const std::string&        vae_dir,
+                                    std::string_view          expect_class);
+
+}
+
+#endif

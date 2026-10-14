@@ -1,0 +1,260 @@
+#ifndef SAVE_VIDEO_STAGE_H
+#define SAVE_VIDEO_STAGE_H
+
+#include "common/job.h"
+#include "pipeline/runtime-context.h"
+#include "pipeline/typed-stage.h"
+#include "common/ffmpeg-libraries.h"
+#include "stages/audio-video/video-tokens.h"
+#include "stages/output-path.h"
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace vpipe {
+
+// Receives StreamParams headers + FrameRef beats on its input ports
+// and encodes them with H.264 (h264_videotoolbox by default, falling
+// back to libx264 where VideoToolbox is absent) and AAC (default audio
+// encoder), muxing into a container written to disk.
+//
+// Sink stage; 0 output ports. Input port count is 1 or 2 depending on
+// `enable_video` / `enable_audio`. With both enabled, port 0 is video
+// and port 1 is audio. With only one enabled, that one is port 0.
+//
+// The audio port ALSO accepts raw PCM: a TensorBeatPayload of f32
+// samples, rank-2 [channels, n_samples] PLANAR or rank-1 [n_samples]
+// mono, with `sample_rate` (and optionally `channels`) on the
+// sideband. That is what the generative audio path emits -- there is
+// no ffmpeg decoder upstream of `audio-vae-decode` to produce a
+// header, and the alternative would be a pcm-to-audio adapter stage
+// that existed only to restate a rate this stage can read off the
+// beat. The first PCM beat both configures the encoder and carries
+// samples; the stage then chunks to the encoder's frame_size and
+// timestamps from a running sample count, so several beats
+// concatenate seamlessly. The samples must be in the encoder's
+// sample format (FLTP for the default AAC) -- there is no
+// swresample here, so a mismatch surfaces at avcodec_open2.
+//
+// Configuration (FlexData object):
+//   output_url       (string, required)       -- a path template: see
+//                      stages/output-path.h. A printf integer conversion
+//                      ("clip-%03d.mp4") numbers the LAUNCHES and "%t"
+//                      stamps the local time. One file per run, so the
+//                      name is resolved once, when the muxer is opened.
+//   no_overwrite     (bool,   default false)  -- never write over a file
+//                      that is already there: the number starts past
+//                      every name on disk instead of at 0. This is the
+//                      knob that stops a second run from erasing the
+//                      first one's clip. Ignored for a network URL,
+//                      which has nothing to stat.
+//   format           (string, default "")     -- container; "" = inferred
+//   enable_video     (bool,   default true)
+//   enable_audio     (bool,   default true)
+//   video.codec      (string, default "h264_videotoolbox")
+//   video.bitrate    (int,    default 2000000)
+//   video.preset     (string, default "medium")
+//   video.crf        (int,    optional)       -- when present overrides bitrate
+//   video.gop_size   (int,    default 60)
+//   video.options    (object<string,string>)  -- extra encoder options
+//   audio.codec      (string, default "aac")
+//   audio.bitrate    (int,    default 128000)
+//   audio.options    (object<string,string>)
+//   muxer_options    (object<string,string>)  -- e.g. {"movflags":"+faststart"}
+//
+// The encoder inherits pixel format / sample format / channel layout
+// from the incoming StreamParams headers; mismatches between input
+// format and what the encoder accepts surface as clean error logs at
+// avcodec_open2 time (no swscale / swresample yet).
+class SaveVideoStage final
+  : public TypedStage<SaveVideoStage>
+{
+public:
+  static constexpr const char* kTypeName = "save-video";
+
+  SaveVideoStage(const SessionContextIntf* session,
+                        std::string               id,
+                        std::vector<InEdge>       iports,
+                        FlexData                  config);
+
+  ~SaveVideoStage() override;
+
+  Job initialize(RuntimeContext& ctx) override;
+  void reset_run_state() override;
+  Job process   (RuntimeContext& ctx) override;
+  Job drain     (RuntimeContext& ctx) override;
+
+  const StageSpec& spec() const noexcept override;
+
+  // Encoder is a sink (no oports). When both video and audio are
+  // enabled the iports run on independent clocks (video frame
+  // rate vs audio sample rate); declare distinct clock groups so
+  // upstream domains stay separate. The port indices are assigned
+  // dynamically (video/audio optional), so this stays an explicit
+  // override rather than reading static groups from kSpec.
+  unsigned
+  iport_clock_group(unsigned p) const noexcept override
+  {
+    if (_video_port >= 0 &&
+        p == static_cast<unsigned>(_video_port)) {
+      return 0;
+    }
+    return 1;
+  }
+
+  // Test-only accessors.
+  int video_port() const noexcept { return _video_port; }
+  int audio_port() const noexcept { return _audio_port; }
+
+  // The path actually being written this run ("" before the muxer is
+  // opened). Test-only, and the only way to see what a template
+  // resolved to.
+  const std::string& resolved_url() const noexcept { return _resolved_url; }
+
+private:
+  // Fix this run's output path from the template. Called once, before
+  // the format is inferred from the extension and before the IO context
+  // is opened -- both of them need the real name, not the template.
+  void resolve_output_url_();
+  void ensure_output_format_();
+  void init_video_encoder_(const VideoStreamParams& p);
+  void init_audio_encoder_(const AudioStreamParams& p);
+  // Write `n` samples starting at `off` of the planar-f32 PCM `src` into
+  // `_apcm_frame`, in whatever sample format the audio encoder accepted.
+  void write_pcm_frame_(const float* src, std::int64_t samples,
+                        int channels, std::int64_t off, int n);
+  void open_output_and_write_header_();
+  // Record what generated this clip in the container's metadata, and
+  // ask the muxer for a form that can carry it. Called with the muxer
+  // option dict, which it may add to, immediately before the header is
+  // written -- after that the boxes are already on disk.
+  void write_provenance_(AVDictionary** mux_opts);
+  bool ready_to_write_header_() const noexcept;
+  void encode_and_mux_(unsigned port, AVFrame* frame);
+  // Raw-PCM audio: derive the stream header from a TensorBeat's shape
+  // and sideband, and encode its samples in frame_size chunks.
+  bool audio_params_from_pcm_(const class TensorBeatPayload& t,
+                              AudioStreamParams* out);
+  void encode_pcm_(const class TensorBeatPayload& t);
+  // Encode `count` samples/channel of planar-f32 `src` (whose channel
+  // stride is `samples`) starting at `off`, in whole frame_size frames.
+  void emit_pcm_frames_(const float* src, std::int64_t samples, int channels,
+                        std::int64_t off, std::int64_t count, int frame_size);
+  // The samples left over once the last whole frame is out. A block
+  // codec accepts a SHORT frame only as the stream's last, so this is
+  // the only thing that may send one.
+  void flush_pcm_tail_();
+  void drain_encoder_(AVCodecContext* enc, AVStream* st);
+  // A reordering video encoder's packets, dts repaired; see
+  // drain_encoder_.
+  bool video_reorders_() const;
+  void settle_video_dts_();
+  void write_video_packet_(AVPacket* pkt);
+  void free_held_video_();
+  void finalize_();
+  // Free the muxer/encoder objects (finalizing first if needed).
+  // Shared by the destructor and the per-launch reset.
+  void release_media_();
+  // NOTE _enc_pkt below is deliberately NOT released there: it is a
+  // ctor-allocated scratch packet reused by every run (an owned
+  // resource, not per-run state), and process() dereferences it without
+  // a null check. Freeing it per launch segfaults on the next drain.
+  std::string av_err_(int rc) const;
+
+  // Config attributes. Flat-key defaults live in kSpec.attrs (read via
+  // attr_*); the nested video.* / audio.* sub-object defaults have no
+  // flat ConfigKey representation and are seeded once at the top of the
+  // constructor. Declarations carry no non-zero default.
+  std::string _output_url;      // the template, as configured
+  std::string _resolved_url;    // this run's name; "" until resolved
+  // Whether resolve_output_url_() has already run this launch. A
+  // separate flag, not `_resolved_url.empty()`: an exhausted
+  // no_overwrite scan legitimately yields "", and retrying it would
+  // re-walk a million names and re-log once per caller.
+  bool        _url_resolved = false;
+  bool        _no_overwrite = false;
+  outpath::Tokens    _tok;      // which tokens `output_url` carries
+  outpath::SeqPicker _seq;
+  std::string _format;
+  bool        _enable_video{};
+  bool        _enable_audio{};
+  std::string _video_codec;
+  int64_t     _video_bitrate{};
+  std::string _video_preset;
+  bool        _video_has_crf{};
+  int         _video_crf{};
+  int         _video_gop_size{};
+  FlexData    _video_options;
+  std::string _audio_codec;
+  int64_t     _audio_bitrate{};
+  FlexData    _audio_options;
+  FlexData    _muxer_options;
+
+  // Derived port indices: -1 = disabled.
+  int _video_port = -1;
+  int _audio_port = -1;
+
+  // FFmpeg API tables. Owned by the Session and shared across every
+  // stage that needs them; bound here in the ctor's member-init list.
+  // Non-null in a fully-constructed stage; ctor calls
+  // session()->error if the session can't supply one.
+  const FFmpegLibraries* _libs;
+  AVFormatContext*       _ofctx           = nullptr;
+  AVStream*        _vstream         = nullptr;
+  AVStream*        _astream         = nullptr;
+  AVCodecContext*  _venc            = nullptr;
+  AVCodecContext*  _aenc            = nullptr;
+  AVPacket*        _enc_pkt         = nullptr;
+
+  // Everything below is PER-RUN muxer state, cleared by
+  // reset_run_state(). It matters more here than elsewhere: after
+  // drain() finalizes the file, _video_eos/_audio_eos stay true, so a
+  // relaunch's process() sees itself as already done and writes NOTHING
+  // -- no file at all, silently.
+  bool _video_initialized = false;
+  bool _audio_initialized = false;
+  bool _video_eos         = false;
+  bool _audio_eos         = false;
+  bool _header_written    = false;
+  bool _finalized         = false;
+  // The audio port carries raw PCM TensorBeats rather than the
+  // header + FrameRef protocol. Latched from the first beat's type.
+  bool _audio_pcm         = false;
+  // Running sample count, which IS the pts in the encoder's
+  // {1, sample_rate} time base. Per-run, so a relaunch restarts at 0
+  // rather than writing a clip that begins minutes in.
+  int64_t _audio_pts      = 0;
+  // The model that generated this clip, off whichever port said so
+  // (the video header, or the audio PCM beat's sideband). Read at
+  // header time and written into the container -- see
+  // open_output_and_write_header_(). Empty for anything vpipe did not
+  // generate, and then nothing is written.
+  std::string _model_name;
+  AVFrame* _apcm_frame    = nullptr;   // reused frame_size scratch
+  // Samples carried over a beat boundary because they did not fill a
+  // frame: planar f32, `_apcm_carry_n` per channel, channel stride
+  // `_apcm_carry_n`. A beat boundary is NOT the end of the stream --
+  // audio-to-pcm emits one beat per chunk and a joined load-video one
+  // per file -- so the tail of each has to wait for its successor.
+  std::vector<float> _apcm_carry;
+  std::int64_t       _apcm_carry_n = 0;
+  // Scratch holding carry ++ beat, so the usual carry-free case can
+  // encode straight out of the beat with no copy at all.
+  std::vector<float> _apcm_join;
+
+  int _next_port = 0;
+
+  // DTS REPAIR for a video encoder that reorders (drain_encoder_): its
+  // first packets wait in `_vheld` until the shift their dts need is
+  // known, in the stream's time base. Per run.
+  std::vector<AVPacket*> _vheld;
+  std::int64_t _vdts_shift   = 0;
+  bool         _vdts_settled = false;
+  std::int64_t _vlast_dts    = 0;
+  bool         _vlast_valid  = false;
+  bool         _vdts_guessed = false;
+};
+
+}
+
+#endif

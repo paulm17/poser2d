@@ -1,0 +1,221 @@
+#include "pipeline/stage-registry.h"
+
+#include "common/vpipe-format.h"
+#include "interfaces/session-context-intf.h"
+
+#include <exception>
+#include <mutex>
+#include <utility>
+
+using namespace std;
+
+namespace vpipe {
+
+StageRegistry&
+StageRegistry::get() noexcept
+{
+  static StageRegistry x;
+  return x;
+}
+
+StageTypeId
+StageRegistry::register_type(string_view type_name, Factory f)
+{
+  lock_guard<mutex> lk(_mu);
+  auto it = _by_name.find(type_name);
+  if (it != _by_name.end()) {
+    return it->second;
+  }
+  unsigned id = static_cast<unsigned>(_entries.size()) + 1;
+  StageTypeId tid = static_cast<StageTypeId>(id);
+  _entries.push_back(Entry{string(type_name), f});
+  _entries.back().pending = _quarantine;
+  _by_name.emplace(_entries.back().name, tid);
+  return tid;
+}
+
+StageTypeId
+StageRegistry::find_id(string_view type_name) const noexcept
+{
+  lock_guard<mutex> lk(_mu);
+  auto it = _by_name.find(type_name);
+  if (it == _by_name.end() ||
+      !visible_(static_cast<unsigned>(it->second))) {
+    return StageTypeId::unknown;
+  }
+  return it->second;
+}
+
+void
+StageRegistry::set_spec(string_view type_name,
+                        const StageSpec* spec) noexcept
+{
+  lock_guard<mutex> lk(_mu);
+  // First registration sticks (mirrors register_type's duplicate
+  // handling); a second include of the same stage is a no-op.
+  if (_specs.emplace(string(type_name), spec).second && _quarantine) {
+    _quarantined_specs.emplace_back(type_name);
+  }
+}
+
+const StageSpec*
+StageRegistry::spec(string_view type_name) const noexcept
+{
+  lock_guard<mutex> lk(_mu);
+  auto it = _specs.find(type_name);
+  if (it == _specs.end()) { return nullptr; }
+  // A spec whose type is still pending is pending with it.
+  auto t = _by_name.find(type_name);
+  if (t != _by_name.end() && !visible_(static_cast<unsigned>(t->second))) {
+    return nullptr;
+  }
+  if (_quarantine) {
+    for (const string& q : _quarantined_specs) {
+      if (q == type_name) { return nullptr; }
+    }
+  }
+  return it->second;
+}
+
+string_view
+StageRegistry::find_name(StageTypeId tid) const noexcept
+{
+  lock_guard<mutex> lk(_mu);
+  unsigned id = static_cast<unsigned>(tid);
+  if (!visible_(id)) {
+    return {};
+  }
+  return _entries[id - 1].name;
+}
+
+StagePtr
+StageRegistry::create(string_view               type_name,
+                      const SessionContextIntf* session,
+                      string                    id,
+                      vector<InEdge>            iports,
+                      FlexData                  config) const
+{
+  Factory f;
+  {
+    lock_guard<mutex> lk(_mu);
+    auto it = _by_name.find(type_name);
+    if (it == _by_name.end() ||
+        !visible_(static_cast<unsigned>(it->second))) {
+      if (session) {
+        session->warn(fmt(
+            "StageRegistry::create: unknown stage type '{}'",
+            type_name));
+      }
+      return nullptr;
+    }
+    unsigned tid = static_cast<unsigned>(it->second);
+    f = _entries[tid - 1].factory;
+  }
+  // A stage ctor that detects a malformed config calls
+  // session->error(...), which logs at Error level and then throws
+  // (see Session::error). Catch here so a bad config does not
+  // unwind the caller -- the public PipelineHandle::insert_stage
+  // path expects nullptr on construction failure, and direct
+  // callers of the registry get the same.
+  try {
+    return f(session, std::move(id), std::move(iports),
+             std::move(config));
+  } catch (const exception& e) {
+    if (session) {
+      session->warn(fmt(
+          "StageRegistry::create('{}'): stage ctor failed: {}",
+          type_name, e.what()));
+    }
+    return nullptr;
+  } catch (...) {
+    if (session) {
+      session->warn(fmt(
+          "StageRegistry::create('{}'): stage ctor threw a "
+          "non-std exception",
+          type_name));
+    }
+    return nullptr;
+  }
+}
+
+StageTypeId
+StageRegistry::next_id() const noexcept
+{
+  lock_guard<mutex> lk(_mu);
+  return static_cast<StageTypeId>(_entries.size() + 1);
+}
+
+void
+StageRegistry::attribute_since(StageTypeId first, string_view origin)
+{
+  if (origin.empty()) { return; }
+  lock_guard<mutex> lk(_mu);
+  // ids are 1-based and index = id - 1.
+  const unsigned f = static_cast<unsigned>(first);
+  for (size_t i = (f >= 1 ? static_cast<size_t>(f) - 1 : 0);
+       i < _entries.size(); ++i) {
+    // First writer wins, matching register_type/set_spec: if two plugins
+    // somehow both cover a span, the one that registered the type keeps
+    // the credit rather than the later one overwriting it.
+    if (_entries[i].origin.empty()) { _entries[i].origin = origin; }
+  }
+}
+
+string_view
+StageRegistry::origin(string_view type_name) const noexcept
+{
+  lock_guard<mutex> lk(_mu);
+  auto it = _by_name.find(type_name);
+  if (it == _by_name.end()) { return {}; }
+  const size_t idx = static_cast<size_t>(
+      static_cast<unsigned>(it->second)) - 1;
+  if (idx >= _entries.size()) { return {}; }
+  return _entries[idx].origin;
+}
+
+vector<pair<StageTypeId, string>>
+StageRegistry::all() const
+{
+  lock_guard<mutex> lk(_mu);
+  vector<pair<StageTypeId, string>> out;
+  out.reserve(_entries.size());
+  for (size_t i = 0; i < _entries.size(); ++i) {
+    if (!visible_(static_cast<unsigned>(i + 1))) { continue; }
+    out.emplace_back(static_cast<StageTypeId>(i + 1),
+                     _entries[i].name);
+  }
+  return out;
+}
+
+void
+StageRegistry::begin_quarantine()
+{
+  lock_guard<mutex> lk(_mu);
+  _quarantine = true;
+  _quarantined_specs.clear();
+}
+
+void
+StageRegistry::end_quarantine(bool admit)
+{
+  lock_guard<mutex> lk(_mu);
+  for (Entry& e : _entries) {
+    if (!e.pending) { continue; }
+    e.pending = false;
+    if (admit) { continue; }
+    // Withdrawn for good. The slot stays -- ids index the vector and are
+    // never reused -- but the name is free again for a plugin that
+    // passes, and nothing can reach the factory.
+    e.withdrawn = true;
+    e.factory   = nullptr;
+    _by_name.erase(e.name);
+    _specs.erase(e.name);
+  }
+  if (!admit) {
+    for (const string& n : _quarantined_specs) { _specs.erase(n); }
+  }
+  _quarantined_specs.clear();
+  _quarantine = false;
+}
+
+}

@@ -1,0 +1,465 @@
+#include "stages/model-eval-stage.h"
+#include "stages/model-memory.h"
+
+#include "common/flex-data.h"
+#include "common/vpipe-format.h"
+#include "interfaces/session-context-intf.h"
+#include "interfaces/session-services-intf.h"
+#include "stages/model-registry.h"
+
+#ifdef VPIPE_BUILD_APPLE_SILICON
+#include "generative-models/eval/lm-eval.h"
+#include "generative-models/generative-model-manager.h"
+#include "generative-models/loaded-language-model.h"
+#include <memory>
+#include <utility>
+#endif
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace vpipe {
+
+StageMemory
+ModelEvalStage::declare_memory() const
+{
+  // NOT the sum. The two models run in SEQUENCE and the first is
+  // released before the second loads -- run_one() ends with lm.reset(),
+  // "peak memory = 1 model" -- so the box only ever holds one of them,
+  // and a sum would refuse an evaluation that fits.
+  //
+  // The larger of the two, therefore, held for this stage's position.
+  // Naming each is still worth it: an evaluation whose A is also the
+  // model some other stage in the graph holds is the same bytes, and
+  // the plan should say so.
+  StageMemory m;
+  std::size_t a = 0, b = 0;
+  std::string a_dir, b_dir;
+  if (!_model_a.empty()) {
+    a_dir = resolve_model_dir(session(), _model_a);
+    a = model_memory::dir_weights_bytes(a_dir);
+  }
+  if (!_model_b.empty()) {
+    b_dir = resolve_model_dir(session(), _model_b);
+    b = model_memory::dir_weights_bytes(b_dir);
+  }
+  // Only the larger is held at once, but which one is which matters to
+  // the merge: naming the SMALLER as well, at zero, would be a lie about
+  // a checkpoint a peer may also hold. So the bigger is declared and the
+  // other is left to whoever actually holds it for longer.
+  if (a >= b) {
+    if (a > 0) { m.hold(a_dir, a, 0, /*releases=*/true); }
+  } else {
+    if (b > 0) { m.hold(b_dir, b, 0, /*releases=*/true); }
+  }
+  return m;
+}
+
+
+ModelEvalStage::ModelEvalStage(const SessionContextIntf* s,
+                               std::string               id,
+                               std::vector<InEdge>       iports,
+                               FlexData                  config)
+  : TypedStage<ModelEvalStage>(s, std::move(id), std::move(iports),
+                               std::move(config))
+{
+  _model_a     = attr_str("model_a");
+  _model_b     = attr_str("model_b");
+  _wikitext    = attr_str("wikitext");
+  _arc         = attr_str("arc");
+  _ppl_tokens  = static_cast<int>(attr_uint("ppl_tokens"));
+  _arc_samples = static_cast<int>(attr_uint("arc_samples"));
+  _seed        = static_cast<std::uint64_t>(attr_uint("seed"));
+  _divergence  = attr_bool("divergence");
+
+  if (_model_a.empty()) {
+    fail_config(fmt("ModelEvalStage('{}'): config.model_a is required",
+                    this->id()));
+  }
+  allocate_oports(spec().oports.size());
+}
+
+namespace {
+constexpr ConfigKey kAttrs[] = {
+  {.key = "model_a", .type = ConfigType::String, .required = true,
+   .doc = "first model: a models-DB key (model-fetch / model-quantize) or a "
+          "model directory path",
+   .suggest_db = kModelRegistryDb},
+  {.key = "model_b", .type = ConfigType::String,
+   .doc = "OPTIONAL second model (key or path); when set, the report is a "
+          "side-by-side comparison with deltas",
+   .def_str = "", .suggest_db = kModelRegistryDb},
+  {.key = "wikitext", .type = ConfigType::String,
+   .doc = "WikiText-2 dataset: a models-DB key (fetch with model-fetch) or a "
+          "dir path; empty/not-found skips the perplexity probe",
+   .def_str = "wikitext-2-raw-test",
+   .suggest_db = kModelRegistryDb, .suggest_db_type = "eval-wikitext2"},
+  {.key = "arc", .type = ConfigType::String,
+   .doc = "ARC-Challenge dataset: a models-DB key or a dir path; empty/not-"
+          "found skips the ARC probe",
+   .def_str = "arc-challenge-test",
+   .suggest_db = kModelRegistryDb, .suggest_db_type = "eval-arc-challenge"},
+  {.key = "ppl_tokens", .type = ConfigType::Uint,
+   .doc = "WikiText-2 tokens to score for perplexity (0 => all)",
+   .def_uint = 1024},
+  {.key = "arc_samples", .type = ConfigType::Uint,
+   .doc = "ARC-Challenge questions to random-sample (0 => the whole pool)",
+   .def_uint = 40},
+  {.key = "seed", .type = ConfigType::Uint,
+   .doc = "RNG seed for the ARC-Challenge sample", .def_uint = 1234},
+  {.key = "divergence", .type = ConfigType::Bool,
+   .doc = "A-vs-B output KL divergence + logit relative error (for models "
+          "whose absolute perplexity is meaningless, e.g. TTS/codec backbones "
+          "like MOSS-TTS-Local-v1.5); needs model_b. A's per-token logits are "
+          "buffered (ppl_tokens * vocab floats, ~155 MB at vocab 152k / 256 "
+          "tokens) -- lower ppl_tokens for huge-vocab models.",
+   .def_bool = false},
+};
+// Trigger iport (optional, any beat) + summary oport -- see model-fetch
+// for the shared "preparation recipe" rationale.
+const PortSpec kIports[] = {
+  {.name = "trigger",
+   .doc  = "optional pacing trigger (any beat type); when wired, the work "
+           "waits for one beat before running -- lets these preparation "
+           "stages cascade into a recipe",
+   .type = nullptr, .clock_group = 0},
+};
+const PortSpec kOports[] = {
+  {.name = "summary",
+   .doc  = "FlexData summary of the evaluation; its `text` field is the "
+           "Markdown report (feed a save-text), and the beat also triggers "
+           "the next stage in a recipe",
+   .type = &typeid(FlexDataPayload), .clock_group = 0},
+};
+const StageSpec kSpec = {
+  .type_name = "model-eval",
+  .doc       = "Source: one-shot offline evaluation of one or two language "
+               "models (models-DB keys or paths). Runs WikiText-2 perplexity "
+               "+ a random-sampled ARC-Challenge accuracy probe and logs a "
+               "Markdown report (a comparison when two models are given). "
+               "Optional trigger in / summary out.",
+  .display_name = "Model Eval",
+  .category  = StageCategory::Preparation,
+  .iports    = kIports,
+  .oports    = kOports,
+  .attrs     = kAttrs,
+};
+}  // namespace
+
+const StageSpec&
+ModelEvalStage::spec() const noexcept
+{
+  return kSpec;
+}
+
+#ifdef VPIPE_BUILD_APPLE_SILICON
+namespace {
+
+struct Outcome {
+  bool                     loaded = false;
+  std::string              ref;
+  genai::PerplexityResult  ppl;
+  genai::ArcResult         arc;
+  genai::AbDivergenceResult div;   // A->B divergence (populated on B's pass)
+};
+
+std::string ppl_cell_(const genai::PerplexityResult& p)
+{
+  return p.ok ? fmt("{:.3f}", p.perplexity)() : std::string("n/a");
+}
+std::string arc_cell_(const genai::ArcResult& a)
+{
+  return a.ok ? fmt("{:.1f}% ({}/{})", a.accuracy * 100.0, a.correct, a.n)()
+              : std::string("n/a");
+}
+std::string kl_cell_(const genai::AbDivergenceResult& d)
+{
+  return d.ok ? fmt("{:.6f}", d.kl)() : std::string("n/a");
+}
+std::string rel_cell_(const genai::AbDivergenceResult& d)
+{
+  return d.ok ? fmt("{:.6f}", d.rel_l2)() : std::string("n/a");
+}
+
+// Built-in fallback paragraph for the A-vs-B divergence when no WikiText-2
+// corpus is loaded -- it only needs tokens to feed both models. Includes CJK
+// so multilingual (MOSS-class) models are exercised.
+constexpr const char* kDivergenceFallback =
+  "The quick brown fox jumps over the lazy dog. Paris is the capital of "
+  "France, and the river Seine flows through the heart of the city. "
+  "Machine learning models predict the next token from the preceding "
+  "context. 人工智能正在迅速改变我们的世界。今天天气晴朗，适合出去散步。"
+  "The cat sat quietly on the warm windowsill in the afternoon sun. "
+  "東京是日本的首都，也是世界上人口最多的城市之一。Water boils at one "
+  "hundred degrees Celsius and freezes at zero. 学而时习之，不亦说乎？"
+  "The stars appeared one by one as the evening sky slowly darkened. "
+  "Numbers, letters, and symbols all become tokens for the model to read.";
+
+}  // namespace
+#endif  // VPIPE_BUILD_APPLE_SILICON
+
+bool
+ModelEvalStage::evaluate_once()
+{
+  FlexData discard;
+  return evaluate_once(discard);
+}
+
+bool
+ModelEvalStage::evaluate_once(FlexData& summary)
+{
+#ifdef VPIPE_BUILD_APPLE_SILICON
+  auto* mgr = session() ? session()->services()->generative_model_manager() : nullptr;
+  if (mgr == nullptr) {
+    session()->warn(fmt(
+        "ModelEvalStage('{}'): no GenerativeModelManager (is this an "
+        "apple-silicon build?)", this->id()));
+    return false;
+  }
+
+  // A-vs-B output divergence (KL + logit rel-L2) for models whose absolute
+  // perplexity is meaningless; needs two models and does NOT need a dataset.
+  const bool want_div = _divergence && !_model_b.empty();
+  if (_divergence && _model_b.empty()) {
+    session()->warn(fmt(
+        "ModelEvalStage('{}'): divergence=true but model_b is empty; the "
+        "A-vs-B divergence needs two models (skipping it)", this->id()));
+  }
+
+  // Load the fetched datasets once (resolved via the models DB). A missing /
+  // unfetched dataset just disables that probe (reported as n/a).
+  std::string wt_text;
+  std::vector<genai::ArcItem> arc_items;
+  bool have_wt = false, have_arc = false;
+  if (!_wikitext.empty()) {
+    const std::string dir = resolve_model_dir(session(), _wikitext);
+    std::string e;
+    have_wt = genai::load_wikitext_dir(dir, wt_text, e);
+    if (!have_wt) {
+      session()->warn(fmt(
+          "ModelEvalStage('{}'): WikiText-2 unavailable ({}); skipping "
+          "perplexity", this->id(), e));
+    }
+  }
+  if (!_arc.empty()) {
+    const std::string dir = resolve_model_dir(session(), _arc);
+    std::string e;
+    have_arc = genai::load_arc_dir(dir, arc_items, e);
+    if (!have_arc) {
+      session()->warn(fmt(
+          "ModelEvalStage('{}'): ARC-Challenge unavailable ({}); skipping ARC",
+          this->id(), e));
+    }
+  }
+  if (!have_wt && !have_arc && !want_div) {
+    session()->warn(fmt(
+        "ModelEvalStage('{}'): no evaluation datasets available -- fetch "
+        "'wikitext-2-raw-test' / 'arc-challenge-test' with model-fetch",
+        this->id()));
+    return false;
+  }
+
+  // Divergence comparison text: the loaded WikiText-2 corpus if present, else
+  // a built-in multilingual fallback (the divergence only needs tokens).
+  const std::string div_text = have_wt ? wt_text
+                                       : std::string(kDivergenceFallback);
+  // A's captured per-token logits (flat n*vocab) -- filled on A's pass and
+  // replayed against B, then dropped.
+  std::vector<std::int32_t> div_ids;
+  std::vector<float>        a_logits;
+  int                       a_n = 0, a_vocab = 0;
+
+  auto run_one = [&](const std::string& ref, bool is_a) -> Outcome {
+    Outcome o; o.ref = ref;
+    const std::string dir = resolve_model_dir(session(), ref);
+    session()->info(fmt(
+        "ModelEvalStage('{}'): loading '{}' for evaluation", this->id(), ref));
+    genai::LoadSpec spec;
+    spec.hf_dir = dir;
+    std::shared_ptr<genai::LoadedLanguageModel> lm = mgr->load(spec);
+    if (!lm || !lm->valid()) {
+      session()->warn(fmt(
+          "ModelEvalStage('{}'): failed to load '{}'", this->id(), ref));
+      return o;
+    }
+    o.loaded = true;
+    // A-vs-B divergence: capture A's logits now (before A is released); on B's
+    // pass, replay the SAME ids against B and compute KL + logit rel-L2.
+    if (want_div && is_a) {
+      session()->info(fmt(
+          "ModelEvalStage('{}'): [{}] capturing logits for A-vs-B divergence "
+          "(<= {} tokens)...", this->id(), ref, _ppl_tokens));
+      if (!genai::capture_token_logits(*lm, div_text, _ppl_tokens, div_ids,
+                                       a_logits, a_n, a_vocab, session())) {
+        session()->warn(fmt(
+            "ModelEvalStage('{}'): logit capture for divergence failed "
+            "(text too short?)", this->id()));
+      }
+    }
+    if (want_div && !is_a && a_n > 0) {
+      session()->info(fmt(
+          "ModelEvalStage('{}'): [{}] A-vs-B output divergence...",
+          this->id(), ref));
+      o.div = genai::ab_divergence(*lm, div_ids, a_logits, a_n, a_vocab,
+                                   session());
+    }
+    if (have_wt) {
+      session()->info(fmt(
+          "ModelEvalStage('{}'): [{}] WikiText-2 perplexity ({} tokens)...",
+          this->id(), ref, _ppl_tokens));
+      o.ppl = genai::eval_wikitext2_perplexity(*lm, wt_text, _ppl_tokens,
+                                               session());
+    }
+    if (have_arc) {
+      session()->info(fmt(
+          "ModelEvalStage('{}'): [{}] ARC-Challenge ({} samples)...",
+          this->id(), ref, _arc_samples));
+      o.arc = genai::eval_arc_challenge(*lm, arc_items, _arc_samples, _seed,
+                                        session());
+    }
+    lm.reset();   // release before the next model loads (peak memory = 1 model)
+    return o;
+  };
+
+  const Outcome a = run_one(_model_a, /*is_a=*/true);
+  if (!a.loaded) { return false; }
+  const bool two = !_model_b.empty();
+  Outcome b;
+  if (two) {
+    b = run_one(_model_b, /*is_a=*/false);
+    if (!b.loaded) {
+      session()->warn(fmt(
+          "ModelEvalStage('{}'): model_b failed to load; reporting model_a "
+          "only", this->id()));
+    }
+  }
+
+  // ---- Markdown report ----
+  std::string md;
+  if (!two || !b.loaded) {
+    md += fmt("## Model evaluation: {}\n\n", a.ref)();
+    md += "| Metric | Value |\n|---|---|\n";
+    md += fmt("| WikiText-2 perplexity (lower is better) | {} |\n",
+              ppl_cell_(a.ppl))();
+    md += fmt("| ARC-Challenge accuracy (higher is better) | {} |\n",
+              arc_cell_(a.arc))();
+  } else {
+    md += "## Model evaluation comparison\n\n";
+    md += fmt("- **A**: {}\n- **B**: {}\n\n", a.ref, b.ref)();
+    md += "| Metric | A | B | Δ (B − A) |\n|---|---|---|---|\n";
+    // Perplexity (lower better).
+    std::string dppl = "n/a";
+    if (a.ppl.ok && b.ppl.ok) {
+      const double d = b.ppl.perplexity - a.ppl.perplexity;
+      dppl = fmt("{}{:.3f}", d >= 0.0 ? "+" : "", d)();
+    }
+    md += fmt("| WikiText-2 perplexity ↓ | {} | {} | {} |\n",
+              ppl_cell_(a.ppl), ppl_cell_(b.ppl), dppl)();
+    // ARC accuracy (higher better), delta in percentage points.
+    std::string darc = "n/a";
+    if (a.arc.ok && b.arc.ok) {
+      const double d = (b.arc.accuracy - a.arc.accuracy) * 100.0;
+      darc = fmt("{}{:.1f}pp", d >= 0.0 ? "+" : "", d)();
+    }
+    md += fmt("| ARC-Challenge accuracy ↑ | {} | {} | {} |\n",
+              arc_cell_(a.arc), arc_cell_(b.arc), darc)();
+    // A-vs-B output divergence (single A->B value; for non-text models whose
+    // absolute perplexity is meaningless). The value sits in the A column.
+    if (want_div) {
+      md += fmt("| A→B KL divergence (nats) ↓ | {} |  |  |\n",
+                kl_cell_(b.div))();
+      md += fmt("| A→B logit rel-L2 ↓ | {} |  |  |\n",
+                rel_cell_(b.div))();
+    }
+  }
+  session()->info(fmt("\n{}", md));
+  session()->log_normal(fmt(
+      "ModelEvalStage('{}'): evaluation complete", this->id()));
+
+  // FlexData summary (downstream trigger and/or save-text report). `text`
+  // is the full Markdown report; scores are exposed as structured fields.
+  summary = FlexData::make_object();
+  auto so = summary.as_object();
+  so.insert_or_assign("stage", FlexData::make_string("model-eval"));
+  so.insert_or_assign("model_a", FlexData::make_string(a.ref));
+  if (a.ppl.ok) {
+    so.insert_or_assign("perplexity_a",
+                        FlexData::make_real(a.ppl.perplexity));
+  }
+  if (a.arc.ok) {
+    so.insert_or_assign("arc_accuracy_a",
+                        FlexData::make_real(a.arc.accuracy));
+  }
+  if (two && b.loaded) {
+    so.insert_or_assign("model_b", FlexData::make_string(b.ref));
+    if (b.ppl.ok) {
+      so.insert_or_assign("perplexity_b",
+                          FlexData::make_real(b.ppl.perplexity));
+    }
+    if (b.arc.ok) {
+      so.insert_or_assign("arc_accuracy_b",
+                          FlexData::make_real(b.arc.accuracy));
+    }
+    if (want_div && b.div.ok) {
+      so.insert_or_assign("kl_divergence", FlexData::make_real(b.div.kl));
+      so.insert_or_assign("logit_rel_l2", FlexData::make_real(b.div.rel_l2));
+    }
+  }
+  so.insert_or_assign("ok", FlexData::make_bool(true));
+  so.insert_or_assign("text", FlexData::make_string(md));
+  return true;
+#else
+  (void)summary;
+  session()->warn(fmt(
+      "ModelEvalStage('{}'): built without VPIPE_BUILD_APPLE_SILICON; the LM "
+      "subsystem is unavailable", this->id()));
+  return false;
+#endif
+}
+
+Job
+ModelEvalStage::process(RuntimeContext& ctx)
+{
+  if (ctx.stop_requested()) {
+    ctx.signal_done();
+    co_return;
+  }
+  // Optional trigger (see model-fetch): gate the work on one beat when the
+  // iport is wired so this stage can cascade in a recipe.
+  if (ctx.iport_connected(0)) {
+    auto trig = co_await ctx.read(0);
+    if (!trig) {
+      ctx.signal_done();
+      co_return;
+    }
+  }
+  // model_a availability is checked HERE, AFTER the trigger -- in a recipe
+  // the upstream model-fetch/quantize may not have produced it at config
+  // time. Missing => log + halt without emitting (cascade stops). model_b
+  // is optional and handled gracefully (reported as A-only) if absent.
+  if (!model_dir_available(session(), _model_a)) {
+    session()->error(fmt(
+        "ModelEvalStage('{}'): model_a '{}' is not available "
+        "(not produced yet?); skipping evaluation",
+        this->id(), _model_a));
+    ctx.signal_done();
+    co_return;
+  }
+  session()->info(fmt(
+      "ModelEvalStage('{}'): evaluating '{}'{}", this->id(), _model_a,
+      _model_b.empty() ? std::string()
+                       : fmt(" vs '{}'", _model_b)()));
+  FlexData summary;
+  evaluate_once(summary);
+  if (ctx.has_consumers(0) && summary.is_object()) {
+    co_await ctx.write(0, make_payload<FlexDataPayload>(std::move(summary)));
+  }
+  ctx.signal_done();
+  co_return;
+}
+
+VPIPE_REGISTER_STAGE(ModelEvalStage)
+VPIPE_REGISTER_SPEC(ModelEvalStage, kSpec)
+
+}  // namespace vpipe

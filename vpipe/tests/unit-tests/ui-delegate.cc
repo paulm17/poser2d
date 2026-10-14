@@ -1,0 +1,537 @@
+#include "minitest.h"
+#include "common/console-writer.h"
+#include "common/stdio-ui-delegate.h"
+#include "common/vpipe-format.h"
+#include "interfaces/ui-delegate-intf.h"
+
+#include <chrono>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <sstream>
+#include <streambuf>
+#include <string>
+#include <thread>
+
+using namespace std;
+using namespace vpipe;
+
+namespace {
+
+// Minimal delegate that implements only the required surface (and
+// getline). Used to verify the interface's getpasswd default forwards
+// to getline -- the graceful-degradation contract for delegates that
+// cannot mask.
+class GetlineOnlyUi final : public UiDelegateIntf {
+public:
+  void error(const VpipeFormat&) override {}
+  void warn(const VpipeFormat&) override {}
+  void info(const VpipeFormat&) override {}
+  UiInputStatus
+  getline(const VpipeFormat&, string& out,
+          const function<bool()>&) override
+  {
+    getline_called = true;
+    out = "from-getline";
+    return UiInputStatus::Ok;
+  }
+  unique_ptr<UiTextStream> open_text_stream() override
+  {
+    return make_unique<NullUiTextStream>();
+  }
+  bool getline_called = false;
+};
+
+// Redirect cout + cerr to in-memory buffers for the lifetime of the
+// guard so emit tests don't pollute the runner's output.
+class IoCapture {
+public:
+  IoCapture()
+    : _o(cout.rdbuf(_ob.rdbuf())), _e(cerr.rdbuf(_eb.rdbuf())) {}
+  ~IoCapture() { cout.rdbuf(_o); cerr.rdbuf(_e); }
+  string out() const { return _ob.str(); }
+  string err() const { return _eb.str(); }
+private:
+  stringstream _ob, _eb;
+  streambuf*   _o;
+  streambuf*   _e;
+};
+
+}  // namespace
+
+// getline returns Canceled promptly when the cancel predicate is
+// already true -- the predicate is checked before stdin is touched,
+// so this is deterministic without any stdin fixture.
+TEST(ui_delegate, stdio_getline_cancels_without_reading_stdin) {
+  IoCapture cap;
+  StdioUiDelegate d;
+  string out = "unchanged";
+  UiInputStatus st = d.getline(fmt(""), out, [] { return true; });
+  EXPECT_TRUE(st == UiInputStatus::Canceled);
+}
+
+// getpasswd shares getline's cancel path (the no-echo guard is a no-op
+// when stdin is not a tty, as in the test runner), so it too cancels
+// promptly without reading stdin.
+TEST(ui_delegate, stdio_getpasswd_cancels_without_reading_stdin) {
+  IoCapture cap;
+  StdioUiDelegate d;
+  string out = "unchanged";
+  UiInputStatus st = d.getpasswd(fmt(""), out, [] { return true; });
+  EXPECT_TRUE(st == UiInputStatus::Canceled);
+}
+
+// The UiDelegateIntf::getpasswd default forwards to getline for
+// delegates that don't override it (input is just not masked).
+TEST(ui_delegate, getpasswd_defaults_to_getline) {
+  GetlineOnlyUi d;
+  string out;
+  UiInputStatus st = d.getpasswd(fmt("pw: "), out, nullptr);
+  EXPECT_TRUE(st == UiInputStatus::Ok);
+  EXPECT_TRUE(d.getline_called);
+  EXPECT_TRUE(out == "from-getline");
+}
+
+// The UiDelegateIntf::getmedialine default forwards to getline for
+// delegates that don't collect attachments (any markers the user types
+// literally still travel through and parse downstream).
+TEST(ui_delegate, getmedialine_defaults_to_getline) {
+  GetlineOnlyUi d;
+  string out;
+  UiInputStatus st = d.getmedialine(fmt(">> "), out, nullptr);
+  EXPECT_TRUE(st == UiInputStatus::Ok);
+  EXPECT_TRUE(d.getline_called);
+  EXPECT_TRUE(out == "from-getline");
+}
+
+// error/warn -> stderr, info -> stdout, each a single framed line.
+TEST(ui_delegate, stdio_emit_routes_and_frames) {
+  IoCapture cap;
+  StdioUiDelegate d;
+  d.info(fmt("hello {}", 1));
+  d.warn(fmt("careful"));
+  d.error(fmt("boom"));
+  EXPECT_TRUE(cap.out() == "[INFO] hello 1\n");
+  EXPECT_TRUE(cap.err() == "[WARN] careful\n[ERROR] boom\n");
+}
+
+// open_text_stream writes chunks verbatim to stdout (no framing) and
+// emits a single terminating newline on end().
+TEST(ui_delegate, stdio_text_stream_writes_verbatim_then_newline) {
+  IoCapture cap;
+  StdioUiDelegate d;
+  {
+    auto s = d.open_text_stream();
+    s->write("Par");
+    s->write("is");
+    s->end();
+    s->end();   // idempotent
+  }
+  EXPECT_TRUE(cap.out() == "Paris\n");
+  EXPECT_TRUE(cap.err().empty());
+}
+
+// A stream with no writes emits nothing (not even a newline) on end.
+TEST(ui_delegate, stdio_text_stream_empty_emits_nothing) {
+  IoCapture cap;
+  StdioUiDelegate d;
+  { auto s = d.open_text_stream(); }   // dtor calls end()
+  EXPECT_TRUE(cap.out().empty());
+}
+
+// ---- stage interrupt handlers ---------------------------------------
+
+// dispatch() calls every registered handler and reports how many said
+// they actually interrupted something (returned true).
+TEST(ui_delegate, interrupt_dispatch_counts_only_handlers_that_acted) {
+  GetlineOnlyUi d;
+  int acting_calls = 0;
+  int idle_calls   = 0;
+  auto t1 = d.register_interrupt_handler(
+      "acting", [&] { ++acting_calls; return true; });
+  auto t2 = d.register_interrupt_handler(
+      "idle", [&] { ++idle_calls; return false; });
+  EXPECT_TRUE(d.interrupt_handler_count() == 2);
+  EXPECT_TRUE(d.dispatch_interrupt() == 1);
+  EXPECT_TRUE(acting_calls == 1);
+  EXPECT_TRUE(idle_calls == 1);
+}
+
+// Destroying the token unregisters: the handler is not called again.
+TEST(ui_delegate, interrupt_token_unregisters_on_destruction) {
+  GetlineOnlyUi d;
+  int calls = 0;
+  {
+    auto t = d.register_interrupt_handler(
+        "gone", [&] { ++calls; return true; });
+    EXPECT_TRUE(bool(t));
+    EXPECT_TRUE(d.dispatch_interrupt() == 1);
+  }
+  EXPECT_TRUE(d.interrupt_handler_count() == 0);
+  EXPECT_TRUE(d.dispatch_interrupt() == 0);
+  EXPECT_TRUE(calls == 1);
+}
+
+// A token that outlives its delegate unregisters into thin air rather
+// than dangling -- the registry is shared-owned and the token holds a
+// weak reference. (A stage torn down after its session would otherwise
+// write through a freed delegate.)
+TEST(ui_delegate, interrupt_token_outliving_delegate_is_safe) {
+  UiInterruptToken tok;
+  {
+    GetlineOnlyUi d;
+    tok = d.register_interrupt_handler("orphan", [] { return true; });
+    EXPECT_TRUE(bool(tok));
+  }
+  tok.reset();          // must not touch the destroyed delegate
+  EXPECT_TRUE(!tok);
+}
+
+// The SessionContextIntf default hands back an inert token (adapter
+// contexts that service no UI), which is safe to destroy.
+TEST(ui_delegate, interrupt_token_default_is_inert) {
+  UiInterruptToken tok;
+  EXPECT_TRUE(!tok);
+  tok.reset();
+}
+
+// First Ctrl-C: the stages' handlers run and the process keeps going.
+TEST(ui_delegate, stdio_sigint_first_stroke_interrupts_not_quits) {
+  IoCapture cap;
+  StdioUiDelegate d;
+  int calls = 0;
+  auto t = d.register_interrupt_handler("busy", [&] { ++calls; return true; });
+  EXPECT_TRUE(d.poll_sigint() == false);   // nothing pending yet
+  d.note_sigint();
+  EXPECT_TRUE(d.poll_sigint() == false);   // consumed by the handler
+  EXPECT_TRUE(calls == 1);
+  // A poll with no new stroke must not re-fire the handlers.
+  EXPECT_TRUE(d.poll_sigint() == false);
+  EXPECT_TRUE(calls == 1);
+}
+
+// Second Ctrl-C while the first is still armed: quit.
+TEST(ui_delegate, stdio_sigint_second_stroke_quits) {
+  IoCapture cap;
+  StdioUiDelegate d;
+  auto t = d.register_interrupt_handler("busy", [] { return true; });
+  d.note_sigint();
+  EXPECT_TRUE(d.poll_sigint() == false);
+  d.note_sigint();
+  EXPECT_TRUE(d.poll_sigint() == true);
+}
+
+// Two strokes inside one poll interval are a double tap too -- the
+// count jumps by 2 and we must not read that as a single stroke.
+TEST(ui_delegate, stdio_sigint_burst_quits) {
+  IoCapture cap;
+  StdioUiDelegate d;
+  auto t = d.register_interrupt_handler("busy", [] { return true; });
+  d.note_sigint();
+  d.note_sigint();
+  EXPECT_TRUE(d.poll_sigint() == true);
+}
+
+// A lone Ctrl-C that no handler consumes keeps its historical meaning:
+// stop the process. Without this a pipeline with nothing interruptible
+// would swallow the keystroke.
+TEST(ui_delegate, stdio_sigint_unconsumed_quits) {
+  IoCapture cap;
+  StdioUiDelegate d;
+  EXPECT_TRUE(d.poll_sigint() == false);
+  d.note_sigint();
+  EXPECT_TRUE(d.poll_sigint() == true);
+}
+
+// Same when handlers exist but all report "nothing in flight".
+TEST(ui_delegate, stdio_sigint_idle_handlers_quit) {
+  IoCapture cap;
+  StdioUiDelegate d;
+  auto t = d.register_interrupt_handler("idle", [] { return false; });
+  d.note_sigint();
+  EXPECT_TRUE(d.poll_sigint() == true);
+}
+
+// ---- progress reports ------------------------------------------------
+
+// The basic lifecycle: a handle appears in the snapshot with the counts
+// and detail it was given, and the version advances so a renderer knows
+// to repaint.
+TEST(ui_delegate, progress_open_update_snapshot) {
+  GetlineOnlyUi d;
+  const uint64_t v0 = d.progress_version();
+  UiProgress p = d.open_progress("fetch");
+  EXPECT_TRUE(static_cast<bool>(p));
+  p.update(3, 10, "3 / 10 GB");
+  auto items = d.progress_snapshot();
+  ASSERT_TRUE(items.size() == 1);
+  EXPECT_TRUE(items[0].desc == "fetch");
+  EXPECT_TRUE(items[0].done == 3);
+  EXPECT_TRUE(items[0].total == 10);
+  EXPECT_TRUE(items[0].detail == "3 / 10 GB");
+  EXPECT_TRUE(d.progress_version() > v0);
+}
+
+// open() stamps the start instant, which is what a renderer turns into
+// an ELAPSED figure. Two things matter and neither is the exact value:
+// the stamp is real (not a default-constructed epoch, which would read
+// as decades elapsed), and it does NOT move when the report is updated
+// -- elapsed measures the report, not the last tick.
+TEST(ui_delegate, progress_start_time_stamped_and_stable) {
+  GetlineOnlyUi d;
+  const auto before = std::chrono::steady_clock::now();
+  UiProgress p = d.open_progress("denoise");
+  const auto after = std::chrono::steady_clock::now();
+  auto items = d.progress_snapshot();
+  ASSERT_TRUE(items.size() == 1);
+  const auto t0 = items[0].started;
+  EXPECT_TRUE(t0 >= before && t0 <= after);
+  p.update(1, 20);
+  p.set_detail("step 1");
+  items = d.progress_snapshot();
+  ASSERT_TRUE(items.size() == 1);
+  EXPECT_TRUE(items[0].started == t0);
+}
+
+// ---- off-tty progress milestones -------------------------------------
+//
+// Off a terminal there is no footer to pin, and silence there reads as
+// a hang to whoever is watching a redirected log. The same reports are
+// emitted as plain lines instead, throttled to one per ~10%.
+
+namespace {
+
+// Swap stdout's streambuf so the delegate's lines can be read back, and
+// force the console into its non-tty rendering. Both are restored on
+// destruction; the delegate under test must be built and DESTROYED
+// inside this scope, since it is the join in its destructor that makes
+// the captured text final.
+class OffTtyCapture {
+public:
+  OffTtyCapture()
+      : _saved(cout.rdbuf(_buf.rdbuf())),
+        _was_tty(vpipe::console_writer().tty())
+  {
+    vpipe::console_writer().set_tty_for_test(false);
+  }
+  ~OffTtyCapture()
+  {
+    vpipe::console_writer().set_tty_for_test(_was_tty);
+    cout.rdbuf(_saved);
+  }
+  string str() const { return _buf.str(); }
+
+private:
+  ostringstream _buf;
+  streambuf*    _saved;
+  bool          _was_tty;
+};
+
+// The repaint thread polls at kRepaintMs; give it a few ticks to see an
+// update before asserting on what it said.
+void settle_()
+{
+  std::this_thread::sleep_for(std::chrono::milliseconds(
+      StdioUiDelegate::kRepaintMs * 3));
+}
+
+size_t count_of_(const string& hay, const string& needle)
+{
+  size_t n = 0;
+  for (size_t i = hay.find(needle); i != string::npos;
+       i = hay.find(needle, i + 1)) {
+    ++n;
+  }
+  return n;
+}
+
+}  // namespace
+
+// One line per ~10% crossed, and no line for an update that stays
+// inside a bucket -- the throttle is the whole point, since a download
+// updates hundreds of times a second.
+//
+// Every assertion happens AFTER the capture is released: while it is
+// alive it owns stdout, so a failure message would be written into the
+// very buffer under test and never reach the terminal.
+TEST(ui_delegate, progress_milestones_off_tty) {
+  string out;
+  {
+    OffTtyCapture cap;
+    {
+      StdioUiDelegate d;
+      UiProgress p = d.open_progress("fetch");
+      p.update(0, 100);
+      settle_();
+      p.update(55, 100);
+      settle_();
+      p.update(57, 100);      // same bucket -- must stay silent
+      settle_();
+      p.update(100, 100);
+      settle_();
+    }                         // the join in ~StdioUiDelegate lands here
+    out = cap.str();
+  }
+  // Anchored on the tag's "] " -- bare "0% of" also matches inside the
+  // 100% line, which counts one report twice.
+  EXPECT_TRUE(count_of_(out, "] 0% of 'fetch' completed at") == 1);
+  EXPECT_TRUE(count_of_(out, "] 55% of 'fetch' completed at") == 1);
+  EXPECT_TRUE(out.find("57%") == string::npos);
+  EXPECT_TRUE(count_of_(out, "] 100% of 'fetch' completed at") == 1);
+  // A report that reached 100% has already said everything the closing
+  // line would, so it does not also get one.
+  EXPECT_TRUE(out.find("ended at") == string::npos);
+}
+
+// A report that closes BELOW 100% still gets a terminating line. A
+// stage is free to stop updating before the end (the LM benchmark ticks
+// its bar before each test, so its last word is 8/9), and a log that
+// just stops mid-percentage leaves the reader unable to tell a finish
+// from a wedge -- which is the thing these lines exist to answer.
+TEST(ui_delegate, progress_incomplete_report_still_ends) {
+  string out;
+  {
+    OffTtyCapture cap;
+    {
+      StdioUiDelegate d;
+      UiProgress p = d.open_progress("benchmark");
+      p.update(8, 9);
+      settle_();
+    }
+    out = cap.str();
+  }
+  EXPECT_TRUE(out.find("88% of 'benchmark' completed at") != string::npos);
+  EXPECT_TRUE(out.find("'benchmark' ended at") != string::npos);
+  EXPECT_TRUE(out.find("last reported 88% (8/9)") != string::npos);
+}
+
+// An INDETERMINATE report has no percentage to cross a milestone with,
+// so it reports none. Pinned because the tempting fix -- a timer
+// writing lines about a figure that does not exist -- is worse.
+TEST(ui_delegate, progress_indeterminate_says_nothing_off_tty) {
+  string out;
+  {
+    OffTtyCapture cap;
+    {
+      StdioUiDelegate d;
+      UiProgress p = d.open_progress("stream");
+      p.update(1234, 0, "1.2 GB");
+      settle_();
+    }
+    out = cap.str();
+  }
+  EXPECT_TRUE(out.find("% of 'stream' completed") == string::npos);
+}
+
+// update() with an empty detail must not WIPE a detail already set --
+// update(done, total) is the common call and the two-argument form
+// would otherwise silently clear the text every tick.
+TEST(ui_delegate, progress_empty_detail_preserves) {
+  GetlineOnlyUi d;
+  UiProgress p = d.open_progress("quantize");
+  p.update(1, 4, "fold");
+  p.update(2, 4);
+  auto items = d.progress_snapshot();
+  ASSERT_TRUE(items.size() == 1);
+  EXPECT_TRUE(items[0].done == 2);
+  EXPECT_TRUE(items[0].detail == "fold");
+  p.set_detail("");                    // explicit clear still works
+  items = d.progress_snapshot();
+  ASSERT_TRUE(items.size() == 1);
+  EXPECT_TRUE(items[0].detail.empty());
+}
+
+// The destructor closes the report -- what lets a call site drop its
+// explicit end() and still clean up on an early return.
+TEST(ui_delegate, progress_destructor_closes) {
+  GetlineOnlyUi d;
+  {
+    UiProgress p = d.open_progress("denoise");
+    EXPECT_TRUE(d.progress_snapshot().size() == 1);
+  }
+  EXPECT_TRUE(d.progress_snapshot().empty());
+}
+
+// finish() is idempotent and leaves the handle inert, so the
+// destructor running after an explicit finish() is harmless.
+TEST(ui_delegate, progress_finish_idempotent) {
+  GetlineOnlyUi d;
+  UiProgress p = d.open_progress("copy");
+  p.finish();
+  EXPECT_TRUE(!static_cast<bool>(p));
+  p.finish();
+  p.update(1, 2);                      // no-op, must not resurrect
+  EXPECT_TRUE(d.progress_snapshot().empty());
+}
+
+// Move leaves the source inert and transfers the live report, so a
+// handle can be assigned into an outer scope (which is how the call
+// sites conditionally open one).
+TEST(ui_delegate, progress_move_transfers) {
+  GetlineOnlyUi d;
+  UiProgress a = d.open_progress("a");
+  UiProgress b = std::move(a);
+  EXPECT_TRUE(!static_cast<bool>(a));
+  EXPECT_TRUE(static_cast<bool>(b));
+  b.update(1, 2);
+  auto items = d.progress_snapshot();
+  ASSERT_TRUE(items.size() == 1);
+  EXPECT_TRUE(items[0].done == 1);
+}
+
+// Concurrent reports all appear, OLDEST FIRST (a footer row that jumps
+// position between repaints reads as a glitch), and `seq` identifies
+// the most recently updated -- which is what the web-ui cell shows.
+TEST(ui_delegate, progress_concurrent_order_and_seq) {
+  GetlineOnlyUi d;
+  UiProgress first  = d.open_progress("first");
+  UiProgress second = d.open_progress("second");
+  first.update(1, 10);
+  second.update(5, 10);
+  first.update(2, 10);                 // first is now the most recent
+  auto items = d.progress_snapshot();
+  ASSERT_TRUE(items.size() == 2);
+  EXPECT_TRUE(items[0].desc == "first");
+  EXPECT_TRUE(items[1].desc == "second");
+  EXPECT_TRUE(items[0].seq > items[1].seq);
+  second.finish();
+  items = d.progress_snapshot();
+  ASSERT_TRUE(items.size() == 1);
+  EXPECT_TRUE(items[0].desc == "first");
+}
+
+// A default-constructed handle is INERT: that is what a context with no
+// UI hands back, and it is what lets a stage report progress without
+// checking whether anyone is listening.
+TEST(ui_delegate, progress_inert_handle_is_silent) {
+  UiProgress p;
+  EXPECT_TRUE(!static_cast<bool>(p));
+  p.update(1, 2, "ignored");           // must not crash
+  p.set_detail("also ignored");
+  p.finish();
+}
+
+// A handle outliving its delegate closes into thin air rather than
+// into freed memory -- the weak_ptr contract the interrupt tokens use.
+TEST(ui_delegate, progress_outlives_delegate) {
+  UiProgress p;
+  {
+    GetlineOnlyUi d;
+    p = d.open_progress("orphan");
+    EXPECT_TRUE(static_cast<bool>(p));
+  }
+  p.update(1, 2);                      // registry is gone; no-op
+  p.finish();
+}
+
+// 0 total means INDETERMINATE and is carried through as-is -- a
+// download before its Content-Length must not read as 0%.
+TEST(ui_delegate, progress_indeterminate_total_zero) {
+  GetlineOnlyUi d;
+  UiProgress p = d.open_progress("fetch");
+  p.update(4096, 0);
+  auto items = d.progress_snapshot();
+  ASSERT_TRUE(items.size() == 1);
+  EXPECT_TRUE(items[0].total == 0);
+  EXPECT_TRUE(items[0].done == 4096);
+}

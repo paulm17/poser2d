@@ -1,0 +1,271 @@
+# generative-models: the on-device generative-model (LLM/VLM) subsystem.
+# Runs on the metal-compute backend with NO MLX in the forward pass; the
+# whole subsystem (tokenizer, sampler, chat template, model loader,
+# GenerativeModelManager, LoadedLanguageModel, the metal execs/encoders)
+# builds under VPIPE_BUILD_APPLE_SILICON.
+#
+# Layout: top-level = public API + cross-model infrastructure;
+#   shared/  = interfaces + cross-model encoders + format glue,
+#   gemma4/  qwen3/  llama3/ = per-model-family sources.
+
+set(LOCAL_SOURCES
+  chat-template.cc
+  detect-profile.cc
+  family-profile.cc
+  quantize-profile.cc
+  context-manager.cc
+  generative-model-manager.cc
+  weight-registry.cc
+  weight-set.cc
+  loaded-language-model.cc
+  metal-token-muxer.cc
+  model-exec-registry.cc
+  vae-model-registry.cc
+  image-model-registry.cc
+  video-model-registry.cc
+  quantize-family-registry.cc
+  hidden-state-encoder.cc
+  model-loader.cc
+  sampler.cc
+  tokenizer.cc
+  video-turn.cc
+  shared/ane-module.cc
+  shared/ane-ffn.cc
+  shared/ane-tier.cc
+  shared/comfy-checkpoint.cc
+  shared/comfy-output-config.cc
+  shared/dflash-drafter.cc
+  shared/gguf-convert.cc
+  shared/gguf-file.cc
+  shared/grounded-encode-params.cc
+  shared/i8-gemm.cc
+  shared/metal-tae-decoder.cc
+  shared/lora-names.cc
+  shared/runtime-lora.cc
+  shared/torch-zip.cc
+  shared/sol-attention.cc
+  shared/metal-sol-attention.cc
+  shared/metal-sage-attention.cc
+  shared/motion-cache.cc
+  shared/wan-vae-names.cc
+  shared/wired-pool.cc
+  shared/mcp/file-sandbox.cc
+  shared/mcp/mcp-tools.cc
+  shared/mcp/python-sandbox.cc
+  shared/mcp/shell-tool.cc
+  shared/mcp/url-fetch.cc
+  shared/kernel-sets/decode-gqa-attn-set.cc
+  shared/kernel-sets/prefill-gqa-attn-set.cc
+  shared/whisper-feature-extractor.cc
+  gemma4/gemma-hidden-state-encoder.cc
+  gemma4/gemma4-audio-feature-extractor.cc
+  gemma4/gemma4-unified-embedder.cc
+  gemma4/metal-gemma-model.cc
+  gemma4/metal-gemma-model-exec.cc
+  gemma4/metal-gemma4-audio.cc
+  gemma4/metal-gemma4-vision.cc
+  qwen3/metal-audio-encoder.cc
+  qwen3/metal-qwen-model.cc
+  qwen3/metal-qwen-encoder-chat.cc
+  qwen3/metal-qwen-raw-layers.cc
+  qwen3/metal-qwen-model-exec.cc
+  qwen3/metal-qwen-vision.cc
+  llama3/metal-llama-model.cc
+  llama3/metal-llama-model-exec.cc
+  llama3/metal-llama-weights.cc
+  mistral3/metal-pixtral-vision.cc
+  moss/metal-moss-tts-model.cc
+  moss/metal-moss-codec.cc
+  moss/metal-moss-codec-v2.cc
+  moss/moss-v15-processor.cc
+  moss/moss-delay-processor.cc
+  moss/moss-text-normalizer.cc
+  moss/metal-moss-local-transformer.cc
+  moss/metal-moss-local-model.cc
+  moss/metal-moss-v15-model.cc
+  moss/moss-rt-processor.cc
+  moss/metal-moss-rt-model.cc
+  krea2/metal-krea2-transformer.cc
+  krea2/metal-krea2-vae.cc
+  krea2/metal-krea2-calibration.cc
+  krea2/flow-sampler.cc
+  krea2/krea2-native-checkpoint.cc
+  shared/fp8-layout.cc
+  shared/fp8-expand.cc
+  qwen-image/metal-qwen-image-transformer.cc
+  qwen-image/qwen-image21-layout.cc
+  qwen-image/metal-qwen-image21-transformer.cc
+  qwen-image/qwen-image21-trainer.cc
+  qwen-image/qwen-image21-lora-trainer.cc
+  qwen-image/metal-qwen-image-calibration.cc
+  qwen-image/metal-qwen25-vision.cc
+  z-image/z-image-layout.cc
+  z-image/metal-z-image-transformer.cc
+  yue2/yue2-protocol.cc
+  yue2/metal-yue2-model.cc
+  yue2/metal-oobleck-decoder.cc
+  yue2/yue2-vae-family.cc
+  flux2/metal-flux2-transformer.cc
+  flux2/metal-flux2-vae.cc
+  flux2/metal-flux2-calibration.cc
+  boogu/metal-boogu-transformer.cc
+  boogu/metal-boogu-calibration.cc
+  flashvsr/flashvsr-lq-proj.cc
+  flashvsr/metal-flashvsr-transformer.cc
+  flashvsr/flashvsr-family.cc
+  vosr/metal-dinov2-encoder.cc
+  vosr/metal-vosr-transformer.cc
+  wan/metal-wan-vae.cc
+  wan/metal-umt5-encoder.cc
+  wan/metal-wan-transformer.cc
+  minimax-h3/minimax-h3-layout.cc
+  minimax-h3/minimax-h3-diffusers-layout.cc
+  minimax-h3/vdn-geometry.cc
+  minimax-h3/vdn-delta-solve.cc
+  minimax-h3/vdn-linear-features.cc
+  minimax-h3/vdn-linear-branch.cc
+  minimax-h3/vdn-window-softmax.cc
+  minimax-h3/vdn-config.cc
+  minimax-h3/metal-vdn-branch.cc
+  minimax-h3/minimax-h3-references.cc
+  minimax-h3/minimax-h3-reference-encoder.cc
+  minimax-h3/metal-minimax-h3-transformer.cc
+  minimax-h3/metal-minimax-h3-video-vae.cc
+  minimax-h3/metal-minimax-h3-audio-vae.cc
+  minimax-h3/minimax-h3-scheduler.cc
+  minimax-h3/minimax-h3-text-encoder.cc
+  minimax-h3/minimax-h3-denoise.cc
+  minimax-h3/minimax-h3-taomate.cc
+  minimax-h3/minimax-h3-stream-kv.cc
+  lora-fusion.cc
+  train/train-ops.cc
+  train/lora-params.cc
+  train/optimizer.cc
+  train/sample-cache.cc
+  quantize/affine-quantizer.cc
+  quantize/arch-detect.cc
+  quantize/calibration.cc
+  quantize/calibration-corpus.cc
+  quantize/model-quantizer.cc
+  quantize/quant-source.cc
+  quantize/safetensors-writer.cc
+  eval/lm-eval.cc
+)
+set(LOCAL_HEADERS
+  chat-template.h
+  context-manager.h
+  generative-model-manager.h
+  weight-registry.h
+  weight-set.h
+  loaded-language-model.h
+  metal-token-muxer.h
+  model-exec.h
+  model-exec-registry.h
+  vae-model-registry.h
+  video-model-registry.h
+  quantize-family-registry.h
+  model-loader.h
+  sampler.h
+  token-muxer.h
+  tokenizer.h
+  video-turn.h
+  shared/comfy-checkpoint.h
+  shared/comfy-output-config.h
+  shared/gguf-convert.h
+  shared/gguf-file.h
+  shared/grounded-encode-params.h
+  shared/torch-zip.h
+  shared/wired-pool.h
+  shared/mcp/file-sandbox.h
+  shared/mcp/mcp-tools.h
+  shared/mcp/python-sandbox.h
+  shared/mcp/shell-tool.h
+  shared/mcp/url-fetch.h
+  shared/whisper-feature-extractor.h
+  gemma4/gemma4-audio-feature-extractor.h
+  gemma4/gemma4-unified-embedder.h
+  gemma4/metal-gemma-model.h
+  gemma4/metal-gemma-model-exec.h
+  gemma4/metal-gemma4-audio.h
+  gemma4/metal-gemma4-vision.h
+  qwen3/metal-audio-encoder.h
+  qwen3/metal-qwen-model.h
+  qwen3/metal-qwen-encoder-chat.h
+  qwen3/metal-qwen-raw-layers.h
+  qwen3/metal-qwen-model-exec.h
+  qwen3/metal-qwen-vision.h
+  mistral3/metal-pixtral-vision.h
+  qwen-image/qwen-image21-layout.h
+  qwen-image/metal-qwen-image21-transformer.h
+  qwen-image/qwen-image21-trainer.h
+  qwen-image/qwen-image21-lora-trainer.h
+  z-image/z-image-layout.h
+  z-image/metal-z-image-transformer.h
+  llama3/metal-llama-model.h
+  llama3/metal-llama-model-exec.h
+  llama3/metal-llama-weights.h
+  moss/metal-moss-tts-model.h
+  moss/metal-moss-codec.h
+  moss/metal-moss-codec-v2.h
+  moss/moss-v15-processor.h
+  moss/moss-delay-processor.h
+  moss/moss-text-normalizer.h
+  moss/metal-moss-local-transformer.h
+  moss/metal-moss-local-model.h
+  moss/metal-moss-v15-model.h
+  moss/moss-rt-processor.h
+  moss/metal-moss-rt-model.h
+  boogu/metal-boogu-transformer.h
+  boogu/metal-boogu-calibration.h
+  flashvsr/flashvsr-lq-proj.h
+  flashvsr/metal-flashvsr-transformer.h
+  flashvsr/flashvsr-family.h
+  vosr/metal-dinov2-encoder.h
+  vosr/metal-vosr-transformer.h
+  wan/metal-wan-vae.h
+  wan/metal-umt5-encoder.h
+  wan/metal-wan-transformer.h
+  minimax-h3/minimax-h3-layout.h
+  minimax-h3/vdn-geometry.h
+  minimax-h3/vdn-delta-solve.h
+  minimax-h3/vdn-linear-features.h
+  minimax-h3/vdn-linear-branch.h
+  minimax-h3/vdn-window-softmax.h
+  minimax-h3/vdn-config.h
+  minimax-h3/metal-vdn-branch.h
+  minimax-h3/minimax-h3-references.h
+  minimax-h3/minimax-h3-reference-encoder.h
+  minimax-h3/metal-minimax-h3-transformer.h
+  minimax-h3/metal-minimax-h3-video-vae.h
+  minimax-h3/metal-minimax-h3-audio-vae.h
+  minimax-h3/minimax-h3-scheduler.h
+  minimax-h3/minimax-h3-text-encoder.h
+  minimax-h3/minimax-h3-denoise.h
+  minimax-h3/minimax-h3-taomate.h
+  minimax-h3/minimax-h3-stream-kv.h
+  train/train-ops.h
+  train/lora-params.h
+  train/optimizer.h
+  train/lora-trainer.h
+  train/sample-cache.h
+  quantize/affine-quantizer.h
+  quantize/arch-detect.h
+  quantize/calibration.h
+  quantize/model-quantizer.h
+  quantize/safetensors-writer.h
+  eval/lm-eval.h
+)
+# The CoreML-backed vision tower builds on the apple-silicon axis: its
+# MLX-free host API (encode_host -> Result of host f32) + metal-compute
+# letterbox preproc drive the metal LM vision path.
+if(APPLE AND VPIPE_BUILD_APPLE_SILICON)
+  list(APPEND LOCAL_SOURCES shared/coreml-vision-encoder.cc)
+  list(APPEND LOCAL_HEADERS shared/coreml-vision-encoder.h)
+endif()
+
+list(TRANSFORM LOCAL_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+list(TRANSFORM LOCAL_HEADERS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+list(APPEND VPIPE_SOURCES ${LOCAL_SOURCES})
+list(APPEND VPIPE_HEADERS ${LOCAL_HEADERS})
+set(VPIPE_SOURCES ${VPIPE_SOURCES} PARENT_SCOPE)
+set(VPIPE_HEADERS ${VPIPE_HEADERS} PARENT_SCOPE)

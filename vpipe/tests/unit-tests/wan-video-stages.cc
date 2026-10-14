@@ -1,0 +1,2206 @@
+// The stage-level half of the Wan video path: the RGB-to-ffmpeg seam and
+// the generate-video denoiser's geometry contract.
+//
+// Neither of these needs a model, which is the point of testing them here
+// rather than only end to end: a 14B generation takes minutes and needs a
+// 64 GB box, so the parts that can be checked in milliseconds should be.
+
+#include "minitest.h"
+
+#include "apple-silicon/tensor-beat.h"
+#include "common/beat-payload-intf.h"
+#include "common/ffmpeg-libraries.h"
+#include "common/flex-data.h"
+#include "common/job.h"
+#include "common/session.h"
+#include "interfaces/ui-delegate-intf.h"
+#include <cmath>
+#include <mutex>
+#include "pipeline/stage-config.h"
+#include "pipeline/pipeline-runtime.h"
+#include "pipeline/pipeline.h"
+#include "pipeline/runtime-context.h"
+#include "pipeline/typed-stage.h"
+#include "stages/audio-video/video-tokens.h"
+#include "stages/minimax-h3-model-config-stage.h"
+#include "stages/model-config-source.h"
+#include "stages/model-memory.h"
+#include "stages/rgb-to-video-stage.h"
+#include "stages/model-provenance.h"
+#include "stages/trigger-beat.h"
+#include "stages/wan2-model-config-stage.h"
+
+#ifdef VPIPE_BUILD_APPLE_SILICON
+#include "generative-models/minimax-h3/metal-minimax-h3-transformer.h"
+#include "generative-models/minimax-h3/minimax-h3-layout.h"
+#include "generative-models/wan/metal-wan-transformer.h"
+#include "generative-models/wan/metal-wan-vae.h"
+#include "stages/generate-video-stage.h"
+#include "stages/video-ref-encoder-stage.h"
+#endif
+
+#include <cstdint>
+#include <cstdio>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+using namespace std;
+using namespace vpipe;
+
+namespace {
+
+// Emits `count` solid planar-U8-RGB frames of a fixed size, with the clip's
+// rate on the sideband the way vae-decode does.
+class RgbSource : public TypedStage<RgbSource> {
+public:
+  static constexpr const char* kTypeName = "ut-rgb-source";
+  using TypedStage::TypedStage;
+
+  int count = 3;
+  int w = 64;
+  int h = 32;
+  double fps = 24.0;
+  // What vae-decode carries onto a decoded frame when a model made it.
+  string model_name;
+  // 3 = RGB (the ramp below), 4 = RGBA at `rgba` -- a constant frame, so
+  // one pixel out of the encoder says what the composite did.
+  int ch = 3;
+  uint8_t rgba[4] = {0, 0, 0, 255};
+  // ch==4 only. 0 = the constant `rgba`; 1 = alternating COLUMNS of
+  // `rgba` and `rgbb`; 2 = alternating ROWS. The two stripe patterns are
+  // what tell the chroma subsamplings apart: a horizontal subsample
+  // averages the columns and leaves the rows, so 4:2:2 keeps pattern 2
+  // and loses pattern 1, while 4:2:0 loses both and 4:4:4 keeps both.
+  int pattern = 0;
+  uint8_t rgbb[4] = {255, 255, 255, 255};
+
+  Job
+  process(RuntimeContext& ctx) override
+  {
+    for (int i = 0; i < count; ++i) {
+      auto b = make_unique<TensorBeatPayload>();
+      b->dtype = TensorBeat::DType::U8;
+      b->shape = {ch, h, w};
+      const size_t n = (size_t)ch * h * w;
+      b->resize_contiguous(n);
+      uint8_t* p = b->as_u8();
+      if (ch == 4) {
+        const size_t plane = (size_t)h * w;
+        for (int c = 0; c < 4; ++c) {
+          for (int yy = 0; yy < h; ++yy) {
+            for (int xx = 0; xx < w; ++xx) {
+              const bool second = pattern == 1 ? ((xx & 1) != 0)
+                                : pattern == 2 ? ((yy & 1) != 0)
+                                               : false;
+              p[c * plane + (size_t)yy * w + xx] =
+                  second ? rgbb[c] : rgba[c];
+            }
+          }
+        }
+      } else {
+      for (size_t k = 0; k < n; ++k) { p[k] = (uint8_t)((i * 40 + k) & 0xff); }
+      }
+      FlexData sb = FlexData::make_object();
+      sb.as_object().insert_or_assign("frame", FlexData::make_int(i));
+      sb.as_object().insert_or_assign("frames", FlexData::make_int(count));
+      sb.as_object().insert_or_assign("fps", FlexData::make_real(fps));
+      b->sideband = std::move(sb);
+      provenance::set_model_name(b->sideband, model_name);
+      co_await ctx.write(0, std::move(b));
+    }
+    ctx.signal_done();
+  }
+
+  const StageSpec&
+  spec() const noexcept override
+  {
+    static const PortSpec op[] = {
+      {.name = "image", .doc = "", .type = &typeid(TensorBeatPayload)}};
+    static const StageSpec s = {.type_name = "ut-rgb-source", .doc = "",
+                                .display_name = "", .oports = op};
+    return s;
+  }
+};
+
+// Counts the two beat kinds the video contract distinguishes.
+class VideoSink : public TypedStage<VideoSink> {
+public:
+  static constexpr const char* kTypeName = "ut-video-sink";
+  using TypedStage::TypedStage;
+
+  int headers = 0;
+  int frames = 0;
+  int last_w = 0, last_h = 0, last_fmt = 0;
+  int rate_num = 0, rate_den = 0;
+  string last_model;
+  // Top-left pixel of the FIRST frame, read back out of the AVFrame.
+  // Only filled for rgb24, where the bytes are the picture -- a yuv420p
+  // readback would be testing the colour conversion as well.
+  int first_px[3] = {-1, -1, -1};
+  // What the header SAID the YUV means. The tag is half the contract --
+  // the pixels are the other half -- and a stage that converts one way
+  // while tagging the other is exactly the failure nothing downstream
+  // can see.
+  int last_range = -1, last_csp = -1, last_pri = -1, last_trc = -1;
+  // Top-left Y,U,V of the first yuv420p frame, which IS the colour
+  // conversion and is what the matrix tests read.
+  int first_yuv[3] = {-1, -1, -1};
+  // U at chroma-plane (0,0) (0,1) (1,0) (1,1) of the first frame, for
+  // any planar YUV format. Which of these are EQUAL is what says how the
+  // chroma was subsampled.
+  int u_quad[4] = {-1, -1, -1, -1};
+  int chroma_w = 0, chroma_h = 0;
+
+  Job
+  process(RuntimeContext& ctx) override
+  {
+    auto b = co_await ctx.read(0);
+    if (!b) { ctx.signal_done(); co_return; }
+    if (const auto* hp =
+            dynamic_cast<const VideoStreamParamsPayload*>(b.get())) {
+      ++headers;
+      last_w = hp->width;
+      last_h = hp->height;
+      last_fmt = hp->pix_fmt;
+      rate_num = hp->frame_rate.num;
+      rate_den = hp->frame_rate.den;
+      last_model = hp->model_name;
+      last_range = hp->color_range;
+      last_csp   = hp->colorspace;
+      last_pri   = hp->color_primaries;
+      last_trc   = hp->color_trc;
+    } else if (const auto* fp =
+                   dynamic_cast<const FrameRefPayload*>(b.get())) {
+      if (frames == 0 && fp->ref && fp->ref->format == AV_PIX_FMT_RGB24) {
+        for (int c = 0; c < 3; ++c) {
+          first_px[c] = fp->ref->data[0][c];
+        }
+      }
+      const bool planar_yuv =
+          fp->ref && (fp->ref->format == AV_PIX_FMT_YUV420P
+                      || fp->ref->format == AV_PIX_FMT_YUV422P
+                      || fp->ref->format == AV_PIX_FMT_YUV444P);
+      if (frames == 0 && planar_yuv) {
+        for (int c = 0; c < 3; ++c) {
+          first_yuv[c] = fp->ref->data[c][0];
+        }
+        const int sx = fp->ref->format == AV_PIX_FMT_YUV444P ? 1 : 2;
+        const int sy = fp->ref->format == AV_PIX_FMT_YUV420P ? 2 : 1;
+        chroma_w = fp->ref->width / sx;
+        chroma_h = fp->ref->height / sy;
+        const int ls = fp->ref->linesize[1];
+        u_quad[0] = fp->ref->data[1][0];
+        u_quad[1] = fp->ref->data[1][1];
+        u_quad[2] = fp->ref->data[1][ls];
+        u_quad[3] = fp->ref->data[1][ls + 1];
+      }
+      ++frames;
+    }
+  }
+
+  const StageSpec&
+  spec() const noexcept override
+  {
+    static const PortSpec ip[] = {
+      {.name = "video", .doc = "", .type = &typeid(FrameRefPayload)}};
+    static const StageSpec s = {.type_name = "ut-video-sink", .doc = "",
+                                .display_name = "", .iports = ip};
+    return s;
+  }
+};
+
+// Emits `count` empty trigger beats, then closes. The payload does not
+// matter to a config source -- receipt is the signal -- so this is the
+// cheapest thing that can drive one.
+class TickSource : public TypedStage<TickSource> {
+public:
+  static constexpr const char* kTypeName = "ut-tick-source";
+  using TypedStage::TypedStage;
+
+  int count = 3;
+
+  Job
+  process(RuntimeContext& ctx) override
+  {
+    for (int i = 0; i < count; ++i) {
+      co_await ctx.write(0, make_payload<TriggerPayload>());
+    }
+    ctx.signal_done();
+  }
+
+  const StageSpec&
+  spec() const noexcept override
+  {
+    static const PortSpec op[] = {
+      {.name = "trigger", .doc = "", .type = &typeid(TriggerPayload)}};
+    static const StageSpec s = {.type_name = "ut-tick-source", .doc = "",
+                                .display_name = "", .oports = op};
+    return s;
+  }
+};
+
+// Counts FlexData beats and keeps the last one.
+class FlexSink : public TypedStage<FlexSink> {
+public:
+  static constexpr const char* kTypeName = "ut-flex-sink";
+  using TypedStage::TypedStage;
+
+  int      beats = 0;
+  FlexData last;
+
+  Job
+  process(RuntimeContext& ctx) override
+  {
+    auto b = co_await ctx.read(0);
+    if (!b) { ctx.signal_done(); co_return; }
+    if (const auto* f = dynamic_cast<const FlexDataPayload*>(b.get())) {
+      ++beats;
+      last = f->data;
+    }
+  }
+
+  const StageSpec&
+  spec() const noexcept override
+  {
+    static const PortSpec ip[] = {
+      {.name = "in", .doc = "", .type = &typeid(FlexDataPayload)}};
+    static const StageSpec s = {.type_name = "ut-flex-sink", .doc = "",
+                                .display_name = "", .iports = ip};
+    return s;
+  }
+};
+
+// Run one config source into a counting sink and report how many beats
+// came out. `ticks < 0` leaves the trigger iport UNWIRED.
+template <typename ConfigStage>
+int
+run_config_source(Session& sess, FlexData cfg, int ticks, FlexData* last)
+{
+  auto pl = make_unique<Pipeline>("p", &sess);
+  vector<InEdge> in;
+  if (ticks >= 0) {
+    auto src_u = make_unique<TickSource>(&sess, "tick", vector<InEdge>{},
+                                         FlexData::make_object());
+    src_u->count = ticks;
+    src_u->allocate_oports(1);
+    auto* src = static_cast<TickSource*>(pl->insert_stage(std::move(src_u)));
+    in.push_back({src, 0});
+  }
+  auto cs_u = make_unique<ConfigStage>(&sess, "cfg", in, std::move(cfg));
+  auto* cs = pl->insert_stage(std::move(cs_u));
+
+  auto sink_u = make_unique<FlexSink>(&sess, "sink", vector<InEdge>{{cs, 0}},
+                                      FlexData::make_object());
+  auto* sink = static_cast<FlexSink*>(pl->insert_stage(std::move(sink_u)));
+
+  PipelineRuntime rt(pl.get(), &sess);
+  // -1 rather than an assertion: EXPECT_* only works inside a TEST body,
+  // and a launch failure is a distinct answer from "emitted nothing".
+  if (!rt.launch()) { return -1; }
+  rt.wait_idle();
+  rt.stop();
+  if (last != nullptr) { *last = sink->last; }
+  return sink->beats;
+}
+
+}  // namespace
+
+// The trigger contract, which is the same one text-prompt follows and the
+// reason a config source can serve a continuously generating graph:
+// unwired it is a one-shot, wired it emits once per inbound beat.
+//
+// Both halves matter and they fail differently. A one-shot that emitted
+// per read would deadlock the second request (nothing else will ever
+// arrive); a triggered source that emitted once would leave the consumer
+// on stale parameters while the graph says they changed.
+TEST(model_config, trigger_gates_emission)
+{
+  Session sess;
+  FlexData last;
+  // Unwired: exactly one beat for the run, whatever else happens.
+  EXPECT_TRUE(run_config_source<Wan2ModelConfigStage>(
+                  sess, FlexData::make_object(), -1, &last) == 1);
+  EXPECT_TRUE(model_config::family_of(last) == "wan");
+  EXPECT_TRUE(run_config_source<MiniMaxH3ModelConfigStage>(
+                  sess, FlexData::make_object(), -1, &last) == 1);
+  EXPECT_TRUE(model_config::family_of(last) == "minimax-h3");
+
+  // Wired: one beat per trigger, and EOS upstream ends the stage rather
+  // than leaving it emitting forever.
+  EXPECT_TRUE(run_config_source<Wan2ModelConfigStage>(
+                  sess, FlexData::make_object(), 4, &last) == 4);
+  EXPECT_TRUE(run_config_source<MiniMaxH3ModelConfigStage>(
+                  sess, FlexData::make_object(), 3, &last) == 3);
+  // A trigger source that emits nothing must not produce a config beat
+  // either -- the count is the trigger's, not a minimum of one.
+  EXPECT_TRUE(run_config_source<MiniMaxH3ModelConfigStage>(
+                  sess, FlexData::make_object(), 0, &last) == 0);
+}
+
+// One header then one frame per image, with the rate taken from the
+// producer rather than the config. The header cannot precede the first
+// frame -- nothing else in a generative graph knows the frame size -- so
+// "exactly one header, and it arrived" is the contract under test.
+TEST(rgb_to_video, header_then_one_frame_each)
+{
+  Session sess;
+  auto pl = make_unique<Pipeline>("p", &sess);
+  auto src_u = make_unique<RgbSource>(&sess, "src", vector<InEdge>{},
+                                      FlexData::make_object());
+  src_u->count = 5;
+  src_u->w = 64;
+  src_u->h = 32;
+  src_u->fps = 24.0;
+  src_u->allocate_oports(1);
+  auto* src = static_cast<RgbSource*>(pl->insert_stage(std::move(src_u)));
+
+  auto cfg = FlexData::make_object();
+  cfg.as_object().insert_or_assign("fps", FlexData::make_real(16.0));
+  auto cvt_u = make_unique<RgbToVideoStage>(&sess, "cvt",
+                                            vector<InEdge>{{src, 0}}, cfg);
+  auto* cvt = static_cast<RgbToVideoStage*>(
+      pl->insert_stage(std::move(cvt_u)));
+
+  auto sink_u = make_unique<VideoSink>(&sess, "sink",
+                                       vector<InEdge>{{cvt, 0}},
+                                       FlexData::make_object());
+  auto* sink = static_cast<VideoSink*>(pl->insert_stage(std::move(sink_u)));
+
+  PipelineRuntime rt(pl.get(), &sess);
+  EXPECT_TRUE(rt.launch());
+  rt.wait_idle();
+  rt.stop();
+
+  EXPECT_TRUE(sink->headers == 1);
+  EXPECT_TRUE(sink->frames == 5);
+  EXPECT_TRUE(sink->last_w == 64);
+  EXPECT_TRUE(sink->last_h == 32);
+  // The SIDEBAND rate wins over the config: the stage that made the frames
+  // knows the clip's rate, and a config default that silently overrode it
+  // would retime every generated video.
+  EXPECT_TRUE(sink->rate_den > 0);
+  const double got = (double)sink->rate_num / (double)sink->rate_den;
+  EXPECT_TRUE(got > 23.99 && got < 24.01);
+  EXPECT_TRUE(cvt->frames_emitted() == 5u);
+}
+
+// An RGBA frame is COMPOSITED OVER WHITE, not truncated. No video pixel
+// format here carries alpha, and the fourth plane cannot simply be
+// dropped: under a transparent pixel the stored colour is arbitrary, and
+// on a generated RGBA frame it is usually black -- so a truncation
+// fringes every edge in black, which reads as a bad model rather than a
+// lost channel. Pure black at alpha 0.5 must therefore leave as mid
+// grey; a truncation leaves it black and a nearest-neighbour "flatten"
+// leaves it white.
+TEST(rgb_to_video, an_rgba_frame_is_composited_over_white)
+{
+  Session sess;
+  auto pl = make_unique<Pipeline>("p", &sess);
+  auto src_u = make_unique<RgbSource>(&sess, "src", vector<InEdge>{},
+                                      FlexData::make_object());
+  src_u->count = 2;
+  src_u->w = 16;
+  src_u->h = 16;
+  src_u->ch = 4;
+  src_u->rgba[0] = 0; src_u->rgba[1] = 0; src_u->rgba[2] = 0;
+  src_u->rgba[3] = 128;               // half transparent black
+  src_u->allocate_oports(1);
+  auto* src = static_cast<RgbSource*>(pl->insert_stage(std::move(src_u)));
+
+  auto cfg = FlexData::make_object();
+  cfg.as_object().insert_or_assign("pix_fmt",
+                                   FlexData::make_string("rgb24"));
+  auto cvt_u = make_unique<RgbToVideoStage>(&sess, "cvt",
+                                            vector<InEdge>{{src, 0}}, cfg);
+  auto* cvt = static_cast<RgbToVideoStage*>(
+      pl->insert_stage(std::move(cvt_u)));
+  auto sink_u = make_unique<VideoSink>(&sess, "sink",
+                                       vector<InEdge>{{cvt, 0}},
+                                       FlexData::make_object());
+  auto* sink = static_cast<VideoSink*>(pl->insert_stage(std::move(sink_u)));
+
+  PipelineRuntime rt(pl.get(), &sess);
+  EXPECT_TRUE(rt.launch());
+  rt.wait_idle();
+  rt.stop();
+
+  // It was ACCEPTED at all -- before this, a [4,H,W] beat was warned
+  // about and skipped, so the stream had no frames and no header.
+  EXPECT_TRUE(sink->headers == 1);
+  EXPECT_TRUE(sink->frames == 2);
+  EXPECT_TRUE(sink->last_w == 16 && sink->last_h == 16);
+  printf("[rgb_to_video] rgba(0,0,0,128) -> %d,%d,%d\n",
+         sink->first_px[0], sink->first_px[1], sink->first_px[2]);
+  for (int c = 0; c < 3; ++c) {
+    EXPECT_TRUE(sink->first_px[c] >= 126 && sink->first_px[c] <= 129);
+  }
+}
+
+// The two ends of the range, so the blend is not merely "some number in
+// between": opaque keeps the colour exactly, and fully transparent is
+// the background exactly, whatever was stored underneath it.
+TEST(rgb_to_video, rgba_endpoints_are_exact)
+{
+  auto run = [](uint8_t r, uint8_t g, uint8_t b, uint8_t a, int* out) {
+    Session sess;
+    auto pl = make_unique<Pipeline>("p", &sess);
+    auto src_u = make_unique<RgbSource>(&sess, "src", vector<InEdge>{},
+                                        FlexData::make_object());
+    src_u->count = 1; src_u->w = 8; src_u->h = 8; src_u->ch = 4;
+    src_u->rgba[0] = r; src_u->rgba[1] = g;
+    src_u->rgba[2] = b; src_u->rgba[3] = a;
+    src_u->allocate_oports(1);
+    auto* src = static_cast<RgbSource*>(pl->insert_stage(std::move(src_u)));
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("pix_fmt",
+                                     FlexData::make_string("rgb24"));
+    auto cvt_u = make_unique<RgbToVideoStage>(&sess, "cvt",
+                                              vector<InEdge>{{src, 0}}, cfg);
+    auto* cvt = static_cast<RgbToVideoStage*>(
+        pl->insert_stage(std::move(cvt_u)));
+    auto sink_u = make_unique<VideoSink>(&sess, "sink",
+                                         vector<InEdge>{{cvt, 0}},
+                                         FlexData::make_object());
+    auto* sk = static_cast<VideoSink*>(pl->insert_stage(std::move(sink_u)));
+    PipelineRuntime rt(pl.get(), &sess);
+    if (!rt.launch()) { return; }
+    rt.wait_idle();
+    rt.stop();
+    for (int c = 0; c < 3; ++c) { out[c] = sk->first_px[c]; }
+  };
+  int px[3] = {-1, -1, -1};
+  run(200, 30, 90, 255, px);            // opaque: untouched
+  EXPECT_TRUE(px[0] == 200 && px[1] == 30 && px[2] == 90);
+  run(0, 0, 0, 0, px);                  // transparent BLACK: white
+  EXPECT_TRUE(px[0] == 255 && px[1] == 255 && px[2] == 255);
+  run(200, 30, 90, 0, px);              // transparent anything: white
+  EXPECT_TRUE(px[0] == 255 && px[1] == 255 && px[2] == 255);
+}
+
+// The generating model rides from the frames' sideband onto the STREAM
+// HEADER. It has to change currency here: a FrameRef is a bare AVFrame
+// with no sideband, so the header is the only beat on this edge that can
+// carry it -- and it is also the one save-video reads before it writes
+// the container header. Losing it here would leave every generated clip
+// anonymous with nothing failing.
+// WHICH AXES THE CHROMA IS AVERAGED OVER, per pixel format.
+//
+// The averaging block was a literal 2x2 -- `y += 2`, `x += 2`, four
+// samples times 0.25f -- so the stage could only ever emit 4:2:0. It is
+// now the format's (hx, hy), and the thing to prove is that each format
+// averages over the axes it is supposed to and NOT the others. A block
+// that is too large is a soft-looking picture nobody can point at; one
+// that is too small writes past the plane.
+//
+// Told apart with STRIPES, because a solid colour cannot see any of it:
+// every average of one colour is that colour, so a 4:2:0 stage
+// masquerading as 4:4:4 passes a constant-frame test perfectly.
+//
+//   columns of red|blue  -- a HORIZONTAL subsample averages them
+//   rows    of red|blue  -- a VERTICAL subsample averages them
+//
+// so 4:2:2 is exactly the format that keeps the rows and loses the
+// columns, which is what separates it from both neighbours.
+TEST(rgb_to_video, chroma_is_averaged_over_the_formats_own_block)
+{
+  // BT.601 limited. Red and blue sit at opposite ends of U, which makes
+  // "averaged" and "kept" 75 code values apart rather than a rounding.
+  const int U_RED = 90, U_BLUE = 240, U_MIX = (U_RED + U_BLUE) / 2;
+
+  struct Case { const char* fmt; int pattern; int want[4]; };
+  const Case cases[] = {
+    // 4:4:4 keeps everything: the quad is the pattern itself.
+    {"yuv444p", 1, {U_RED, U_BLUE, U_RED, U_BLUE}},   // columns
+    {"yuv444p", 2, {U_RED, U_RED, U_BLUE, U_BLUE}},   // rows
+    // 4:2:2 averages across x only.
+    {"yuv422p", 1, {U_MIX, U_MIX, U_MIX, U_MIX}},
+    {"yuv422p", 2, {U_RED, U_RED, U_BLUE, U_BLUE}},   // rows SURVIVE
+    // 4:2:0 averages both.
+    {"yuv420p", 1, {U_MIX, U_MIX, U_MIX, U_MIX}},
+    {"yuv420p", 2, {U_MIX, U_MIX, U_MIX, U_MIX}},
+  };
+
+  for (const Case& c : cases) {
+    Session sess;
+    auto pl = make_unique<Pipeline>("p", &sess);
+    auto src_u = make_unique<RgbSource>(&sess, "src", vector<InEdge>{},
+                                        FlexData::make_object());
+    src_u->count = 1; src_u->w = 16; src_u->h = 16; src_u->ch = 4;
+    src_u->pattern = c.pattern;
+    src_u->rgba[0] = 255; src_u->rgba[1] = 0; src_u->rgba[2] = 0;
+    src_u->rgbb[0] = 0;   src_u->rgbb[1] = 0; src_u->rgbb[2] = 255;
+    src_u->allocate_oports(1);
+    auto* src = static_cast<RgbSource*>(pl->insert_stage(std::move(src_u)));
+
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("pix_fmt",
+                                     FlexData::make_string(c.fmt));
+    auto cvt_u = make_unique<RgbToVideoStage>(&sess, "cvt",
+                                              vector<InEdge>{{src, 0}}, cfg);
+    auto* cvt = static_cast<RgbToVideoStage*>(
+        pl->insert_stage(std::move(cvt_u)));
+    auto sink_u = make_unique<VideoSink>(&sess, "sink",
+                                         vector<InEdge>{{cvt, 0}},
+                                         FlexData::make_object());
+    auto* sink = static_cast<VideoSink*>(pl->insert_stage(std::move(sink_u)));
+    PipelineRuntime rt(pl.get(), &sess);
+    EXPECT_TRUE(rt.launch());
+    rt.wait_idle();
+    rt.stop();
+
+    EXPECT_TRUE(sink->frames == 1);
+    bool ok = true;
+    for (int i = 0; i < 4; ++i) {
+      // +-1 for the rounding of an average that lands on a half.
+      if (std::abs(sink->u_quad[i] - c.want[i]) > 1) { ok = false; }
+    }
+    EXPECT_TRUE(ok);
+    std::printf("[rgb_to_video] %s %s: U quad %d %d %d %d (want %d %d %d "
+                "%d), chroma plane %dx%d%s\n", c.fmt,
+                c.pattern == 1 ? "columns" : "rows   ",
+                sink->u_quad[0], sink->u_quad[1], sink->u_quad[2],
+                sink->u_quad[3], c.want[0], c.want[1], c.want[2],
+                c.want[3], sink->chroma_w, sink->chroma_h,
+                ok ? "" : "   <-- MISMATCH");
+  }
+}
+
+// A SUBSAMPLED AXIS MAY NOT BE ODD, and which axes those are is the
+// format's. The check was written for 4:2:0 and tested both dimensions;
+// applied unchanged it would refuse an odd-height 4:2:2 frame, which is
+// perfectly representable, and let an odd-width one through, which is
+// not. Refusing is deliberate -- rounding would either fail deep inside
+// the encoder or silently drop a line.
+TEST(rgb_to_video, odd_sizes_are_refused_per_format_not_per_stage)
+{
+  struct Case { const char* fmt; int w, h; bool ok; };
+  const Case cases[] = {
+    {"yuv420p", 16, 16, true},  {"yuv420p", 15, 16, false},
+    {"yuv420p", 16, 15, false},
+    // 4:2:2 subsamples x only, so an odd HEIGHT is fine.
+    {"yuv422p", 16, 16, true},  {"yuv422p", 15, 16, false},
+    {"yuv422p", 16, 15, true},
+    // 4:4:4 and rgb24 subsample nothing.
+    {"yuv444p", 15, 15, true},  {"rgb24",   15, 15, true},
+  };
+  for (const Case& c : cases) {
+    Session sess;
+    auto pl = make_unique<Pipeline>("p", &sess);
+    auto src_u = make_unique<RgbSource>(&sess, "src", vector<InEdge>{},
+                                        FlexData::make_object());
+    src_u->count = 1; src_u->w = c.w; src_u->h = c.h;
+    src_u->allocate_oports(1);
+    auto* src = static_cast<RgbSource*>(pl->insert_stage(std::move(src_u)));
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("pix_fmt",
+                                     FlexData::make_string(c.fmt));
+    auto cvt_u = make_unique<RgbToVideoStage>(&sess, "cvt",
+                                              vector<InEdge>{{src, 0}}, cfg);
+    auto* cvt = static_cast<RgbToVideoStage*>(
+        pl->insert_stage(std::move(cvt_u)));
+    auto sink_u = make_unique<VideoSink>(&sess, "sink",
+                                         vector<InEdge>{{cvt, 0}},
+                                         FlexData::make_object());
+    auto* sink = static_cast<VideoSink*>(pl->insert_stage(std::move(sink_u)));
+    PipelineRuntime rt(pl.get(), &sess);
+    EXPECT_TRUE(rt.launch());
+    rt.wait_idle();
+    rt.stop();
+    // Emitted iff the geometry is representable.
+    EXPECT_TRUE((sink->frames > 0) == c.ok);
+    std::printf("[rgb_to_video] %s %dx%d -> %s\n", c.fmt, c.w, c.h,
+                sink->frames > 0 ? "emitted" : "refused");
+  }
+}
+
+// THE DROPDOWN AND THE VALIDATOR ARE THE SAME CLOSED SET.
+//
+// Three of this stage's keys accept one of a fixed pair, and each pair
+// is now written down three times: in the doc string, in the branch in
+// resolve_config_() that rejects everything else, and in the `choices`
+// list the editor renders as a dropdown. The doc is prose and nothing
+// can check it, but the other two MUST agree in both directions -- a
+// dropdown offering a value the stage rejects sets a graph up to fail
+// at launch with a value the editor suggested, and one missing a value
+// the stage accepts hides a mode behind a field the UI has turned into
+// a closed set.
+//
+// So this drives the stage with every offered value and asserts it is
+// taken, then with one that is not offered and asserts it is refused.
+TEST(rgb_to_video, every_offered_choice_is_one_the_stage_accepts)
+{
+  // Straight off the schema the editor reads, not off a list retyped
+  // here -- retyping it would pin the test to itself.
+  Session spec_sess;
+  RgbToVideoStage probe(&spec_sess, "probe", vector<InEdge>{},
+                        FlexData::make_object());
+  FlexData schema = config_params_to_flex(
+      resolve_config_params(probe.spec().attrs, FlexData::make_object()));
+  auto rows = schema.as_array();
+  int checked_keys = 0;
+  for (size_t i = 0; i < rows.size(); ++i) {
+    FlexData row = rows.at(i);
+    auto ro = row.as_object();
+    if (!ro.contains("choices")) { continue; }
+    const std::string key(ro.at("key").as_string(""));
+    FlexData ch = ro.at("choices");
+    auto cv = ch.as_array();
+    EXPECT_TRUE(cv.size() >= 2u);
+    ++checked_keys;
+    for (size_t c = 0; c < cv.size(); ++c) {
+      const std::string val(cv.at(c).as_string(""));
+      Session sess;
+      auto cfg = FlexData::make_object();
+      cfg.as_object().insert_or_assign(key, FlexData::make_string(val));
+      RgbToVideoStage st(&sess, "cfg", vector<InEdge>{}, cfg);
+      const bool accepted = st.config_error().empty();
+      EXPECT_TRUE(accepted);
+      if (!accepted) {
+        std::printf("[rgb_to_video] %s=%s was OFFERED but refused: %s\n",
+                    key.c_str(), val.c_str(), st.config_error().c_str());
+      }
+    }
+    // And the set is genuinely closed: a plausible near-miss is refused,
+    // or "choices" is decoration over a field that takes anything.
+    Session sess;
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign(
+        key, FlexData::make_string("definitely-not-a-valid-value"));
+    RgbToVideoStage st(&sess, "cfg", vector<InEdge>{}, cfg);
+    EXPECT_FALSE(st.config_error().empty());
+    std::printf("[rgb_to_video] %s: %zu offered, all accepted, junk "
+                "refused\n", key.c_str(), cv.size());
+  }
+  // The loop must have found something, or it passed by iterating over
+  // nothing at all.
+  EXPECT_TRUE(checked_keys == 3);
+}
+
+// THE MATRIX, and that the file says which one it is.
+//
+// rgb-to-video wrote BT.601 and only BT.601, with the constant hardcoded
+// into the tag. `colorspace` makes it a choice, and the thing that has
+// to hold is that the PIXELS and the TAG move together: a stage that
+// converts one way and tags the other produces a file nothing
+// downstream can read correctly and nothing can see is wrong.
+//
+// Checked against the textbook definition recomputed here, deliberately
+// in a different spelling from the stage's (which folds the swing into
+// precomputed per-channel coefficients). Comparing the stage's numbers
+// with a copy of the stage's numbers would pass through any change to
+// either.
+//
+//   Y' = Kr*R' + Kg*G' + Kb*B'        Cb = (B'-Y')/(2(1-Kb))
+//   Kg = 1-Kr-Kb                      Cr = (R'-Y')/(2(1-Kr))
+//
+// Studio swing: Y in 16..235, chroma 128 +- 112. Full: 0..255, 128 +- 128.
+namespace {
+
+struct ExpectYuv { int y, u, v; };
+
+ExpectYuv
+expect_yuv_(int r8, int g8, int b8, double kr, double kb, bool full)
+{
+  const double kg = 1.0 - kr - kb;
+  const double r = r8 / 255.0, g = g8 / 255.0, b = b8 / 255.0;
+  const double yn = kr * r + kg * g + kb * b;
+  const double cb = (b - yn) / (2.0 * (1.0 - kb));
+  const double cr = (r - yn) / (2.0 * (1.0 - kr));
+  const double ys = full ? 255.0 : 219.0;
+  const double y0 = full ? 0.0 : 16.0;
+  const double cs = full ? 255.0 : 224.0;
+  auto q = [](double v) {
+    v = std::round(v);
+    if (v < 0.0) { return 0; }
+    if (v > 255.0) { return 255; }
+    return (int)v;
+  };
+  return { q(y0 + ys * yn), q(128.0 + cs * cb), q(128.0 + cs * cr) };
+}
+
+// One constant-colour frame through the stage; returns its top-left YUV
+// and fills the header tags.
+VideoSink*
+run_one_colour_(Pipeline* pl, Session* sess, uint8_t r, uint8_t g,
+                uint8_t b, const char* csp, const char* range)
+{
+  auto src_u = make_unique<RgbSource>(sess, "src", vector<InEdge>{},
+                                      FlexData::make_object());
+  src_u->count = 1;
+  src_u->w = 16;
+  src_u->h = 16;
+  // ch=4 with alpha 255 is the only way to get a CONSTANT frame out of
+  // this source (ch=3 writes a ramp), and the composite over white is
+  // exact at alpha 255, so the pixels are r,g,b unchanged.
+  src_u->ch = 4;
+  src_u->rgba[0] = r; src_u->rgba[1] = g; src_u->rgba[2] = b;
+  src_u->rgba[3] = 255;
+  src_u->allocate_oports(1);
+  auto* src = static_cast<RgbSource*>(pl->insert_stage(std::move(src_u)));
+
+  auto cfg = FlexData::make_object();
+  cfg.as_object().insert_or_assign("colorspace", FlexData::make_string(csp));
+  cfg.as_object().insert_or_assign("color_range",
+                                   FlexData::make_string(range));
+  auto cvt_u = make_unique<RgbToVideoStage>(sess, "cvt",
+                                            vector<InEdge>{{src, 0}}, cfg);
+  auto* cvt = static_cast<RgbToVideoStage*>(
+      pl->insert_stage(std::move(cvt_u)));
+  auto sink_u = make_unique<VideoSink>(sess, "sink",
+                                       vector<InEdge>{{cvt, 0}},
+                                       FlexData::make_object());
+  return static_cast<VideoSink*>(pl->insert_stage(std::move(sink_u)));
+}
+
+}  // namespace
+
+TEST(rgb_to_video, colorspace_picks_the_matrix_and_the_tag_follows)
+{
+  struct Case { const char* csp; const char* range; double kr, kb;
+                bool full; int want_csp, want_range, want_pri, want_trc; };
+  const Case cases[] = {
+    {"bt601", "limited", 0.299,  0.114,  false, AVCOL_SPC_SMPTE170M,
+     AVCOL_RANGE_MPEG, AVCOL_PRI_SMPTE170M, AVCOL_TRC_SMPTE170M},
+    {"bt601", "full",    0.299,  0.114,  true,  AVCOL_SPC_SMPTE170M,
+     AVCOL_RANGE_JPEG, AVCOL_PRI_SMPTE170M, AVCOL_TRC_SMPTE170M},
+    {"bt709", "limited", 0.2126, 0.0722, false, AVCOL_SPC_BT709,
+     AVCOL_RANGE_MPEG, AVCOL_PRI_BT709, AVCOL_TRC_BT709},
+    {"bt709", "full",    0.2126, 0.0722, true,  AVCOL_SPC_BT709,
+     AVCOL_RANGE_JPEG, AVCOL_PRI_BT709, AVCOL_TRC_BT709},
+  };
+  // Green discriminates the two matrices on all THREE components; red
+  // and blue sit at a chroma extreme where the two agree.
+  const uint8_t R = 0, G = 255, B = 0;
+
+  for (const Case& c : cases) {
+    Session sess;
+    auto pl = make_unique<Pipeline>("p", &sess);
+    auto* sink = run_one_colour_(pl.get(), &sess, R, G, B, c.csp, c.range);
+    PipelineRuntime rt(pl.get(), &sess);
+    EXPECT_TRUE(rt.launch());
+    rt.wait_idle();
+    rt.stop();
+
+    const ExpectYuv w = expect_yuv_(R, G, B, c.kr, c.kb, c.full);
+    // +-1: the stage rounds once per pixel and averages chroma over the
+    // 2x2 block, so a half-LSB can land either side.
+    const bool y_ok = std::abs(sink->first_yuv[0] - w.y) <= 1;
+    const bool u_ok = std::abs(sink->first_yuv[1] - w.u) <= 1;
+    const bool v_ok = std::abs(sink->first_yuv[2] - w.v) <= 1;
+    EXPECT_TRUE(y_ok);
+    EXPECT_TRUE(u_ok);
+    EXPECT_TRUE(v_ok);
+    if (!(y_ok && u_ok && v_ok)) {
+      std::printf("[rgb_to_video] %s/%s got Y%d U%d V%d want Y%d U%d V%d\n",
+                  c.csp, c.range, sink->first_yuv[0], sink->first_yuv[1],
+                  sink->first_yuv[2], w.y, w.u, w.v);
+    }
+    // THE TAG, which travels with the pixels or the file is a lie.
+    EXPECT_TRUE(sink->last_csp == c.want_csp);
+    EXPECT_TRUE(sink->last_range == c.want_range);
+    // Primaries and transfer were UNSPECIFIED before; a colour-managed
+    // player falls back on convention when they are, and the convention
+    // for HD is BT.709 whatever the matrix says.
+    EXPECT_TRUE(sink->last_pri == c.want_pri);
+    EXPECT_TRUE(sink->last_trc == c.want_trc);
+    std::printf("[rgb_to_video] %s/%s -> Y%d U%d V%d, tagged csp=%d "
+                "range=%d pri=%d trc=%d\n", c.csp, c.range,
+                sink->first_yuv[0], sink->first_yuv[1], sink->first_yuv[2],
+                sink->last_csp, sink->last_range, sink->last_pri,
+                sink->last_trc);
+  }
+}
+
+// THE NO-REGRESSION PIN. The four matrices are now DERIVED from Kr/Kb
+// rather than typed out, and the one that already shipped must come back
+// bit-identical -- every clip this tree has ever written is BT.601
+// studio swing, and a derivation that is a rounding off would change
+// them all at once with nothing to show for it.
+//
+// These are the exact constants the stage carried before.
+TEST(rgb_to_video, the_derived_bt601_matrix_is_the_one_that_shipped)
+{
+  const uint8_t colours[][3] = {
+    {0, 0, 0}, {255, 255, 255}, {255, 0, 0}, {0, 255, 0}, {0, 0, 255},
+    {37, 211, 91},
+  };
+  for (const auto& c : colours) {
+    const double r = c[0], g = c[1], b = c[2];
+    // Verbatim from the retired rgb_to_yuv_().
+    const double y = 16.0  + 0.256788 * r + 0.504129 * g + 0.097906 * b;
+    const double u = 128.0 - 0.148223 * r - 0.290993 * g + 0.439216 * b;
+    const double v = 128.0 + 0.439216 * r - 0.367788 * g - 0.071427 * b;
+    Session sess;
+    auto pl = make_unique<Pipeline>("p", &sess);
+    auto* sink = run_one_colour_(pl.get(), &sess, c[0], c[1], c[2],
+                                 "bt601", "limited");
+    PipelineRuntime rt(pl.get(), &sess);
+    EXPECT_TRUE(rt.launch());
+    rt.wait_idle();
+    rt.stop();
+    EXPECT_TRUE(sink->first_yuv[0] == (int)std::lround(y));
+    EXPECT_TRUE(sink->first_yuv[1] == (int)std::lround(u));
+    EXPECT_TRUE(sink->first_yuv[2] == (int)std::lround(v));
+  }
+  std::printf("[rgb_to_video] derived BT.601 limited reproduces the "
+              "shipped coefficients exactly\n");
+}
+
+// And the two matrices must actually DIFFER, or everything above passes
+// on a stage that ignores the key.
+TEST(rgb_to_video, bt709_is_not_bt601)
+{
+  int got[2][3];
+  const char* csps[2] = {"bt601", "bt709"};
+  for (int i = 0; i < 2; ++i) {
+    Session sess;
+    auto pl = make_unique<Pipeline>("p", &sess);
+    auto* sink = run_one_colour_(pl.get(), &sess, 0, 255, 0, csps[i],
+                                 "limited");
+    PipelineRuntime rt(pl.get(), &sess);
+    EXPECT_TRUE(rt.launch());
+    rt.wait_idle();
+    rt.stop();
+    for (int c = 0; c < 3; ++c) { got[i][c] = sink->first_yuv[c]; }
+  }
+  // Green's luma is the biggest single difference between the two.
+  EXPECT_TRUE(std::abs(got[0][0] - got[1][0]) > 20);
+  EXPECT_TRUE(got[0][1] != got[1][1]);
+  EXPECT_TRUE(got[0][2] != got[1][2]);
+  std::printf("[rgb_to_video] green: 601 Y%d U%d V%d vs 709 Y%d U%d V%d\n",
+              got[0][0], got[0][1], got[0][2],
+              got[1][0], got[1][1], got[1][2]);
+}
+
+TEST(rgb_to_video, carries_the_model_name_onto_the_header)
+{
+  Session sess;
+  auto pl = make_unique<Pipeline>("p", &sess);
+  auto src_u = make_unique<RgbSource>(&sess, "src", vector<InEdge>{},
+                                      FlexData::make_object());
+  src_u->count = 2;
+  src_u->model_name = "local/Some-Video-Model-8bit";
+  src_u->allocate_oports(1);
+  auto* src = static_cast<RgbSource*>(pl->insert_stage(std::move(src_u)));
+
+  auto cvt_u = make_unique<RgbToVideoStage>(&sess, "cvt",
+                                            vector<InEdge>{{src, 0}},
+                                            FlexData::make_object());
+  auto* cvt = static_cast<RgbToVideoStage*>(
+      pl->insert_stage(std::move(cvt_u)));
+  auto sink_u = make_unique<VideoSink>(&sess, "sink",
+                                       vector<InEdge>{{cvt, 0}},
+                                       FlexData::make_object());
+  auto* sink = static_cast<VideoSink*>(pl->insert_stage(std::move(sink_u)));
+
+  PipelineRuntime rt(pl.get(), &sess);
+  EXPECT_TRUE(rt.launch());
+  rt.wait_idle();
+  rt.stop();
+
+  EXPECT_TRUE(sink->headers == 1);
+  EXPECT_TRUE(sink->last_model == "local/Some-Video-Model-8bit");
+
+  // A stream nobody claimed stays unclaimed: no name in, none out.
+  Session s2;
+  auto pl2 = make_unique<Pipeline>("p2", &s2);
+  auto s2_u = make_unique<RgbSource>(&s2, "src", vector<InEdge>{},
+                                     FlexData::make_object());
+  s2_u->count = 2;
+  s2_u->allocate_oports(1);
+  auto* src2 = static_cast<RgbSource*>(pl2->insert_stage(std::move(s2_u)));
+  auto cvt2_u = make_unique<RgbToVideoStage>(&s2, "cvt",
+                                             vector<InEdge>{{src2, 0}},
+                                             FlexData::make_object());
+  auto* cvt2 = static_cast<RgbToVideoStage*>(
+      pl2->insert_stage(std::move(cvt2_u)));
+  auto sink2_u = make_unique<VideoSink>(&s2, "sink",
+                                        vector<InEdge>{{cvt2, 0}},
+                                        FlexData::make_object());
+  auto* sink2 = static_cast<VideoSink*>(pl2->insert_stage(std::move(sink2_u)));
+  PipelineRuntime rt2(pl2.get(), &s2);
+  EXPECT_TRUE(rt2.launch());
+  rt2.wait_idle();
+  rt2.stop();
+  EXPECT_TRUE(sink2->headers == 1);
+  EXPECT_TRUE(sink2->last_model.empty());
+}
+
+// yuv420p has no representation for an odd dimension -- its chroma planes
+// are half-size in each axis. Refusing is the whole point: rounding would
+// hand libx264 a frame it cannot encode, and the failure would surface
+// much later as a corrupt file.
+TEST(rgb_to_video, odd_size_refused_for_yuv420p)
+{
+  Session sess;
+  auto pl = make_unique<Pipeline>("p", &sess);
+  auto src_u = make_unique<RgbSource>(&sess, "src", vector<InEdge>{},
+                                      FlexData::make_object());
+  src_u->count = 2;
+  src_u->w = 65;                        // odd
+  src_u->h = 32;
+  src_u->allocate_oports(1);
+  auto* src = static_cast<RgbSource*>(pl->insert_stage(std::move(src_u)));
+  auto cvt_u = make_unique<RgbToVideoStage>(&sess, "cvt",
+                                            vector<InEdge>{{src, 0}},
+                                            FlexData::make_object());
+  auto* cvt = static_cast<RgbToVideoStage*>(
+      pl->insert_stage(std::move(cvt_u)));
+  auto sink_u = make_unique<VideoSink>(&sess, "sink",
+                                       vector<InEdge>{{cvt, 0}},
+                                       FlexData::make_object());
+  auto* sink = static_cast<VideoSink*>(pl->insert_stage(std::move(sink_u)));
+
+  PipelineRuntime rt(pl.get(), &sess);
+  EXPECT_TRUE(rt.launch());
+  rt.wait_idle();
+  rt.stop();
+
+  EXPECT_TRUE(sink->headers == 0);
+  EXPECT_TRUE(sink->frames == 0);
+
+  // The same odd size in rgb24 is fine -- there is no chroma to subsample.
+  Session s2;
+  auto pl2 = make_unique<Pipeline>("p2", &s2);
+  auto src2_u = make_unique<RgbSource>(&s2, "src", vector<InEdge>{},
+                                       FlexData::make_object());
+  src2_u->count = 2;
+  src2_u->w = 65;
+  src2_u->h = 32;
+  src2_u->allocate_oports(1);
+  auto* src2 = static_cast<RgbSource*>(pl2->insert_stage(std::move(src2_u)));
+  auto c2 = FlexData::make_object();
+  c2.as_object().insert_or_assign("pix_fmt", FlexData::make_string("rgb24"));
+  auto cvt2_u = make_unique<RgbToVideoStage>(&s2, "cvt",
+                                             vector<InEdge>{{src2, 0}}, c2);
+  auto* cvt2 = static_cast<RgbToVideoStage*>(
+      pl2->insert_stage(std::move(cvt2_u)));
+  auto sink2_u = make_unique<VideoSink>(&s2, "sink",
+                                        vector<InEdge>{{cvt2, 0}},
+                                        FlexData::make_object());
+  auto* sink2 = static_cast<VideoSink*>(pl2->insert_stage(std::move(sink2_u)));
+  PipelineRuntime rt2(pl2.get(), &s2);
+  EXPECT_TRUE(rt2.launch());
+  rt2.wait_idle();
+  rt2.stop();
+  EXPECT_TRUE(sink2->headers == 1);
+  EXPECT_TRUE(sink2->frames == 2);
+}
+
+#ifdef VPIPE_BUILD_APPLE_SILICON
+
+// The two geometry rules the video path cannot bend, both checked at
+// config time so a bad graph is refused at launch rather than after the
+// text encoder has loaded.
+//
+// F % 4 == 1 is the one that looks arbitrary and is not: the VAE's first
+// temporal chunk is a single frame and every later one is four, so a frame
+// count outside 4k+1 has no latent representation at all. Rounding it would
+// silently generate a different clip length than asked for.
+TEST(generate_video, geometry_config_validation)
+{
+  Session sess;
+  auto mk = [&](int h, int w, int f) {
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("height", FlexData::make_int(h));
+    cfg.as_object().insert_or_assign("width", FlexData::make_int(w));
+    cfg.as_object().insert_or_assign("frames", FlexData::make_int(f));
+    return make_unique<GenerateVideoStage>(&sess, "gv", vector<InEdge>{}, cfg);
+  };
+  EXPECT_TRUE(mk(480, 832, 81)->config_error().empty());
+  EXPECT_TRUE(mk(480, 832, 121)->config_error().empty());
+  // ANY positive count is accepted. The legal counts are a per-FAMILY
+  // rule (4k+1 for wan, 17n+5 for minimax-h3) that share almost no
+  // values, and the family is not known until the checkpoint is read --
+  // so the count is rounded UP at resolve time instead of rejected here,
+  // and a graph can change families without being re-authored.
+  EXPECT_TRUE(mk(480, 832, 80)->config_error().empty());
+  EXPECT_TRUE(mk(480, 832, 100)->config_error().empty());
+  EXPECT_TRUE(mk(480, 832, 56)->config_error().empty());   // an H3 count
+  // The SIZE is accepted the same way and for the same reason: the legal
+  // grid is the family's VAE stride times its DiT patch -- 16 for wan, 32
+  // for minimax-h3 -- and the family is not known here either, so
+  // resolve_config_ rounds UP once the checkpoint has been read. This
+  // used to refuse anything off a 16 grid, which was both too strict (a
+  // caller should not have to know the family's stride) and too loose: it
+  // ACCEPTED H3 sizes that are illegal, and they failed much later with a
+  // message about latent geometry. See the test below.
+  EXPECT_TRUE(mk(484, 832, 81)->config_error().empty());
+  EXPECT_TRUE(mk(480, 830, 81)->config_error().empty());
+  EXPECT_TRUE(mk(768, 1360, 85)->config_error().empty());
+
+  // The frame arithmetic itself: F = 1 + 4*(T-1) inverted.
+  auto s = mk(480, 832, 81);
+  EXPECT_TRUE(s->latent_frames() == 21);
+  auto s2 = mk(480, 832, 1);
+  EXPECT_TRUE(s2->latent_frames() == 1);
+  auto s3 = mk(480, 832, 121);
+  EXPECT_TRUE(s3->latent_frames() == 31);
+}
+
+// The two families' rounding rules. Tested on the rules THEMSELVES rather
+// than through the stage, because the stage cannot round until it has read
+// a checkpoint and named its family -- which needs a 25 GB model on disk.
+//
+// The property that matters is round UP, never down: a count rounded down
+// silently delivers less video than was asked for, where rounding up costs
+// at most three frames (wan) or sixteen (h3).
+TEST(generate_video, frame_counts_round_up_per_family)
+{
+  namespace h3 = genai::minimax_h3;
+  // wan: 4k+1, the first frame being its own chunk.
+  EXPECT_TRUE(genai::MetalWanVae::align_num_frames(81) == 81);
+  EXPECT_TRUE(genai::MetalWanVae::align_num_frames(80) == 81);
+  EXPECT_TRUE(genai::MetalWanVae::align_num_frames(82) == 85);
+  EXPECT_TRUE(genai::MetalWanVae::align_num_frames(100) == 101);
+  EXPECT_TRUE(genai::MetalWanVae::align_num_frames(1) == 1);
+  // Degenerate inputs must not produce a count below 1; 0 frames is not a
+  // clip, and a negative one would size an allocation.
+  EXPECT_TRUE(genai::MetalWanVae::align_num_frames(0) == 1);
+  EXPECT_TRUE(genai::MetalWanVae::align_num_frames(-7) == 1);
+
+  // minimax-h3: 17n+5, a 17-frame clip keeping 5 latents.
+  EXPECT_TRUE(h3::align_num_frames(56, 17, 5) == 56);
+  EXPECT_TRUE(h3::align_num_frames(50, 17, 5) == 56);
+  EXPECT_TRUE(h3::align_num_frames(57, 17, 5) == 73);
+  EXPECT_TRUE(h3::align_num_frames(22, 17, 5) == 22);
+
+  // And the cross-family point of the whole change: each family's
+  // canonical count is illegal for the other, so both must survive being
+  // handed the other's number.
+  EXPECT_TRUE(genai::MetalWanVae::align_num_frames(56) == 57);
+  EXPECT_TRUE(h3::align_num_frames(81, 17, 5) == 90);
+}
+
+// What a rounded frame size has to BE, checked against the packer that
+// used to refuse it.
+//
+// The reported failure was a 1360x768 request dying with "could not pack
+// a 27x48x85 latent" -- a message about the latent, from a stage that had
+// accepted the pixel size. 1360 is a multiple of 16, so the old check
+// passed it; H3's VAE is 16x spatial, so its latent width is 85, which is
+// ODD and cannot be split by the DiT's 2x patch. The grid is therefore 32
+// for this family, not 16, and the fix is to round up to it rather than
+// to explain any of that to the caller.
+//
+// Tested against build_packed_sequence itself, not against the rounding
+// arithmetic, which would only confirm that ceil() is ceil().
+TEST(generate_video, frame_sizes_round_up_to_a_patchable_latent)
+{
+  namespace h3 = genai::minimax_h3;
+  genai::MetalMiniMaxH3Transformer::Config c;   // released patch_h/w = 2
+  const int grid_w = 16 * c.patch_w, grid_h = 16 * c.patch_h;
+  EXPECT_TRUE(grid_w == 32 && grid_h == 32);
+
+  auto packs = [&](int px_h, int px_w) {
+    h3::PackedLayout L;
+    const std::vector<int> tags(8, h3::kTextTag);
+    return h3::build_packed_sequence(tags, 27, px_h / 16, px_w / 16, 150,
+                                     c.patch_h, c.patch_w,
+                                     h3::kAudioChannels, {}, &L);
+  };
+  auto up = [](int v, int g) { return ((v + g - 1) / g) * g; };
+
+  // The reported request, and why it failed.
+  EXPECT_TRUE((1360 / 16) % c.patch_w != 0);   // latent width 85, odd
+  EXPECT_TRUE(!packs(768, 1360));
+  // Rounded to the family's grid it packs, and the height -- already a
+  // multiple of 32 -- must not move.
+  EXPECT_TRUE(up(1360, grid_w) == 1376);
+  EXPECT_TRUE(up(768, grid_h) == 768);
+  EXPECT_TRUE(packs(768, 1376));
+  // The shipped geometry is untouched by the rounding, which is the
+  // regression that would matter most.
+  EXPECT_TRUE(up(960, grid_w) == 960 && up(544, grid_h) == 544);
+  EXPECT_TRUE(packs(544, 960));
+  // Round UP, never down: a size rounded down silently delivers a smaller
+  // picture than was asked for.
+  EXPECT_TRUE(up(1361, grid_w) == 1376 && up(1377, grid_w) == 1408);
+}
+
+// The stage is family-generic, but NOT by carrying the union of what its
+// families need. It carries what every video model answers to -- geometry,
+// length, steps, seed, residency -- and takes each family's own knobs as a
+// BEAT on the model_config iport.
+//
+// What this pins is that surface, because the failure it replaced was
+// silent: with a union config, a key belonging to the family that was not
+// resident did nothing and said nothing. So: none of the moved keys may
+// come back as an attr, and a stale pipeline that still sets one must be
+// TOLD rather than quietly run on defaults.
+TEST(generate_video, family_generic_surface)
+{
+  Session sess;
+  auto cfg = FlexData::make_object();
+  cfg.as_object().insert_or_assign("height", FlexData::make_int(480));
+  cfg.as_object().insert_or_assign("width", FlexData::make_int(832));
+  cfg.as_object().insert_or_assign("frames", FlexData::make_int(81));
+  auto s = make_unique<GenerateVideoStage>(&sess, "gv", vector<InEdge>{}, cfg);
+  EXPECT_TRUE(s->config_error().empty());
+
+  const StageSpec& sp = s->spec();
+  // The audio latent port exists on the type, so a graph can wire it
+  // whether or not the resident family fills it; the live preview is
+  // APPENDED after it, so both latent ports keep their indices.
+  EXPECT_TRUE(sp.oports.size() == 3);
+  if (sp.oports.size() == 3) {
+    EXPECT_TRUE(std::string(sp.oports[0].name) == "latent");
+    EXPECT_TRUE(std::string(sp.oports[1].name) == "audio_latent");
+    EXPECT_TRUE(std::string(sp.oports[2].name) == "preview");
+  }
+  // The wan-side ports keep their INDICES, with the h3 anchors, the
+  // Ref2VA reference rows, the config port and the audio conditioning
+  // appended -- which is what lets a graph written for an earlier port
+  // set keep working.
+  //
+  // The COUNT is asserted last on purpose: it is the part that moves
+  // every time a port is appended, while the indices below are the
+  // invariant the test exists to protect. Read a failure here as "a port
+  // was added" and check the indices before changing the number.
+  EXPECT_TRUE(std::string(sp.iports[5].name) == "ref_latent0");
+  EXPECT_TRUE(std::string(sp.iports[6].name) == "ref_latent1");
+  EXPECT_TRUE(std::string(sp.iports[7].name) == "ref_video_rows");
+  EXPECT_TRUE(std::string(sp.iports[8].name) == "ref_audio_rows");
+  EXPECT_TRUE(std::string(sp.iports[9].name) == "model_config");
+  EXPECT_TRUE(std::string(sp.iports[10].name) == "audio_conditioning");
+  EXPECT_TRUE(sp.iports.size() == 11);
+  // The tag is the whole compatibility check between a config source and
+  // this port: the composer offers a source only if it matches.
+  EXPECT_TRUE(port_tags_compatible("model-config",
+                                   sp.iports[9].tags));
+
+  // No family-specific key survives as an attr of this stage.
+  for (const auto& k : sp.attrs) {
+    const std::string key(k.key);
+    EXPECT_FALSE(key == "video_shift" || key == "audio_shift" ||
+                 key == "condition_timestep" || key == "audio_seconds" ||
+                 key == "guidance_scale" || key == "guidance_scale_2" ||
+                 key == "boundary_ratio");
+  }
+}
+
+// A pipeline written against the old union still LOADS -- an unknown
+// config key is not an error anywhere in this runtime -- so the only
+// thing standing between it and silently running on defaults is that the
+// stage says so. Constructing with a moved key must not be a config
+// error (the graph is still valid) and must not be silent either.
+TEST(generate_video, a_moved_config_key_is_reported_not_rejected)
+{
+  Session sess;
+  auto cfg = FlexData::make_object();
+  cfg.as_object().insert_or_assign("frames", FlexData::make_int(81));
+  cfg.as_object().insert_or_assign("video_shift", FlexData::make_real(12.0));
+  cfg.as_object().insert_or_assign("guidance_scale", FlexData::make_real(4.0));
+  auto s = make_unique<GenerateVideoStage>(&sess, "gv", vector<InEdge>{}, cfg);
+  // Still constructs and still runs: the key is inert, not wrong.
+  EXPECT_TRUE(s->config_error().empty());
+}
+
+// The ref2va half of the split: a `video-ref-encoder` feeding
+// generate-video's reference-row ports.
+//
+// What this pins is the SHAPE OF THE SEAM, which is the decision that
+// would be expensive to walk back: a ref2va request carries a VARIABLE
+// list of up to twelve heterogeneous references, so the list is one
+// FlexData input rather than a port per reference -- twelve load-image /
+// vae-encode chains cannot express "three clips and nine stills" without
+// the graph being re-authored per request. Everything downstream of that
+// (the latents' ragged geometry collapsing into rows, the plan riding on
+// the conditioning's sideband) follows from it.
+TEST(video_ref_encoder, request_surface)
+{
+  Session sess;
+  auto cfg = FlexData::make_object();
+  cfg.as_object().insert_or_assign("frames", FlexData::make_int(121));
+  {
+    auto refs = FlexData::make_array();
+    refs.as_array().push_back(FlexData::make_string("/a.png"));
+    refs.as_array().push_back(FlexData::make_string("/b.mp4"));
+    cfg.as_object().insert_or_assign("references", std::move(refs));
+  }
+  auto s = make_unique<VideoRefEncoderStage>(&sess, "vre", vector<InEdge>{},
+                                             cfg);
+  // Deferred-validated: no hf_dir is not a construction error, because a
+  // model-select source on the model iport can supply one.
+  EXPECT_TRUE(s->config_error().empty());
+  EXPECT_TRUE(s->requests_encoded() == 0);
+
+  const StageSpec& sp = s->spec();
+  EXPECT_TRUE(std::string(sp.type_name) == "video-ref-encoder");
+  // The FILE references are config, not a port: they are paths to open,
+  // which is what a file browser fills in. The six tensor iports sit
+  // AFTER prompt and model, so a graph written against the original two
+  // is unaffected, and they exist for the references a file list cannot
+  // name -- a generated still, a cropped frame, a clip that was never
+  // written to disk.
+  EXPECT_TRUE(sp.iports.size() == 8);
+  EXPECT_TRUE(std::string(sp.iports[0].name) == "prompt");
+  EXPECT_TRUE(std::string(sp.iports[1].name) == "model");
+  for (int i = 0; i < 6; ++i) {
+    const std::string want = "ref" + std::to_string(i + 1);
+    EXPECT_TRUE(std::string(sp.iports[(std::size_t)i + 2].name) == want);
+    EXPECT_TRUE(*sp.iports[(std::size_t)i + 2].type ==
+                typeid(TensorBeatPayload));
+  }
+
+  // The key the browser drives: a path field that is NOT a single
+  // string, which is what makes the dialog multi-select, and a filter
+  // naming every kind a reference may be -- the field cannot know which
+  // one a given file is, so it must not exclude any of them.
+  bool has_refs = false;
+  for (const auto& k : sp.attrs) {
+    if (std::string(k.key) != "references") { continue; }
+    has_refs = true;
+    // No longer REQUIRED: the tensor iports are a second source, and
+    // whether they are wired is not knowable at construction.
+    EXPECT_FALSE(k.required);
+    EXPECT_TRUE(k.is_path);
+    EXPECT_FALSE(k.path_write);
+    EXPECT_TRUE(k.type != ConfigType::String);
+    EXPECT_TRUE(std::string(k.path_filter) == "image,video,audio");
+  }
+  EXPECT_TRUE(has_refs);
+
+  // Three outputs, and the pairing with generate-video is by NAME:
+  // conditioning -> its iport0 (the same contract diffusion-conditioner
+  // emits, so either can drive it), and the two row ports -> iport7/8.
+  EXPECT_TRUE(sp.oports.size() == 3);
+  EXPECT_TRUE(std::string(sp.oports[0].name) == "conditioning");
+  EXPECT_TRUE(std::string(sp.oports[1].name) == "ref_video");
+  EXPECT_TRUE(std::string(sp.oports[2].name) == "ref_audio");
+
+  auto dit = make_unique<GenerateVideoStage>(&sess, "gv", vector<InEdge>{},
+                                             FlexData::make_object());
+  const StageSpec& dsp = dit->spec();
+  EXPECT_TRUE(std::string(dsp.iports[0].name) == "conditioning");
+  EXPECT_TRUE(dsp.iports[0].type == sp.oports[0].type);
+  EXPECT_TRUE(dsp.iports[7].type == sp.oports[1].type);
+  EXPECT_TRUE(dsp.iports[8].type == sp.oports[2].type);
+
+  // `frames` is duplicated on both stages on purpose -- it is the
+  // duration every reference is truncated to AND the size of the layout
+  // the DiT builds -- so it has to be a key here, and generate-video
+  // checks the two agree rather than trusting them.
+  bool has_frames = false, has_short_edge = false, has_sample_fps = false;
+  for (const auto& k : sp.attrs) {
+    if (std::string(k.key) == "frames") { has_frames = true; }
+    if (std::string(k.key) == "reference_image_short_edge") {
+      has_short_edge = true;
+    }
+    if (std::string(k.key) == "video_sample_fps") { has_sample_fps = true; }
+  }
+  EXPECT_TRUE(has_frames && has_short_edge && has_sample_fps);
+  std::printf("[video_ref_encoder] %zu iports / %zu oports; the reference "
+              "LIST is config, not a port per reference\n",
+              sp.iports.size(), sp.oports.size());
+}
+
+// The reference list is the one thing this stage cannot run without, so
+// an empty or malformed one is a CONFIG error caught at launch rather
+// than a warning at the first beat. A Ref2VA forward with no references
+// generates video conditioned on nothing, at the full cost of a 33B
+// model -- so failing the graph beats running it.
+// The tensor reference ports' contract: kind from RANK, rates from the
+// sideband, and a missing rate refused rather than guessed.
+//
+// This is the part of the port design that fails silently when it is
+// wrong. A clip taken for a still conditions on one frozen frame; a
+// soundtrack read at the wrong rate conditions on the wrong sound; and
+// neither raises anything downstream -- the shapes are all still valid.
+// attach_audio names the ports whose audio is a SOUNDTRACK rather than a
+// reference of its own -- refused at launch when it names a port that
+// does not exist, because a typo there is silently a different request:
+// the soundtrack becomes an extra <Audio k> and renumbers nothing
+// visible until the model is conditioned on it.
+TEST(video_ref_encoder, attach_audio_names_reference_ports)
+{
+  Session sess;
+  auto with = [&](std::vector<int> ports, const char* id) {
+    auto arr = FlexData::make_array();
+    for (int n : ports) { arr.as_array().push_back(FlexData::make_int(n)); }
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("attach_audio", std::move(arr));
+    return std::string(
+        VideoRefEncoderStage(&sess, id, vector<InEdge>{}, cfg)
+            .config_error());
+  };
+  EXPECT_TRUE(with({3}, "a").empty());
+  EXPECT_TRUE(with({1, 6}, "b").empty());
+  // 0 and 7 are not reference iports -- 1..6 are.
+  EXPECT_FALSE(with({0}, "c").empty());
+  EXPECT_FALSE(with({7}, "d").empty());
+  {
+    // Not an array at all.
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("attach_audio", FlexData::make_int(3));
+    VideoRefEncoderStage s(&sess, "e", vector<InEdge>{}, cfg);
+    EXPECT_FALSE(s.config_error().empty());
+  }
+  // Absent is the default, and the default is nothing attached: an audio
+  // beat with no instruction is a reference of its own.
+  {
+    auto cfg = FlexData::make_object();
+    VideoRefEncoderStage s(&sess, "f", vector<InEdge>{}, cfg);
+    EXPECT_TRUE(s.config_error().empty());
+  }
+  std::printf("[video_ref_encoder] attach_audio: 1..6 accepted, 0 and 7 "
+              "refused at launch\n");
+}
+
+// A soundtrack that arrives on a PORT arrives at its producer's rate,
+// and the audio VAE reads one rate only (32000 for the released
+// checkpoint). Nothing downstream looks at `sample_rate` again --
+// normalize_audio_reference truncates with it and then hands the
+// waveform to a VAE that assumes its own -- so an unconformed 44.1 kHz
+// beat was encoded as if it were 32 kHz: a fourth too high and 1.38x too
+// long against the clip it shares a rotary clock with. Every shape stays
+// valid, which is why it read as "the reference did nothing".
+//
+// The FILE path never had this: decode_references_ hands the decoder the
+// VAE's rate and gets it back resampled in the same pass.
+TEST(video_ref_encoder, a_port_soundtrack_is_conformed_to_the_vae_rate)
+{
+  namespace h3 = vpipe::genai::minimax_h3;
+  Session sess;
+  const FFmpegLibraries* libs = nullptr;
+  try {
+    libs = sess.ffmpeg_libraries();
+  } catch (...) {
+    return;   // no FFmpeg on this box -- skip vacuously
+  }
+  if (libs == nullptr || !libs->valid()) { return; }
+
+  auto cfg = FlexData::make_object();
+  cfg.as_object().insert_or_assign("references",
+                                   FlexData::make_string("subject.png"));
+  VideoRefEncoderStage st(&sess, "refenc", vector<InEdge>{}, cfg);
+
+  // Two seconds of 440 Hz at 44100, stereo planar -- what an
+  // `audio-to-pcm` set to 44100 emits.
+  constexpr int kIn = 44100, kN = 2 * 44100;
+  auto tone = [&](int rate, int n) {
+    h3::MediaReference m;
+    m.kind        = h3::MediaReference::Kind::kAudio;
+    m.channels    = 2;
+    m.sample_rate = rate;
+    m.pcm.resize((std::size_t)2 * n);
+    for (int i = 0; i < n; ++i) {
+      const float v =
+          0.5f * (float)std::sin(2.0 * M_PI * 440.0 * i / (double)rate);
+      m.pcm[(std::size_t)i]     = v;
+      m.pcm[(std::size_t)n + i] = v;
+    }
+    return m;
+  };
+  auto hz = [](const float* p, int n, int rate) {
+    int cross = 0;
+    for (int i = 1; i < n; ++i) {
+      if ((p[i - 1] < 0.0f) != (p[i] < 0.0f)) { ++cross; }
+    }
+    return 0.5 * (double)cross * (double)rate / (double)n;
+  };
+
+  h3::MediaReference m = tone(kIn, kN);
+  ASSERT_TRUE(st.conform_audio_rate(&m, 1));
+  // With no audio VAE loaded the target is the released checkpoint's
+  // 32000, which is the rate a graph has to hit either way.
+  EXPECT_TRUE(m.sample_rate == 32000);
+  const int got = (int)(m.pcm.size() / 2);
+  EXPECT_TRUE(got > 63700 && got < 64300);        // 2 s at 32 kHz
+  // The tone survived. Reinterpreting instead of resampling would leave
+  // 88200 samples reading as 606 Hz.
+  EXPECT_TRUE(std::fabs(hz(m.pcm.data(), got, 32000) - 440.0) < 4.0);
+  EXPECT_TRUE(std::fabs(hz(m.pcm.data() + got, got, 32000) - 440.0) < 4.0);
+
+  // A beat ALREADY at the VAE's rate is left exactly as it came: the
+  // graph that was wired right pays nothing, and does not get a second
+  // pass of the filter.
+  h3::MediaReference ok = tone(32000, 64000);
+  const std::vector<float> before = ok.pcm;
+  ASSERT_TRUE(st.conform_audio_rate(&ok, 1));
+  EXPECT_TRUE(ok.sample_rate == 32000);
+  EXPECT_TRUE(ok.pcm == before);
+
+  // Pixels are not audio, whatever their rate field says.
+  h3::MediaReference img;
+  img.kind        = h3::MediaReference::Kind::kImage;
+  img.sample_rate = 44100;
+  ASSERT_TRUE(st.conform_audio_rate(&img, 1));
+  EXPECT_TRUE(img.sample_rate == 44100);
+
+  std::printf("[video_ref_encoder] port soundtrack 44100 -> 32000: "
+              "%d samples/ch, %.1f Hz\n", got,
+              hz(m.pcm.data(), got, 32000));
+}
+
+TEST(video_ref_encoder, reference_beats_are_typed_by_rank)
+{
+  namespace h3 = vpipe::genai::minimax_h3;
+  auto beat = [](std::vector<long long> shape, TensorBeat::DType dt) {
+    TensorBeatPayload tb;
+    tb.dtype = dt;
+    tb.shape = std::move(shape);
+    std::size_t n = 1;
+    for (long long d : tb.shape) { n *= (std::size_t)d; }
+    tb.resize_contiguous(n);
+    tb.sideband = FlexData::make_object();
+    return tb;
+  };
+  auto put = [](TensorBeatPayload& tb, const char* k, FlexData v) {
+    tb.sideband.as_object().insert_or_assign(k, std::move(v));
+  };
+  h3::MediaReference m;
+  std::string err;
+
+  // [N] f32 + sr -> mono audio.
+  {
+    auto tb = beat({800}, TensorBeat::DType::F32);
+    put(tb, "sr", FlexData::make_int(32000));
+    ASSERT_TRUE(VideoRefEncoderStage::media_from_beat(tb, 1, &m, &err));
+    EXPECT_TRUE(m.kind == h3::MediaReference::Kind::kAudio);
+    EXPECT_TRUE(m.channels == 1 && m.sample_rate == 32000);
+    EXPECT_TRUE(m.pcm.size() == 800);
+  }
+  // [C, N] f32 -> that many channels.
+  {
+    auto tb = beat({2, 400}, TensorBeat::DType::F32);
+    put(tb, "sample_rate", FlexData::make_int(32000));
+    m = h3::MediaReference{};
+    ASSERT_TRUE(VideoRefEncoderStage::media_from_beat(tb, 2, &m, &err));
+    EXPECT_TRUE(m.kind == h3::MediaReference::Kind::kAudio);
+    EXPECT_TRUE(m.channels == 2 && m.pcm.size() == 800);
+  }
+  // [3, H, W] u8 -> a still, and the port default is short_edge 0 --
+  // encode it at the size it arrived, which is the whole point of
+  // handing pixels over a port instead of a path.
+  {
+    auto tb = beat({3, 64, 128}, TensorBeat::DType::U8);
+    m = h3::MediaReference{};
+    ASSERT_TRUE(VideoRefEncoderStage::media_from_beat(tb, 3, &m, &err));
+    EXPECT_TRUE(m.kind == h3::MediaReference::Kind::kImage);
+    EXPECT_TRUE(m.num_frames == 1 && m.height == 64 && m.width == 128);
+    EXPECT_TRUE(m.short_edge == 0);
+  }
+  // ...and a per-reference short edge overrides that.
+  {
+    auto tb = beat({3, 64, 128}, TensorBeat::DType::U8);
+    put(tb, "short_edge", FlexData::make_int(768));
+    m = h3::MediaReference{};
+    ASSERT_TRUE(VideoRefEncoderStage::media_from_beat(tb, 3, &m, &err));
+    EXPECT_TRUE(m.short_edge == 768);
+  }
+  // [T, 3, H, W] u8 + fps -> a clip. Rank is what separates this from a
+  // still, which is the case a container cannot state: [1, 3, H, W] is a
+  // one-frame CLIP and [3, H, W] is a picture.
+  {
+    auto tb = beat({5, 3, 64, 128}, TensorBeat::DType::U8);
+    put(tb, "fps", FlexData::make_real(30.0));
+    m = h3::MediaReference{};
+    ASSERT_TRUE(VideoRefEncoderStage::media_from_beat(tb, 4, &m, &err));
+    EXPECT_TRUE(m.kind == h3::MediaReference::Kind::kVideo);
+    EXPECT_TRUE(m.num_frames == 5 && m.fps > 29.9 && m.fps < 30.1);
+  }
+  {
+    auto tb = beat({1, 3, 64, 128}, TensorBeat::DType::U8);
+    put(tb, "fps", FlexData::make_real(24.0));
+    m = h3::MediaReference{};
+    ASSERT_TRUE(VideoRefEncoderStage::media_from_beat(tb, 4, &m, &err));
+    EXPECT_TRUE(m.kind == h3::MediaReference::Kind::kVideo);
+  }
+
+  // The refusals. A rate that is not stated is NOT defaulted: 24 fps
+  // would look right and condition the clip at the wrong speed.
+  {
+    auto tb = beat({5, 3, 64, 128}, TensorBeat::DType::U8);
+    m = h3::MediaReference{};
+    EXPECT_FALSE(VideoRefEncoderStage::media_from_beat(tb, 4, &m, &err));
+    EXPECT_FALSE(err.empty());
+  }
+  {
+    auto tb = beat({800}, TensorBeat::DType::F32);
+    m = h3::MediaReference{};
+    EXPECT_FALSE(VideoRefEncoderStage::media_from_beat(tb, 1, &m, &err));
+  }
+  // Float pixels are refused rather than guessed at: 0..1 and -1..1 are
+  // both plausible and picking wrong is a brightness bug nothing reports.
+  {
+    auto tb = beat({3, 64, 128}, TensorBeat::DType::F32);
+    m = h3::MediaReference{};
+    EXPECT_FALSE(VideoRefEncoderStage::media_from_beat(tb, 3, &m, &err));
+  }
+  // Not planar RGB.
+  {
+    auto tb = beat({4, 64, 128}, TensorBeat::DType::U8);
+    m = h3::MediaReference{};
+    EXPECT_FALSE(VideoRefEncoderStage::media_from_beat(tb, 3, &m, &err));
+  }
+  std::printf("[video_ref_encoder] reference beats: rank types them, a "
+              "missing rate is refused\n");
+}
+
+TEST(video_ref_encoder, references_may_be_empty_but_must_be_paths)
+{
+  Session sess;
+  {
+    // No `references` at all is NO LONGER a config error: a graph may
+    // feed every reference through the tensor iports, and construction
+    // cannot see whether those are wired (iport_connected is a
+    // RuntimeContext question). The "conditioned on nothing" refusal
+    // moved to process(), where the combined list is known.
+    auto cfg = FlexData::make_object();
+    VideoRefEncoderStage s(&sess, "a", vector<InEdge>{}, cfg);
+    EXPECT_TRUE(s.config_error().empty());
+  }
+  {
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("references", FlexData::make_array());
+    VideoRefEncoderStage s(&sess, "b", vector<InEdge>{}, cfg);
+    EXPECT_TRUE(s.config_error().empty());
+  }
+  {
+    // A non-path entry: caught here rather than as "will not open" per
+    // file, because it cannot be a path at all.
+    auto refs = FlexData::make_array();
+    refs.as_array().push_back(FlexData::make_int(7));
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("references", std::move(refs));
+    VideoRefEncoderStage s(&sess, "c", vector<InEdge>{}, cfg);
+    EXPECT_FALSE(s.config_error().empty());
+  }
+  {
+    // ONE path as a bare string is the same request as a one-element
+    // list -- a hand-written pipeline writes the first, the browser
+    // writes the second, and neither is the spelling that works.
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("references",
+                                     FlexData::make_string("/one.png"));
+    VideoRefEncoderStage s(&sess, "d", vector<InEdge>{}, cfg);
+    EXPECT_TRUE(s.config_error().empty());
+  }
+}
+
+// The other end of the model_config seam: the beat each config source
+// emits has to be what its family's own parser reads back. This is the
+// whole contract between the two stages, and neither one can check it
+// alone -- so it is checked here, on the real parsers.
+TEST(model_config, each_family_reads_back_its_own_beat)
+{
+  Session sess;
+  {
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("guidance_scale",
+                                     FlexData::make_real(5.0));
+    cfg.as_object().insert_or_assign("guidance_scale_2",
+                                     FlexData::make_real(2.5));
+    cfg.as_object().insert_or_assign("boundary_ratio",
+                                     FlexData::make_real(0.875));
+    Wan2ModelConfigStage s(&sess, "wc", vector<InEdge>{}, cfg);
+    EXPECT_TRUE(s.config_error().empty());
+    const auto p =
+        genai::MetalWanTransformer::GenerationParams::from_flex(
+            s.resolved_config());
+    EXPECT_TRUE(p.guidance_scale == 5.0);
+    EXPECT_TRUE(p.guidance_scale_2 == 2.5);
+    EXPECT_TRUE(p.boundary_ratio == 0.875);
+    // Set explicitly, so it must WIN against the checkpoint's
+    // model_index.json rather than being overwritten by it.
+    EXPECT_TRUE(p.boundary_ratio_set);
+    // The expert split follows from the boundary and nothing else.
+    EXPECT_TRUE(p.expert_for(0.9) == 0);
+    EXPECT_TRUE(p.expert_for(0.5) == 1);
+    EXPECT_TRUE(p.guidance_for(0) == 5.0);
+    EXPECT_TRUE(p.guidance_for(1) == 2.5);
+  }
+  {
+    // Omitting boundary_ratio must leave the key OUT of the beat: the
+    // consumer falls back to the checkpoint's own model_index.json, and
+    // a default emitted as if it were a choice would override it on
+    // every graph that never mentioned the key.
+    auto cfg = FlexData::make_object();
+    Wan2ModelConfigStage s(&sess, "wc2", vector<InEdge>{}, cfg);
+    FlexData fd = s.resolved_config();
+    auto o = fd.as_object();
+    EXPECT_FALSE(o.contains("boundary_ratio"));
+    const auto p =
+        genai::MetalWanTransformer::GenerationParams::from_flex(fd);
+    EXPECT_FALSE(p.boundary_ratio_set);
+  }
+  {
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("video_shift", FlexData::make_real(9.0));
+    cfg.as_object().insert_or_assign("audio_shift", FlexData::make_real(4.0));
+    cfg.as_object().insert_or_assign("condition_timestep",
+                                     FlexData::make_real(0.75));
+    cfg.as_object().insert_or_assign("condition_audio_timestep",
+                                     FlexData::make_real(0.5));
+    cfg.as_object().insert_or_assign("audio_seconds",
+                                     FlexData::make_real(2.0));
+    MiniMaxH3ModelConfigStage s(&sess, "hc", vector<InEdge>{}, cfg);
+    EXPECT_TRUE(s.config_error().empty());
+    const auto p =
+        genai::MetalMiniMaxH3Transformer::GenerationParams::from_flex(
+            s.resolved_config());
+    EXPECT_TRUE(p.video_shift == 9.0);
+    EXPECT_TRUE(p.audio_shift == 4.0);
+    EXPECT_TRUE(p.condition_timestep == 0.75);
+    EXPECT_TRUE(p.condition_audio_timestep == 0.5);
+    // 40 latents a second, so an explicit duration is exactly that many.
+    EXPECT_TRUE(p.audio_latents(124, 24.0) == 80);
+    // And 0 means "as long as the video", which is the default and the
+    // only setting that keeps the two modalities in step.
+    genai::MetalMiniMaxH3Transformer::GenerationParams d;
+    EXPECT_TRUE(d.audio_latents(124, 24.0) ==
+                genai::minimax_h3::audio_latent_num_frames(124, 24.0));
+  }
+  // Each source stamps the family its keys belong to, which is what lets
+  // the consumer refuse a config wired to the wrong checkpoint instead
+  // of applying nothing and running defaults.
+  {
+    Wan2ModelConfigStage w(&sess, "w", vector<InEdge>{},
+                           FlexData::make_object());
+    MiniMaxH3ModelConfigStage h(&sess, "h", vector<InEdge>{},
+                                FlexData::make_object());
+    EXPECT_TRUE(model_config::family_of(w.resolved_config()) == "wan");
+    EXPECT_TRUE(model_config::family_of(h.resolved_config()) ==
+                "minimax-h3");
+  }
+}
+
+// Nonsense numbers are refused at LAUNCH, not by throwing from a ctor --
+// the deferred-validation rule every stage here follows. Worth pinning
+// because a shift of 0 collapses the schedule to a single sigma: the run
+// would cost a full 33B generation and return noise.
+TEST(model_config, out_of_range_values_are_deferred_config_errors)
+{
+  Session sess;
+  auto bad_shift = FlexData::make_object();
+  bad_shift.as_object().insert_or_assign("video_shift",
+                                         FlexData::make_real(0.0));
+  MiniMaxH3ModelConfigStage h(&sess, "h", vector<InEdge>{}, bad_shift);
+  EXPECT_FALSE(h.config_error().empty());
+
+  auto bad_t = FlexData::make_object();
+  bad_t.as_object().insert_or_assign("condition_timestep",
+                                     FlexData::make_real(1.5));
+  MiniMaxH3ModelConfigStage h2(&sess, "h2", vector<InEdge>{}, bad_t);
+  EXPECT_FALSE(h2.config_error().empty());
+
+  auto bad_g = FlexData::make_object();
+  bad_g.as_object().insert_or_assign("guidance_scale",
+                                     FlexData::make_real(0.5));
+  Wan2ModelConfigStage w(&sess, "w", vector<InEdge>{}, bad_g);
+  EXPECT_FALSE(w.config_error().empty());
+
+  auto bad_b = FlexData::make_object();
+  bad_b.as_object().insert_or_assign("boundary_ratio",
+                                     FlexData::make_real(2.0));
+  Wan2ModelConfigStage w2(&sess, "w2", vector<InEdge>{}, bad_b);
+  EXPECT_FALSE(w2.config_error().empty());
+}
+
+#endif  // VPIPE_BUILD_APPLE_SILICON
+
+// generate-video must survive resolving its checkpoint with NO config
+// beat in hand.
+//
+// This is a REGRESSION, and the shape of it is worth keeping: the stage
+// learns its family the moment the checkpoint is identified, and it
+// re-applies the model_config beat right there -- which is BEFORE the
+// first beat can have arrived, since the config stage emits during
+// process(). `_model_cfg` is therefore routinely a default FlexData at
+// that point, and FlexData::as_object() on a default THROWS. An uncaught
+// throw out of a stage does not make it inert; it takes the pipeline
+// down mid-run, which is how this first showed up -- a Turbo graph that
+// died at "FlexData::as_object: kind is not Object" after logging four
+// healthy lines.
+//
+// Env: VPIPE_MINIMAX_H3_TEST_MODEL_PATH (an H3 DiT dir). Only the
+// config.json is read here -- the 33B of weights load lazily at the
+// first denoise, which never happens -- so this costs milliseconds.
+namespace {
+
+// Records what a stage SAID. Both halves of what this test asserts on --
+// a stage's own info() and the runtime's warn() when initialize() throws
+// -- go through the UI delegate, not the log one.
+//
+// It has to be the log rather than the outcome, because the runtime
+// CATCHES a throw out of initialize(), reports it, and marks the stage
+// inert: launch() still returns true and the graph still drains, so a
+// test that only checks those passes over a stage that has silently
+// stopped existing.
+class UiCapture final : public UiDelegateIntf {
+public:
+  std::mutex               mu;
+  std::vector<std::string> lines;
+  void error(const VpipeFormat& f) override { add(f); }
+  void warn(const VpipeFormat& f) override { add(f); }
+  void info(const VpipeFormat& f) override { add(f); }
+  UiInputStatus getline(const VpipeFormat&, std::string& out,
+                        const std::function<bool()>&) override
+  {
+    out.clear();
+    return UiInputStatus::Eof;
+  }
+  std::unique_ptr<UiTextStream> open_text_stream() override
+  {
+    return std::make_unique<NullUiTextStream>();
+  }
+  bool saw(const char* needle)
+  {
+    std::lock_guard<std::mutex> g(mu);
+    for (const std::string& l : lines) {
+      if (l.find(needle) != std::string::npos) { return true; }
+    }
+    return false;
+  }
+private:
+  void add(const VpipeFormat& f)
+  {
+    std::lock_guard<std::mutex> g(mu);
+    lines.push_back(f());
+  }
+};
+
+}  // namespace
+
+TEST(model_config, generate_video_survives_a_missing_beat)
+{
+  const char* root = std::getenv("VPIPE_MINIMAX_H3_TEST_MODEL_PATH");
+  if (root == nullptr || *root == '\0') { return; }
+  Session sess;
+  auto cap_u = make_unique<UiCapture>();
+  auto* cap = cap_u.get();
+  sess.set_ui_delegate(std::move(cap_u));
+
+  auto cfg = FlexData::make_object();
+  {
+    auto o = cfg.as_object();
+    o.insert_or_assign("hf_dir", FlexData::make_string(root));
+    o.insert_or_assign("width", FlexData::make_int(384));
+    o.insert_or_assign("height", FlexData::make_int(256));
+    o.insert_or_assign("frames", FlexData::make_int(41));
+    o.insert_or_assign("steps", FlexData::make_int(1));
+  }
+  auto pl = make_unique<Pipeline>("p", &sess);
+  // Every port UNWIRED, model_config included -- the case the crash
+  // needed. With no conditioning beat the stage resolves its checkpoint
+  // at init and then has nothing to do, which is the window the throw
+  // happened in.
+  auto gv_u = make_unique<GenerateVideoStage>(&sess, "gv", vector<InEdge>{},
+                                              cfg);
+  auto* gv = static_cast<GenerateVideoStage*>(
+      pl->insert_stage(std::move(gv_u)));
+  EXPECT_TRUE(gv->config_error().empty());
+
+  PipelineRuntime rt(pl.get(), &sess);
+  EXPECT_TRUE(rt.launch());
+  rt.wait_idle();
+  rt.stop();
+
+  // launch() succeeding is NOT the bar. The runtime catches a throw out
+  // of initialize(), logs it and marks the stage inert -- so the graph
+  // drains cleanly and every assertion above still passes while the
+  // stage has silently stopped existing. What the bug looks like is this
+  // line, and nothing else.
+  EXPECT_FALSE(cap->saw("as_object"));
+  EXPECT_FALSE(cap->saw("entering drain"));
+  // And the positive: it got far enough to identify the checkpoint.
+  EXPECT_TRUE(cap->saw("MiniMax-H3 partition"));
+}
+
+// `references` DECLARES itself a path (.is_path, so the composer's file
+// browser fills it in) and was the only such key that never resolved
+// one. Left raw, a RELATIVE path was opened against the process CWD --
+// which under the web-ui's file sandbox is not the sandbox root -- so a
+// path the browser had just produced did not exist, while an absolute
+// one worked. That asymmetry is the bug; these pin the fix.
+TEST(video_ref_encoder, references_are_confined_to_the_file_sandbox)
+{
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() / "vpipe-ut-vre-sandbox";
+  std::error_code ec;
+  fs::create_directories(root / "clips", ec);
+  const std::string cfg_json =
+      "{\"file_sandbox\":{\"enabled\":true,\"root\":\""
+      + root.string() + "\"}}";
+  // What the sandbox will answer with: weakly_canonical resolves
+  // symlinks, and on macOS /var IS one (-> /private/var). Comparing
+  // against the raw temp path would fail on the platform this runs on
+  // while the resolution was perfectly correct.
+  const fs::path croot = fs::weakly_canonical(root, ec);
+
+  {
+    Session sess(cfg_json);
+    auto refs = FlexData::make_array();
+    refs.as_array().push_back(FlexData::make_string("subject.png"));
+    refs.as_array().push_back(FlexData::make_string("clips/motion.mp4"));
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("references", std::move(refs));
+    VideoRefEncoderStage s(&sess, "rel", vector<InEdge>{}, cfg);
+    EXPECT_TRUE(s.config_error().empty());
+    ASSERT_TRUE(s.references().size() == 2);
+    if (s.references().size() == 2) {
+      EXPECT_TRUE(s.references()[0] == (croot / "subject.png").string());
+      EXPECT_TRUE(s.references()[1] ==
+                  (croot / "clips" / "motion.mp4").string());
+      if (s.references()[0] != (croot / "subject.png").string()) {
+        std::printf("[video_ref_encoder] relative resolved to '%s', "
+                    "wanted '%s'\n", s.references()[0].c_str(),
+                    (croot / "subject.png").string().c_str());
+      }
+    }
+  }
+  {
+    // A bare string is the same request as a one-element list, so it
+    // must be confined the same way -- the spelling a hand-written
+    // pipeline uses must not be the one that fails.
+    Session sess(cfg_json);
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("references",
+                                     FlexData::make_string("subject.png"));
+    VideoRefEncoderStage s(&sess, "bare", vector<InEdge>{}, cfg);
+    ASSERT_TRUE(s.references().size() == 1);
+    if (s.references().size() == 1) {
+      EXPECT_TRUE(s.references()[0] == (croot / "subject.png").string());
+    }
+  }
+  {
+    // An ABSOLUTE path outside a granted prefix is RE-ROOTED, not taken
+    // verbatim -- the confinement this key already claimed. What the
+    // stage used to do instead was read it, sandbox or not.
+    Session sess(cfg_json);
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("references",
+                                     FlexData::make_string("/etc/passwd"));
+    VideoRefEncoderStage s(&sess, "abs", vector<InEdge>{}, cfg);
+    ASSERT_TRUE(s.references().size() == 1);
+    if (s.references().size() == 1) {
+      EXPECT_TRUE(s.references()[0] == (croot / "etc" / "passwd").string());
+      EXPECT_TRUE(s.references()[0] != "/etc/passwd");
+    }
+  }
+  {
+    // With NO sandbox the path is untouched, so every graph outside the
+    // web-ui keeps resolving exactly as it did.
+    Session plain;
+    auto cfg = FlexData::make_object();
+    cfg.as_object().insert_or_assign("references",
+                                     FlexData::make_string("subject.png"));
+    VideoRefEncoderStage s(&plain, "off", vector<InEdge>{}, cfg);
+    ASSERT_TRUE(s.references().size() == 1);
+    if (s.references().size() == 1) {
+      EXPECT_TRUE(s.references()[0] == "subject.png");
+    }
+  }
+  fs::remove_all(root, ec);
+}
+
+
+// THE 32B ENCODER IS CHARGED TO THE CONDITION PHASE, AND CLAIMED AT ITS
+// FLOOR.
+//
+// This stage declared its encoder, the video VAE and the DiT as three
+// plain claims: no floor and no phase. Both halves were wrong in the
+// same direction, and both inflated the DENOISE column -- the phase the
+// encoder is provably not resident in, because `destroy` dropped it
+// before the first step.
+//
+//   * NO PHASE meant an operator who had already set unload_when_idle:
+//     destroy on every stage still saw the peak reported at 'denoise',
+//     with nothing left to turn. The policy was right; the plan did not
+//     know. `diffusion-conditioner` has always decided this phase.
+//   * NO FLOOR is the two-ledger trap: declare_memory() knew the
+//     streaming floor and declare_resources() did not, and only the
+//     second is read by phase_footprint_floor()/phase_peak(), which are
+//     the figures a graph is judged against.
+//
+// The video VAE deliberately stays unphased: this stage holds it while
+// encoding references (condition) and vae-decode holds it to decode, so
+// its real interval spans both, and phasing it here would make the
+// answer depend on which stage the flattener emitted first.
+TEST(video_ref_encoder, the_encoder_is_phased_and_claimed_at_its_floor)
+{
+  Session sess;
+  auto cfg = FlexData::make_object();
+  cfg.as_object().insert_or_assign("frames", FlexData::make_int(39));
+  cfg.as_object().insert_or_assign("hf_dir",
+                                   FlexData::make_string("/no/such/model"));
+  cfg.as_object().insert_or_assign("unload_when_idle",
+                                   FlexData::make_string("destroy"));
+  VideoRefEncoderStage st(&sess, "refenc", vector<InEdge>{}, cfg);
+  EXPECT_TRUE(st.config_error().empty());
+
+  // An absent model resolves to nothing to claim -- the point here is
+  // the SHAPE of what each pass returns, which is what the planner
+  // consumes, so the assertions below hold for a real dir too.
+  const auto declared = st.declare_resources();
+  const auto decided  = st.decide_resources();
+
+  // Whatever pass 1 claims, none of it may name a phase: a lifetime that
+  // depends on the unload policy is a DECISION and belongs in pass 2.
+  for (const ResourceClaim& c : declared) {
+    EXPECT_TRUE(c.phase.empty());
+  }
+  // Pass 2 is where the encoder's phase lives, and it is `condition`.
+  // The COUNT is asserted, not just the contents: "every decided claim
+  // is phased" is vacuously true of a stage that decides nothing, which
+  // is exactly the bug this test exists to catch.
+  EXPECT_TRUE(decided.size() == 1);
+  if (decided.size() == 1) {
+    EXPECT_TRUE(decided[0].phase == model_memory::kPhaseCondition);
+    // It is ONE of the three declared components that gets the phase,
+    // and the same key pass 1 named -- not a fourth path invented here.
+    bool named_in_declare = false;
+    for (const ResourceClaim& c : declared) {
+      if (c.key == decided[0].key) { named_in_declare = true; }
+    }
+    EXPECT_TRUE(named_in_declare);
+  }
+  // The encoder's streaming FLOOR is on the CLAIM and not only in
+  // declare_memory(), which is the ledger a graph is judged against.
+  // Its VALUE needs a real checkpoint to read layer names out of --
+  // streaming_floor_bytes() answers 0 for a directory that is not
+  // there, which is what this fixture has -- so the value is exercised
+  // by model_memory's floor tests and only the plumbing is asserted
+  // here. Printed so a run against a real dir shows it.
+  std::size_t with_floor = 0;
+  for (const ResourceClaim& c : declared) {
+    if (c.floor_bytes > 0) { ++with_floor; }
+  }
+  std::printf("[video_ref_encoder] %zu of %zu declared claims carry a "
+              "floor (0 expected on a fixture with no checkpoint)\n",
+              with_floor, declared.size());
+
+  // `never` decides NOTHING: a stage that will not let go must not have
+  // its encoder subtracted from any peer's box.
+  auto keep = FlexData::make_object();
+  keep.as_object().insert_or_assign("frames", FlexData::make_int(39));
+  keep.as_object().insert_or_assign("hf_dir",
+                                    FlexData::make_string("/no/such/model"));
+  keep.as_object().insert_or_assign("unload_when_idle",
+                                    FlexData::make_string("never"));
+  VideoRefEncoderStage kept(&sess, "keep", vector<InEdge>{}, keep);
+  EXPECT_TRUE(kept.decide_resources().empty());
+
+  // `park` releases NOTHING here -- park_weights() walks a weight set's
+  // CACHED entries and this encoder reads uncached into its own members,
+  // so it parks 0 bytes and stays entirely resident. Subtracting it
+  // would leave a peer short by the encoder's whole size.
+  auto parked = FlexData::make_object();
+  parked.as_object().insert_or_assign("frames", FlexData::make_int(39));
+  parked.as_object().insert_or_assign("hf_dir",
+                                      FlexData::make_string("/no/such/model"));
+  parked.as_object().insert_or_assign("unload_when_idle",
+                                      FlexData::make_string("park"));
+  VideoRefEncoderStage pk(&sess, "park", vector<InEdge>{}, parked);
+  EXPECT_TRUE(pk.decide_resources().empty());
+
+  std::printf("[video_ref_encoder] declare %zu claims (none phased), "
+              "decide %zu (condition); never/park decide nothing\n",
+              declared.size(), decided.size());
+}
+
+
+// A REF2VA REQUEST TAKES NO KEYFRAME ANCHOR, AND SAYS SO.
+//
+// The two MiniMax-H3 partitions pack different sequences -- FL2VA's is
+// [text | keyframe conditions | target audio | target video] and
+// Ref2VA's is [text | reference blocks | ...] -- so
+// build_ref2va_packed_sequence() has no keyframe parameter and there is
+// nowhere for an anchor to go. A graph wiring vae-encode to iport5 on a
+// Ref2VA checkpoint therefore had its beat read and discarded in
+// silence, and the symptom was a clip whose subject and wardrobe
+// transferred while its opening frame did not -- which reads as the
+// model disobeying rather than as a mode that does not exist. Asking for
+// it in the prompt ("use <Picture 2> as the opening frame") does nothing
+// for the same reason.
+//
+// Tested through the static rather than through run_h3_, which needs a
+// 33B checkpoint: the rule is a property of the partitions, not of the
+// backend, and it is the half that fails silently.
+TEST(generate_video, ref2va_takes_no_keyframe_anchor_and_reports_it)
+{
+  bool ignored = false;
+
+  // The first argument is the REQUEST's -- whether it carries references
+  // -- and never the partition's. That matters since Ref2VA-like runs
+  // the reference layout on FL2VA weights: the same checkpoint can be
+  // handed either, so a partition test would have let a keyframe and a
+  // reference list into one forward, and only one of them has a slot.
+  // FL2VA: one keyframe is first-frame i2v, two are first AND last.
+  EXPECT_TRUE(GenerateVideoStage::h3_anchor_count(false, true, 1,
+                                                  &ignored) == 1);
+  EXPECT_FALSE(ignored);
+  EXPECT_TRUE(GenerateVideoStage::h3_anchor_count(false, true, 2,
+                                                  &ignored) == 2);
+  EXPECT_FALSE(ignored);
+  // More latent frames than anchors is still first+last, not three.
+  EXPECT_TRUE(GenerateVideoStage::h3_anchor_count(false, true, 7,
+                                                  &ignored) == 2);
+
+  // No keyframe wired at all is text-to-video-and-audio, and is NOT
+  // something to report -- it is the ordinary case.
+  EXPECT_TRUE(GenerateVideoStage::h3_anchor_count(false, false, 0,
+                                                  &ignored) == 0);
+  EXPECT_FALSE(ignored);
+  EXPECT_TRUE(GenerateVideoStage::h3_anchor_count(true, false, 0,
+                                                  &ignored) == 0);
+  EXPECT_FALSE(ignored);
+
+  // References with a keyframe wired: no anchors, and flagged. True on
+  // either partition -- this is the Ref2VA-like case as much as the
+  // Ref2VA one.
+  EXPECT_TRUE(GenerateVideoStage::h3_anchor_count(true, true, 1,
+                                                  &ignored) == 0);
+  EXPECT_TRUE(ignored);
+  ignored = false;
+  EXPECT_TRUE(GenerateVideoStage::h3_anchor_count(true, true, 2,
+                                                  &ignored) == 0);
+  EXPECT_TRUE(ignored);
+
+  // A null out-pointer is allowed -- the count is the contract, the
+  // flag is a courtesy.
+  EXPECT_TRUE(GenerateVideoStage::h3_anchor_count(true, true, 1,
+                                                  nullptr) == 0);
+
+  std::printf("[generate_video] fl2va 1/2 anchors, references 0 and "
+              "reported, no keyframe 0 and silent\n");
+}
+
+// NO REFERENCES IS TWO REQUESTS, and only one of them is a mistake
+// (issue #37). A conditioning with no `references` key at all did not
+// come from a video-ref-encoder -- a diffusion-conditioner feeding a
+// Ref2VA graph, say -- and on those weights it would load, run at full
+// 33B cost and condition on nothing anybody asked for, so it is refused.
+// An EXPLICITLY EMPTY list is Ref2VA's prompt-only form: the encoder
+// emits it only when told to, and it runs.
+//
+// Both halves fail silently in their own direction -- a refusal of a
+// request that was meant, or a denoise of one that was not -- and the
+// whole difference between them is one bool, which is why it is pinned
+// here rather than left to a 33B end-to-end run.
+TEST(generate_video, ref2va_tells_an_empty_list_from_no_list)
+{
+  using R = GenerateVideoStage::H3Route;
+  auto route = [](bool said, int n, const char* partition) {
+    return GenerateVideoStage::h3_reference_route(said, n, partition);
+  };
+
+  // Ref2VA: absent is refused, explicitly empty is the reference layout
+  // with no blocks (prompt-only), and references are references.
+  EXPECT_TRUE(route(false, 0, "ref2va") == R::kRefuse);
+  EXPECT_TRUE(route(true, 0, "ref2va") == R::kReference);
+  EXPECT_TRUE(route(true, 2, "ref2va") == R::kReference);
+
+  // FL2VA: an empty list is just t2va / fl2va -- the keyframe layout, so
+  // a wired anchor is honoured rather than dropped -- and references are
+  // the Ref2VA-like mode.
+  EXPECT_TRUE(route(false, 0, "fl2va") == R::kKeyframe);
+  EXPECT_TRUE(route(true, 0, "fl2va") == R::kKeyframe);
+  EXPECT_TRUE(route(true, 1, "fl2va") == R::kReference);
+
+  // A partition nobody could name refuses nothing it did not before.
+  EXPECT_TRUE(route(false, 0, "") == R::kKeyframe);
+  EXPECT_TRUE(route(true, 3, "") == R::kReference);
+
+  std::printf("[generate_video] ref2va: no list refused, [] prompt-only; "
+              "fl2va: [] is t2va\n");
+}
+
+// Ref2VA-like: references on the FL2VA weights, which upstream renders
+// at a 768 short edge and NOT at the 2048 of MiniMaxH3Ref2VASetupStep,
+// whose checkpoint was trained on references.
+//
+// The gap is four times the tokens per reference -- and those rows sit
+// in the packed sequence that the DiT re-reads at every step of the
+// denoise, so it is not a fidelity knob left somewhere safe. It is also
+// invisible: a graph at 2048 renders a perfectly ordinary clip, four
+// times slower over its reference rows, and says nothing.
+//
+// Tested through the static because the stage's own resolution needs a
+// loaded 32B conditioner to know its partition, and the rule needs
+// neither that nor a GPU.
+TEST(generate_video, ref2va_like_takes_upstreams_768_not_ref2vas_2048)
+{
+  using V = VideoRefEncoderStage;
+
+  // Unset on FL2VA: upstream's Ref2VA-like recipe.
+  EXPECT_TRUE(V::ref_image_short_edge(2048, false, "fl2va") == 768);
+  // Unset on Ref2VA: the trained checkpoint's own rule, untouched.
+  EXPECT_TRUE(V::ref_image_short_edge(2048, false, "ref2va") == 2048);
+  // Unknown or absent partition keeps what it was given -- this is not
+  // the place to guess which checkpoint is resident.
+  EXPECT_TRUE(V::ref_image_short_edge(2048, false, "") == 2048);
+  EXPECT_TRUE(V::ref_image_short_edge(2048, false, "t2va") == 2048);
+
+  // SAID IS SAID, on both partitions. A graph that asks for 2048 on
+  // FL2VA gets it; the partition only fills a silence.
+  EXPECT_TRUE(V::ref_image_short_edge(2048, true, "fl2va") == 2048);
+  EXPECT_TRUE(V::ref_image_short_edge(1024, true, "fl2va") == 1024);
+  EXPECT_TRUE(V::ref_image_short_edge(768, true, "ref2va") == 768);
+  // Including a value that happens to equal the recipe it replaces.
+  EXPECT_TRUE(V::ref_image_short_edge(768, true, "fl2va") == 768);
+
+  std::printf("[generate_video] ref2va-like 768 unset / 2048 on ref2va / "
+              "configured always wins\n");
+}
+
+// A `ref2va` request of stills packs no audio, and its empty audio beat
+// has to reach the DiT as "no rows" rather than as a malformed tensor.
+//
+// It did not: the encoder set a modality's row width only when it packed
+// a row of it, so the empty audio beat went out as [0, 1], and the width
+// check refused it before asking whether there was a row to misread.
+// Every request without a soundtrack or an audio reference generated
+// nothing. The width is checked only where there are rows; the COUNT is
+// still checked against the layout.
+TEST(generate_video, an_empty_reference_row_beat_is_absent_not_malformed)
+{
+  auto rows = [](std::vector<long long> shape) {
+    TensorBeatPayload tb;
+    tb.dtype = TensorBeat::DType::F32;
+    tb.shape = std::move(shape);
+    std::size_t n = 1;
+    for (long long d : tb.shape) { n *= (std::size_t)d; }
+    tb.resize_contiguous(n);
+    return tb;
+  };
+  // Pre-set before each call, so a null afterwards is the helper's.
+  const float sentinel = 0.0f;
+  const float* data = nullptr;
+
+  // The beats the two-still request emitted: 2048 video rows and an
+  // empty audio beat whose width fell back to 1.
+  {
+    auto v = rows({2048, 96});
+    EXPECT_TRUE(GenerateVideoStage::h3_reference_rows(&v, 96, &data) ==
+                2048);
+    EXPECT_TRUE(data == v.as_f32());
+  }
+  for (long long w : {1LL, 32LL, 0LL}) {
+    data = &sentinel;
+    auto a = rows({0, w});
+    EXPECT_TRUE(GenerateVideoStage::h3_reference_rows(&a, 32, &data) == 0);
+    EXPECT_TRUE(data == nullptr);
+  }
+
+  // A beat WITH rows is still held to its width.
+  {
+    auto a = rows({40, 24});
+    data = &sentinel;
+    EXPECT_TRUE(GenerateVideoStage::h3_reference_rows(&a, 32, &data) == -1);
+    EXPECT_TRUE(data == nullptr);
+  }
+  // Unwired, and not a matrix: no rows.
+  EXPECT_TRUE(GenerateVideoStage::h3_reference_rows(nullptr, 32, &data) ==
+              0);
+  {
+    auto a = rows({32});
+    EXPECT_TRUE(GenerateVideoStage::h3_reference_rows(&a, 32, &data) == 0);
+  }
+
+  std::printf("[generate_video] empty reference-row beats read as absent at "
+              "any width; non-empty ones still checked\n");
+}

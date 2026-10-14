@@ -1,0 +1,284 @@
+#ifndef VPIPE_STAGES_MODEL_QUANTIZE_STAGE_H
+#define VPIPE_STAGES_MODEL_QUANTIZE_STAGE_H
+
+#include "generative-models/quantize-family-registry.h"
+
+#include "common/job.h"
+#include "pipeline/runtime-context.h"
+#include "pipeline/typed-stage.h"
+
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <vector>
+
+namespace vpipe {
+
+namespace genai { struct QuantArchInfo; }
+
+// 1 optional trigger iport (any beat) + 1 FlexData "summary" oport (for
+// cascading a preparation recipe / a save-text report). One-shot offline
+// model quantization.
+// Reads a source HF/safetensors model, quantizes its backbone linear weights
+// to the MLX-affine group-quant format (passing embeddings / heads / norms /
+// any auxiliary modules through unchanged), writes the result, registers it in
+// the models DB, then signals done. Pure filesystem side-effect; no Beats.
+//
+// Multi-architecture: the plain group-affine and per-layer mixed-precision
+// paths work for any standard-named transformer (Llama / Qwen2 / Qwen3 /
+// Qwen3.5 hybrid / Gemma-4 / MOSS) -- arch, layer_prefix and n_layers are
+// auto-detected from the source (config.json + a probe of the safetensors
+// layer layout; see genai::detect_quant_arch). AWQ additionally requires a
+// standard-layernorm stack -- full attention OR Qwen3.5 gated-DeltaNet, both
+// rooted at input_layernorm (blocked for Gemma-style FFN norms and MoE MLPs);
+// on-device auto-calibration additionally requires a Qwen3-family backbone
+// (dense or the Qwen3.5 hybrid), else supply calib_dir.
+//
+// Registry-aware:
+//   * src_model may be a models-DB key (registered by model-fetch) OR a path.
+//   * output_name names the result: a bare name (or "org/name") -> the output
+//     dir is inferred as models/<output_name> beside the session database
+//     (see default_models_dir) and the result is
+//     registered in the models DB under that key. An absolute/relative path
+//     ("/..", "./..") is used verbatim and NOT registered.
+//   * arch / n_layers / layer_prefix are auto-detected from the source
+//     config.json for a known model_type (moss_tts_local); explicit config
+//     overrides the detection.
+//
+// Config (FlexData object):
+//   src_model     (string, required) -- source model: a models-DB key or a
+//                  path: a bf16/f16/fp8 safetensors directory, or ONE
+//                  .safetensors file -- a Comfy-Org component, or a Krea-2
+//                  DiT in Krea's own layout (the single file community
+//                  fine-tunes ship), which is translated to the diffusers
+//                  layout on the way through. FP8 tensors (F8_E4M3 /
+//                  F8_E5M2) are read as the bf16 they decode to exactly;
+//                  SCALED FP8 (ComfyUI's scaled_fp8 / comfy_quant, a
+//                  scale per tensor or per row) as code * scale, and its
+//                  scale tensors are not written out. MXFP8, NVFP4, int8
+//                  and block-scaled encodings are refused by name.
+//   output_name   (string, required) -- result name (-> models/<name> beside
+//                  the session database,
+//                  registered) or an explicit path ("/..", "./..").
+//   bits          (uint, default 8)  -- backbone affine bit-width (4 | 8),
+//                  or 16: a DENSE output that quantizes nothing -- FP8
+//                  decoded to bf16, everything else copied. That is the
+//                  dequantization of an FP8 checkpoint (lossless), and for
+//                  a native-layout file also its conversion to diffusers
+//                  names. An affine-quantized source is refused.
+//   group_size    (uint, default 64) -- affine group size (32 | 64).
+//   arch          (string, default "") -- model family tag; empty => auto-
+//                  detect from the source config.json model_type.
+//   target        (string, default "") -- which part of the model to quantize.
+//                  Krea-2 (text-to-image): a COMPONENT -- dit (default) |
+//                  text_encoder | vae. The output is a SELF-CONTAINED pipeline
+//                  (all components copied, the target quantized), usable
+//                  directly as a generate-image hf_dir with no dit_dir override;
+//                  chain passes (feed one pass's output as the next src_model)
+//                  to quantize the DiT, then the text encoder, etc. (vae not
+//                  yet supported -- it is a conv net).
+//                  General / multi-modal LLM: a submodule SCOPE -- all
+//                  (default, whole model) | text (the language backbone only) |
+//                  vision | audio | an explicit tensor-name prefix. Only that
+//                  submodule is quantized; the rest stays bf16 (e.g. quantize
+//                  the LM backbone, keep a precision-sensitive vision tower
+//                  full precision). Resolved against the model's tensor names;
+//                  vision/audio scopes are plain-quant only (no awq/mixed).
+//   quant_exclude (string, default "") -- comma-separated tensor-name
+//                  substrings to leave dense. Required with a wholesale
+//                  `target` scope: that rule takes every 2D fp tensor whose
+//                  leaf is not a norm/embedding, which also catches f32
+//                  modulation TABLES and tiny gate projections. Excluding
+//                  them is not tuning -- quantizing them produces a
+//                  checkpoint that loads and generates the wrong thing.
+//   skip_existing (bool, default true) -- skip if the output config.json
+//                  already exists.
+//   awq           (bool, default false) -- AWQ activation-aware smoothing
+//                  (per-layer fp-equivalent scale search). Calibration:
+//                  supply calib_dir, else it auto-calibrates on-device for a
+//                  known arch.
+//   awq_clip      (bool, default false) -- the paired per-group weight clip
+//                  search (needs awq). OFF by default: it can regress end
+//                  drift on small calibration sets.
+//   calib_dir     (string) -- dir with calib_{qkv,o,gateup,down}.f32 stats;
+//                  empty => on-device auto-calibration for a known arch.
+//   mixed         (bool, default false) -- unsloth-style PER-LAYER mixed
+//                  precision: promote the most-sensitive `mixed_frac` of
+//                  layers to `high_bits`. Requires bits=4, high_bits=8,
+//                  group_size=64.
+//   high_bits     (uint, default 8) -- promoted bit-width for mixed.
+//   mixed_frac    (real, default 0.25) -- fraction of LAYERS promoted.
+//   layer_prefix  (string, default "") -- arch layer-root prefix for awq/mixed
+//                  per-layer tensors; empty => auto-detect.
+//   n_layers      (uint, default 0) -- layer count for awq/mixed; 0 => auto-
+//                  detect from the source config.json.
+//
+// Drives genai::ModelQuantizer (plain group-affine, AWQ, and mixed paths).
+class ModelQuantizeStage final : public TypedStage<ModelQuantizeStage> {
+public:
+  static constexpr const char* kTypeName = "model-quantize";
+
+  ModelQuantizeStage(const SessionContextIntf* session,
+                     std::string               id,
+                     std::vector<InEdge>       iports,
+                     FlexData                  config);
+
+  Job process(RuntimeContext& ctx) override;
+
+  const StageSpec& spec() const noexcept override;
+
+  // Test-only inspectors.
+  const std::string& src_model() const noexcept { return _src_model; }
+  const std::string& output_name() const noexcept { return _output_name; }
+  int  bits() const noexcept { return _bits; }
+  int  group_size() const noexcept { return _group_size; }
+  bool skip_existing() const noexcept { return _skip_existing; }
+  bool awq() const noexcept { return _awq; }
+  bool mixed() const noexcept { return _mixed; }
+  float mixed_frac() const noexcept { return _mixed_frac; }
+  const std::string& calib_dir() const noexcept { return _calib_dir; }
+  int n_layers() const noexcept { return _n_layers; }
+
+  // Test seam: which DiT directory a `src_model` path resolves to, and
+  // which family it belongs to ("" for neither).
+  //
+  // Exposed because this is the THIRD resolver of that question -- the
+  // DiT loader and the text encoder each have their own -- and it is the
+  // one no test could reach. Both times it has drifted behind the other
+  // two, the symptom was the same: the stage decided the source was not
+  // a diffusion pipeline and fell through to the LANGUAGE-model
+  // quantizer, which then reported an unknown architecture. That reads
+  // as "unsupported family" and is really "resolver missed a rung".
+  //
+  // `partition` is MiniMax-H3's fl2va / ref2va, which the caller takes
+  // from the models-DB record rather than from the directory.
+  // The PIPELINE root to quantize, given the source that was named and
+  // the DiT the resolver found under it. Normally the source itself --
+  // but MiniMaxAI publishes both MiniMax-H3 partitions from ONE repo, so
+  // the runnable root is <repo>/FL2VA and the components to copy sit
+  // beside the DiT rather than beside the repo.
+  //
+  // Exposed for the same reason as the resolver below: the two answers
+  // have to agree, and the one that decides WHERE TO COPY FROM had no
+  // test at all -- a source that resolved its DiT correctly still failed
+  // with "root ... has no 'transformer' component to quantize", which
+  // reads as a broken download rather than a resolver that stopped one
+  // directory short.
+  static std::string pipeline_root_for(const std::string& src_dir,
+                                       const std::string& dit_dir);
+
+  static std::string resolve_source_dit_dir(const std::string& src_dir,
+                                            std::string* family,
+                                            const std::string& partition = {});
+
+  // Test seam: run the quantization once. Returns true on success (or when
+  // skipped because the output already exists). Logs + returns false on
+  // error.
+  bool quantize_once(const std::function<bool()>& stop = [] {
+    return false;
+  });
+
+private:
+  // Register the quantized output dir in the models DB under `key`.
+  void register_output_(const std::string& key, const std::string& dir,
+                        const std::string& arch, int bits);
+
+  // Text-to-image (Krea-2 / FLUX.2) multi-component quantize. `family` is the
+  // vpipe tag ("krea2" | "flux2"); `root` is the pipeline ROOT (transformer/,
+  // text_encoder/, vae/, tokenizer/, ...); `out_dir` gets a SELF-CONTAINED copy
+  // of every component with the configured `target` component quantized in
+  // place, so the result is usable directly as a generate-image hf_dir (no
+  // dit_dir override). Chainable: `root` may be a prior pass's output, whose
+  // already-quantized components copy through.
+  bool quantize_t2i_pipeline_(const std::string&           root,
+                              const std::string&           family,
+                              const std::string&           out_dir,
+                              const std::function<bool()>& stop);
+  // The same self-contained pass for a Comfy-Org REPACK, whose components
+  // are one .safetensors per role subdir (diffusion_models/, text_encoders/,
+  // vae/, plus tokenizer/) rather than a diffusers sub-directory each. Same
+  // contract: every component copies through, `target` is quantized in
+  // place, the result is a usable model root. Chainable for the same reason
+  // -- a quantized component lands as a DIRECTORY inside its own role
+  // subdir, which is the one shape difference from the input, and both the
+  // resolvers and this function accept either.
+  bool quantize_comfy_pipeline_(const std::string&           root,
+                                const std::string&           family,
+                                const std::string&           dit_path,
+                                const std::string&           out_dir,
+                                const std::function<bool()>& stop);
+  // The same contract as quantize_comfy_pipeline_, driven by a REGISTERED
+  // family's component list instead of by this file's built-in detection
+  // -- the path an out-of-tree model takes to be packaged the way an
+  // in-tree one is. See generative-models/quantize-family-registry.h for
+  // why a family supplies data rather than behaviour.
+  bool quantize_registered_pipeline_(const std::string& root,
+                                     const genai::QuantizableFamily& fam,
+                                     const std::string&           out_dir,
+                                     const std::function<bool()>& stop);
+  // Whether `dir` is a Comfy-Org repo root: at least one role subdir that
+  // holds either a readable repack component or a quantized directory
+  // checkpoint this pass wrote. The second half is what makes chaining
+  // work, since a quantized component has no `__metadata__` for scan_repo
+  // to find.
+  static bool is_comfy_root_(const std::string& dir);
+  // The role subdir a `target` names in a repack ("dit" ->
+  // "diffusion_models"), or "" when the target has no repack component.
+  static std::string comfy_target_subdir_(const std::string& target);
+  // Quantize one DiT (transformer) dir -> out_dir (a plain group-affine pass +
+  // optional AWQ-clip / mixed). `family` selects the DiT quant leaf set
+  // ("krea2" | "flux2"); `calib_root` is the pipeline root the on-device AWQ
+  // calibration reads (encoder + tokenizer).
+  bool quantize_dit_component_(const std::string&           dit_dir,
+                               const std::string&           out_dir,
+                               const std::string&           family,
+                               const std::string&           calib_root,
+                               const std::function<bool()>& stop);
+  // Quantize the text encoder (a dense Qwen3 / Qwen3-VL backbone) -> out_dir.
+  // Keeps embed_tokens bf16 (the generate-image stage host-gathers it). `root`
+  // is the pipeline root -- its tokenizer/ feeds AWQ auto-calibration (the
+  // encoder sub-dir has no tokenizer of its own).
+  bool quantize_text_encoder_(const std::string&           enc_dir,
+                              const std::string&           out_dir,
+                              const std::string&           root,
+                              const std::function<bool()>& stop);
+
+  // On-device AWQ auto-calibration: 8-bit base + tapped forward over the
+  // built-in text corpus (or the memory-safe streaming forward for MoE).
+  // Returns a temp calib dir the caller must remove_all, or "" on failure /
+  // stop (already logged). `tok_path` is the tokenizer.json feeding the
+  // corpus (a sub-model may borrow the pipeline's shared tokenizer).
+  std::string auto_calibrate_backbone_(const std::string& src_dir,
+                                       const genai::QuantArchInfo& meta,
+                                       int n_layers,
+                                       const std::string& tok_path,
+                                       const std::function<bool()>& stop);
+
+  // Config attributes; defaults live in kSpec.attrs and are read in the
+  // constructor via attr_*. Declarations carry no non-zero default.
+  std::string _src_model;
+  std::string _output_name;
+  std::string _arch;
+  std::string _target;   // krea2 component to quantize: dit|text_encoder|vae
+  int         _bits{};
+  int         _group_size{};
+  bool        _skip_existing{};
+  // AWQ + mixed precision.
+  bool        _awq{};
+  bool        _awq_clip{};
+  std::string _calib_dir;
+  bool        _mixed{};
+  int         _high_bits{};
+  float       _mixed_frac{};
+  std::string _layer_prefix;
+  std::string _quant_exclude;   // comma-separated name substrings
+  int         _n_layers{};
+  bool        _quant_modulation{};   // QIE DiT: quantize *_mod.1 too (opt-in)
+  bool        _quant_vision{};       // text encoder: quantize its vision
+                                     // tower too (opt-in)
+  bool        _klein_kv{};           // flux2 source is FLUX.2-klein-9b-kv
+};
+
+}  // namespace vpipe
+
+#endif

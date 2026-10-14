@@ -1,0 +1,392 @@
+#include "stages/minimax-h3-model-config-stage.h"
+#include "stages/latent-preview.h"
+#include "stages/model-registry.h"
+
+#include "common/beat-payload-intf.h"
+#include "common/flex-data.h"
+#include "common/vpipe-format.h"
+#include "interfaces/session-context-intf.h"
+#include "stages/model-config-source.h"
+
+#include <string>
+#include <utility>
+
+namespace vpipe {
+
+namespace {
+
+const ConfigKey kAttrs[] = {
+  {.key = "video_shift", .type = ConfigType::Real, .required = false,
+   .doc = "sigma shift for the VIDEO schedule. 12.0 is the released "
+          "checkpoint's; it is not interchangeable with the audio one",
+   .def_real = 12.0},
+  {.key = "audio_shift", .type = ConfigType::Real, .required = false,
+   .doc = "sigma shift for the AUDIO schedule, stepped in lockstep with the "
+          "video one over the same step count", .def_real = 3.0},
+  {.key = "condition_timestep", .type = ConfigType::Real, .required = false,
+   .doc = "the level the pinned conditioning rows are held at, in this "
+          "model's t = 1 - sigma convention. **0.999, not 1.0**: the "
+          "released checkpoint was trained with its anchors very slightly "
+          "noised, so conditioning at exactly clean is OFF-DISTRIBUTION. "
+          "The reference implementations agree on the number -- ComfyUI's "
+          "`VISUAL_COND_TIMESTEP = 0.999` and diffusers' "
+          "`keyframe_noise_aug` -- and both also mix the rows themselves "
+          "`0.999*z + 0.001*noise` to match. Raising it to 1.0 is the "
+          "kind of error that looks harmless and shows up as structure "
+          "the model never learned to remove",
+   .def_real = 0.999},
+  {.key = "condition_audio_timestep", .type = ConfigType::Real,
+   .required = false,
+   .doc = "the same, for a Ref2VA reference SOUNDTRACK's rows. Separate "
+          "because a reference's frames and its audio are encoded by "
+          "different VAEs and enter as different rows", .def_real = 1.0},
+  {.key = "audio_seconds", .type = ConfigType::Real, .required = false,
+   .doc = "soundtrack duration; 0 derives it from the video's frames / fps, "
+          "which is what keeps the two modalities the same length by "
+          "construction", .def_real = 0.0},
+  {.key = "linear_branch", .type = ConfigType::String, .required = false,
+   .doc = "OPTIONAL VDN-H3 release root -- the directory holding its "
+          "config.json and linear_branch/. Given one, every main block's "
+          "attention becomes the hybrid: a chunk-windowed softmax over "
+          "the frames near the query plus a bidirectional delta rule "
+          "carrying everything the window cannot see. The two PARTITION "
+          "the keys, so this is not an approximation layered on full "
+          "attention -- it is a different attention, and the weights "
+          "here were trained for it. A SECOND checkpoint, not a "
+          "replacement: the DiT stays whatever the model source names, "
+          "because the branch shares that DiT's own q/k/v projections. "
+          "LOAD-TIME, like `lora` below and for the same reason -- it "
+          "changes what the blocks are, not how strongly something is "
+          "applied -- so naming a different one under a built DiT is "
+          "refused rather than half-taken",
+   .suggest_db = kModelRegistryDb,
+   // A MODEL PICKER and not the filesystem browser, for the reason the
+   // LoRA field below is one, and typed for the same reason again: VDN
+   // is catalogued as a supplement of minimax-h3-fl2va, so an untyped
+   // field would offer plain models only and show nothing at all. The
+   // type is what keeps a LoRA out of this field and the branch out of
+   // the LoRA field -- they are not interchangeable, and the failure
+   // when they are swapped is a model that loads and renders.
+   .suggest_db_type = "minimax-h3-vdn"},
+  {.key = "lora", .type = ConfigType::String, .required = false,
+   .doc = "a LoRA applied AT RUNTIME -- every adapted projection computes "
+          "W x + scale * B (A x) rather than having the delta folded into "
+          "the weights. A registered model (the key a `model-fetch` of a "
+          "Turbo adapter writes), a directory holding one .safetensors, "
+          "or a direct path to one. Preferred over lora-fuse for a "
+          "few-step adapter: the MiniMax-H3 Turbo update is 2-4e-4 "
+          "relative to the weights where bf16's step is ~4e-3, so merging "
+          "rounds most of it away (46-78% of the delta survives) and a "
+          "4-bit base is coarser again. Costs ~1.5% of the projections' "
+          "FLOPs. LOAD-time: it is read before the DiT is built, and a "
+          "beat that changes it afterwards is reported and ignored",
+   .suggest_db = kModelRegistryDb,
+   // Without this the picker shows NOTHING: a field with no type falls
+   // back to plain models only, and every LoRA is catalogued as a
+   // `supplement` (it attaches to a parent rather than standing alone).
+   // Naming the type is also what keeps a Krea-2 or Wan adapter out of
+   // an H3 field.
+   .suggest_db_type = "minimax-h3-lora",
+   // AND a file browser: a LoRA is as often a download sitting in
+   // the sandbox (Civitai) as a catalogued model, and the editor
+   // offers both pickers when a field carries both hints.
+   .is_path = true, .path_filter = "weights"},
+  {.key = "lora_qkv_layout", .type = ConfigType::String, .required = false,
+   .doc = "which row order a FUSED attn.qkv_proj adapter is in. The two "
+          "publishers group that projection's rows differently -- "
+          "Comfy-Org's repack flat [all q | all k | all v], every "
+          "MiniMaxAI release per head -- and this tree re-orders neither, "
+          "so an adapter built for the other one lands on the wrong "
+          "channels in every block. `auto` (the default) reads FLAT, "
+          "which every published H3 adapter is, and permutes the rows on "
+          "a per-head DiT so one adapter serves both checkpoints. "
+          "`per_head` is the escape hatch for an adapter actually trained "
+          "on MiniMaxAI's weights. Only the fused projection is affected",
+   .def_str = "auto"},
+  {.key = "lora_scale", .type = ConfigType::Real, .required = false,
+   .doc = "adapter strength, per FORWARD. Live: a trigger-driven config "
+          "can sweep it across beats without a reload, and 0 skips the "
+          "adapter's two GEMMs so off is exactly off. 1.0 is as trained "
+          "and is what the Turbo adapter is tuned for; nudge up for "
+          "blurry ghosting, down for over-sharp grain", .def_real = 1.0},
+  {.key = "lora2", .type = ConfigType::String, .required = false,
+   .doc = "a SECOND runtime LoRA, applied alongside the first: every "
+          "adapted projection computes W x + s1 B1 (A1 x) + s2 B2 (A2 x). "
+          "The pairing this exists for is a few-step Turbo distillation "
+          "in `lora` -- a correction to the whole model, belonging at the "
+          "strength it was trained at -- and a style or identity adapter "
+          "here, which is the one actually being dialled. Nothing "
+          "distinguishes the slots though: either may hold either, and "
+          "the strengths move independently. Same accepted forms as "
+          "`lora`. Costs one more pair of skinny GEMMs, ~1.5% of a "
+          "projection at rank 64; the base weight is still read once. "
+          "LOAD-time like `lora`",
+   .suggest_db = kModelRegistryDb,
+   .suggest_db_type = "minimax-h3-lora",
+   // AND a file browser: a LoRA is as often a download sitting in
+   // the sandbox (Civitai) as a catalogued model, and the editor
+   // offers both pickers when a field carries both hints.
+   .is_path = true, .path_filter = "weights"},
+  {.key = "lora2_qkv_layout", .type = ConfigType::String, .required = false,
+   .doc = "the row order of `lora2`'s FUSED attn.qkv_proj, exactly as "
+          "`lora_qkv_layout` is for `lora`. Per slot because the order is "
+          "a property of the FILE: two adapters from different "
+          "publishers need different answers",
+   .def_str = "auto"},
+  {.key = "taomate", .type = ConfigType::String, .required = false,
+   .doc = "TaoMate-H3's STREAMING method, for its 3-step adapter "
+          "(TaoLiveAIGC/TaoMate-H3 in `lora`). That adapter is not a "
+          "few-step LoRA for the ordinary denoise: it was distilled for a "
+          "method in which the BASE model makes the soundtrack (an "
+          "audio-only pass) and the adapter makes the video in four "
+          "chunks per 5 seconds, three steps each, every chunk attending "
+          "to a cache of the clean chunks before it. `auto` (the default) "
+          "runs that method whenever an adapter slot holds the TaoMate "
+          "adapter, recognised from its tensors; `on` runs it with the "
+          "adapter in `lora` whatever its spelling; `off` runs the "
+          "ordinary denoise with it, which is not what it was trained "
+          "for. Text-to-audio-video only, in whole 5-second requests; "
+          "`steps` and the shifts do not apply. The clean-K/V cache is "
+          "~19 GB at 864x480 and ~48 GB at 1376x768 -- on disk by "
+          "default, see `taomate_kv`",
+   .def_str = "auto"},
+  {.key = "taomate_kv", .type = ConfigType::String, .required = false,
+   .doc = "where TaoMate-H3's clean-K/V cache lives. `auto` (the "
+          "default) keeps it ON DISK -- one file per committed chunk, each "
+          "block's keys and values read back a block ahead of the "
+          "attention that needs them, through two slots of a few hundred "
+          "MB -- in 8 bits when `i8_gemm` is on, else in bf16. `bf16` and "
+          "`int8` choose the width on disk: int8 is affine groups of 64 "
+          "(about half the bytes to write and read; the attention sees "
+          "keys and values to 8 bits), bf16 is exactly the numbers of "
+          "`memory`. `memory` holds the whole cache in RAM, upstream's "
+          "way: no disk traffic, but ~17 GB at 832x480, which a 24 GB "
+          "Mac pages every forward",
+   .def_str = "auto"},
+  {.key = "lora2_scale", .type = ConfigType::Real, .required = false,
+   .doc = "`lora2`'s strength, per FORWARD and independent of "
+          "`lora_scale` -- which is the point of a second slot: the "
+          "distillation stays where it was trained while this one is "
+          "swept. 0 skips its two GEMMs", .def_real = 1.0},
+  // Slots 3..8, which read exactly as `lora2` does.
+  lora_slots::path_key(2, "minimax-h3-lora"),
+  lora_slots::qkv_layout_key(2), lora_slots::scale_key(2),
+  lora_slots::path_key(3, "minimax-h3-lora"),
+  lora_slots::qkv_layout_key(3), lora_slots::scale_key(3),
+  lora_slots::path_key(4, "minimax-h3-lora"),
+  lora_slots::qkv_layout_key(4), lora_slots::scale_key(4),
+  lora_slots::path_key(5, "minimax-h3-lora"),
+  lora_slots::qkv_layout_key(5), lora_slots::scale_key(5),
+  lora_slots::path_key(6, "minimax-h3-lora"),
+  lora_slots::qkv_layout_key(6), lora_slots::scale_key(6),
+  lora_slots::path_key(7, "minimax-h3-lora"),
+  lora_slots::qkv_layout_key(7), lora_slots::scale_key(7),
+  // The live-preview keys every family's config source shares; see
+  // stages/latent-preview.h. For H3 the TAE is madebyollin's `taeh3`
+  // (temporal, 4x in time) or Kijai's 2D one (a frame per latent frame).
+  {.key = latent_preview::kVaeKey, .type = ConfigType::String,
+   .required = false, .doc = latent_preview::kVaeDoc,
+   .suggest_db = kModelRegistryDb,
+   // Typed like the LoRA fields, and for their reason: a TAE is catalogued
+   // as a supplement, so an untyped picker offers nothing -- and the type
+   // keeps a TAE for another model's latent space out of this field.
+   .suggest_db_type = "minimax-h3-tae"},
+  {.key = latent_preview::kEveryKey, .type = ConfigType::Int,
+   .required = false, .doc = latent_preview::kEveryDoc, .def_int = 1},
+  {.key = latent_preview::kMaxEdgeKey, .type = ConfigType::Int,
+   .required = false, .doc = latent_preview::kMaxEdgeDoc, .def_int = 512},
+  {.key = latent_preview::kFramesKey, .type = ConfigType::Int,
+   .required = false, .doc = latent_preview::kFramesDoc, .def_int = 0},
+};
+const PortSpec kIports[] = {
+  {.name = "trigger",
+   .doc = "OPTIONAL beat that gates re-emitting the config (a chrono tick, a "
+          "prompt source, a feedback loop). Any payload -- receipt is the "
+          "signal. Unwired, the stage emits once for the run",
+   .type = nullptr, .clock_group = 0},
+};
+const PortSpec kOports[] = {
+  {.name = "model_config",
+   .doc = "MiniMax-H3 generation parameters as one FlexData object "
+          "{model_family: minimax-h3, video_shift, audio_shift, "
+          "condition_timestep, condition_audio_timestep, audio_seconds, "
+          "+lora .. +lora8 and their scales, +taomate, +preview_vae and its "
+          "three knobs}, for a generate-video model_config iport",
+   .type = &typeid(FlexDataPayload),
+   .tags = "model-config", .clock_group = 0},
+};
+const StageSpec kSpec = {
+  .type_name = "minimax-h3-model-config",
+  .doc       = "Source: the MiniMax-H3-specific generation parameters (the "
+               "two sigma shifts its video and audio schedules run at, the "
+               "level its pinned condition rows sit at, and the soundtrack "
+               "duration) as one FlexData beat for generate-video to latch. "
+               "H3 is guidance-distilled, so there is deliberately no "
+               "guidance scale here. One beat then done; with a trigger "
+               "iport, one beat per inbound beat.",
+  .display_name = "MiniMax-H3 Model Config",
+  .category  = StageCategory::ModelSpecificConfig,
+  .iports    = kIports,
+  .oports    = kOports,
+  .attrs     = kAttrs,
+};
+
+}  // namespace
+
+MiniMaxH3ModelConfigStage::MiniMaxH3ModelConfigStage(
+    const SessionContextIntf* s,
+    std::string               id,
+    std::vector<InEdge>       iports,
+    FlexData                  config)
+  : ModelConfigSourceStage<MiniMaxH3ModelConfigStage>(s, std::move(id),
+                                                      std::move(iports),
+                                                      std::move(config))
+{
+  _video_shift   = attr_real("video_shift");
+  _audio_shift   = attr_real("audio_shift");
+  _cond_timestep = attr_real("condition_timestep");
+  _cond_audio_timestep = attr_real("condition_audio_timestep");
+  _audio_seconds = attr_real("audio_seconds");
+  _linear_branch = attr_str("linear_branch");
+  for (int i = 0; i < lora_slots::kSlots; ++i) {
+    LoraSlot& sl = _lora[(std::size_t)i];
+    sl.path  = attr_str(lora_slots::kPath[i]);
+    sl.scale = attr_real(lora_slots::kScale[i]);
+    sl.qkv   = attr_str(lora_slots::kQkvLayout[i]);
+  }
+  _taomate       = attr_str("taomate");
+  if (_taomate.empty()) { _taomate = "auto"; }
+  if (_taomate != "auto" && _taomate != "on" && _taomate != "off") {
+    fail_config(fmt(
+        "MiniMaxH3ModelConfigStage('{}'): taomate must be auto, on or off "
+        "(got '{}')", this->id(), _taomate));
+  }
+  _taomate_kv    = attr_str("taomate_kv");
+  if (_taomate_kv.empty()) { _taomate_kv = "auto"; }
+  if (_taomate_kv != "auto" && _taomate_kv != "bf16" &&
+      _taomate_kv != "int8" && _taomate_kv != "memory") {
+    fail_config(fmt(
+        "MiniMaxH3ModelConfigStage('{}'): taomate_kv must be auto, bf16, "
+        "int8 or memory (got '{}')", this->id(), _taomate_kv));
+  }
+  _preview.vae        = attr_str(latent_preview::kVaeKey);
+  _preview.every      = (int)attr_int(latent_preview::kEveryKey);
+  _preview.max_edge   = (int)attr_int(latent_preview::kMaxEdgeKey);
+  _preview.max_frames = (int)attr_int(latent_preview::kFramesKey);
+  if (_preview.every < 0 || _preview.max_edge < 0 ||
+      _preview.max_frames < 0) {
+    fail_config(fmt(
+        "MiniMaxH3ModelConfigStage('{}'): preview_every, preview_max_edge "
+        "and preview_frames must be >= 0 (got {} / {} / {})", this->id(),
+        _preview.every, _preview.max_edge, _preview.max_frames));
+  }
+  // Deferred validation: the ctor never throws, so a nonsense number is
+  // reported and the runtime skips the stage at launch. A non-positive
+  // shift collapses the schedule to a single sigma, which generates
+  // noise at full cost rather than failing.
+  if (!(_video_shift > 0.0) || !(_audio_shift > 0.0)) {
+    fail_config(fmt(
+        "MiniMaxH3ModelConfigStage('{}'): the sigma shifts must be > 0 (got "
+        "{:.3f} / {:.3f})", this->id(), _video_shift, _audio_shift));
+  }
+  auto bad_t = [](double v) { return v < 0.0 || v > 1.0; };
+  if (bad_t(_cond_timestep) || bad_t(_cond_audio_timestep)) {
+    fail_config(fmt(
+        "MiniMaxH3ModelConfigStage('{}'): the condition timesteps are levels "
+        "in t = 1 - sigma and must be in [0, 1] (got {:.3f} / {:.3f})",
+        this->id(), _cond_timestep, _cond_audio_timestep));
+  }
+  if (_audio_seconds < 0.0) {
+    fail_config(fmt(
+        "MiniMaxH3ModelConfigStage('{}'): audio_seconds must be >= 0; 0 "
+        "derives it from the video (got {:.3f})", this->id(),
+        _audio_seconds));
+  }
+  allocate_oports(spec().oports.size());
+}
+
+const StageSpec&
+MiniMaxH3ModelConfigStage::spec() const noexcept
+{
+  return kSpec;
+}
+
+FlexData
+MiniMaxH3ModelConfigStage::resolved_config() const
+{
+  FlexData fd = model_config::make_config("minimax-h3");
+  auto o = fd.as_object();
+  o.insert_or_assign("video_shift", FlexData::make_real(_video_shift));
+  o.insert_or_assign("audio_shift", FlexData::make_real(_audio_shift));
+  o.insert_or_assign("condition_timestep",
+                     FlexData::make_real(_cond_timestep));
+  o.insert_or_assign("condition_audio_timestep",
+                     FlexData::make_real(_cond_audio_timestep));
+  o.insert_or_assign("audio_seconds", FlexData::make_real(_audio_seconds));
+  // Emitted only when SET, for the reason the LoRA keys are: an empty
+  // string would read as "the graph asked for no branch", which is
+  // indistinguishable at the consumer from "the graph said nothing",
+  // and the consumer's default is already no branch.
+  if (!_linear_branch.empty()) {
+    o.insert_or_assign("linear_branch",
+                       FlexData::make_string(_linear_branch));
+  }
+  // Emitted only when SET. An empty `lora` key would read as "the graph
+  // asked for no adapter", which is indistinguishable from "the graph
+  // said nothing" at the consumer -- and the consumer's default is
+  // already no adapter.
+  //
+  // Each slot is independent of the others: `lora2` with no `lora` is a
+  // graph with one style adapter and no distillation, which is a
+  // perfectly ordinary request and not a hole to be filled.
+  for (int i = 0; i < lora_slots::kSlots; ++i) {
+    const LoraSlot& sl = _lora[(std::size_t)i];
+    if (sl.path.empty()) { continue; }
+    o.insert_or_assign(lora_slots::kPath[i], FlexData::make_string(sl.path));
+    o.insert_or_assign(lora_slots::kScale[i], FlexData::make_real(sl.scale));
+    if (!sl.qkv.empty()) {
+      o.insert_or_assign(lora_slots::kQkvLayout[i],
+                         FlexData::make_string(sl.qkv));
+    }
+  }
+  // Emitted only off its default, which the consumer applies anyway.
+  if (_taomate != "auto") {
+    o.insert_or_assign("taomate", FlexData::make_string(_taomate));
+  }
+  if (_taomate_kv != "auto") {
+    o.insert_or_assign("taomate_kv", FlexData::make_string(_taomate_kv));
+  }
+  // Emitted only when a preview VAE is named, like the LoRA keys.
+  _preview.emit(fd);
+  return fd;
+}
+
+void
+MiniMaxH3ModelConfigStage::report_config(const FlexData& fd) const
+{
+  (void)fd;
+  // Every named slot, by its key and strength.
+  std::string adapters;
+  for (int i = 0; i < lora_slots::kSlots; ++i) {
+    const LoraSlot& sl = _lora[(std::size_t)i];
+    if (sl.path.empty()) { continue; }
+    adapters += fmt("{} {} at {:.2f}", adapters.empty() ? ", runtime" : ",",
+                    lora_slots::kPath[i], sl.scale)();
+  }
+  session()->info(fmt(
+      "MiniMaxH3ModelConfigStage('{}'): shifts {:.1f}/{:.1f}, condition "
+      "t {:.3f}/{:.3f}, audio {}{}{}{}", this->id(), _video_shift,
+      _audio_shift,
+      _cond_timestep, _cond_audio_timestep,
+      _audio_seconds > 0.0 ? fmt("{:.3f} s", _audio_seconds)()
+                           : std::string("as long as the video"),
+      adapters,
+      _preview.enabled()
+          ? fmt(", previews every {} step(s)", _preview.every)()
+          : std::string()));
+}
+
+VPIPE_REGISTER_STAGE(MiniMaxH3ModelConfigStage)
+VPIPE_REGISTER_SPEC(MiniMaxH3ModelConfigStage, kSpec)
+
+}  // namespace vpipe

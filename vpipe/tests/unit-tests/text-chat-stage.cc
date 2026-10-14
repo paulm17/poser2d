@@ -1,0 +1,1762 @@
+// text-chat-stage.cc -- tests for the interactive text-chat stage. The
+// config/registration cases are MLX-free and run in BOTH the MLX and
+// no-MLX builds (the stage builds on the VPIPE_BUILD_APPLE_SILICON axis;
+// generation runs on the metal-compute backend when MLX is off).
+//
+// The end-to-end runtime smoke is env-gated on VPIPE_METAL_LM_SMOKE_MODEL
+// (a metal-supported text decoder, same var as metal_lm_smoke.text_decode)
+// and compiled only in the no-MLX build: it drives one user turn through a
+// real mini-pipeline and asserts a non-empty assistant reply beat.
+
+#include "minitest.h"
+
+#include "common/beat-payload-intf.h"
+#include "common/flex-data.h"
+#include "common/job.h"
+#include "common/session.h"
+#include "common/vertex.h"
+#include "common/vpipe-format.h"
+#include "interfaces/ui-delegate-intf.h"
+#include "pipeline/pipeline-runtime.h"
+#include "pipeline/pipeline.h"
+#include "pipeline/runtime-context.h"
+#include "pipeline/typed-stage.h"
+#include "stages/text-chat-stage.h"
+#include "generative-models/generative-model-manager.h"
+
+#include "common/media-line.h"
+
+#include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <mutex>
+#include <streambuf>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <utility>
+#include <vector>
+
+#include <unistd.h>   // ::access (seatbelt availability check)
+
+using namespace std;
+using namespace vpipe;
+
+namespace {
+
+class CerrSilencer {
+public:
+  CerrSilencer() : _saved(cerr.rdbuf()), _null() { cerr.rdbuf(&_null); }
+  ~CerrSilencer() { cerr.rdbuf(_saved); }
+private:
+  struct NullBuf : public streambuf {
+    int overflow(int c) override { return c; }
+  };
+  streambuf* _saved;
+  NullBuf    _null;
+};
+
+FlexData
+basic_cfg_()
+{
+  FlexData cfg = FlexData::make_object();
+  cfg.as_object().insert("hf_dir",
+                         FlexData::make_string("/tmp/chat-fake-model"));
+  return cfg;
+}
+
+}  // namespace
+
+// ---- Config / construction (no model; both builds) -----------------
+
+TEST(text_chat_stage, type_is_registered) {
+  EXPECT_TRUE(string_view(TextChatStage::kTypeName) == "text-chat");
+}
+
+TEST(text_chat_stage, config_defaults) {
+  Session sess;
+  CerrSilencer hush;
+  TextChatStage s(&sess, "chat", vector<InEdge>{}, basic_cfg_());
+  EXPECT_TRUE(s.hf_dir() == "/tmp/chat-fake-model");
+  EXPECT_TRUE(s.max_new_tokens() == 1024);
+  // Two oports: the per-turn record ("assistant") + the progressive
+  // streaming port ("stream").
+  EXPECT_TRUE(s.num_oports() == 2);
+  EXPECT_TRUE(s.spec().oports.size() == 2);
+  EXPECT_TRUE(string_view(s.spec().oports[0].name) == "assistant");
+  EXPECT_TRUE(string_view(s.spec().oports[1].name) == "stream");
+  // MCP tools are opt-in: off unless enable_tools is set.
+  EXPECT_FALSE(s.tools_enabled());
+}
+
+// reasoning_effort accepts the three the published template accepts,
+// and REFUSES anything else. Refusing matters more than it looks: an
+// unrecognised effort renders as no instruction, which is
+// indistinguishable from the default, so a typo would otherwise be
+// invisible for the life of the pipeline.
+TEST(text_chat_stage, reasoning_effort_config) {
+  Session sess;
+  CerrSilencer hush;
+  for (const char* ok : {"xhigh", "medium", "low"}) {
+    FlexData cfg = FlexData::from_json(
+        string(R"({"hf_dir":"/tmp/chat-fake-model","reasoning_effort":")")
+        + ok + "\"}");
+    TextChatStage s(&sess, "chat", vector<InEdge>{}, std::move(cfg));
+    EXPECT_TRUE(s.config_error().empty());
+  }
+  // Unset is fine (and is what every pre-3.8 pipeline has).
+  {
+    TextChatStage s(&sess, "chat", vector<InEdge>{}, basic_cfg_());
+    EXPECT_TRUE(s.config_error().empty());
+  }
+  for (const char* bad : {"high", "XHIGH", "none", "1"}) {
+    FlexData cfg = FlexData::from_json(
+        string(R"({"hf_dir":"/tmp/chat-fake-model","reasoning_effort":")")
+        + bad + "\"}");
+    TextChatStage s(&sess, "chat", vector<InEdge>{}, std::move(cfg));
+    EXPECT_FALSE(s.config_error().empty());
+  }
+}
+
+TEST(text_chat_stage, enable_tools_config) {
+  Session sess;
+  CerrSilencer hush;
+  FlexData cfg = FlexData::from_json(
+      R"({"hf_dir":"/tmp/chat-fake-model","enable_tools":true})");
+  TextChatStage s(&sess, "chat", vector<InEdge>{}, std::move(cfg));
+  EXPECT_TRUE(s.config_error().empty());
+  EXPECT_TRUE(s.tools_enabled());
+  EXPECT_FALSE(s.python_tool_enabled());
+}
+
+// The sandboxed run_shell / run_python tools can be allowed to use the
+// per-user system temp (default off = temp confined under the CWD). Pure
+// config parse -- no model.
+TEST(text_chat_stage, allow_system_temp_config) {
+  Session sess;
+  CerrSilencer hush;
+  {
+    TextChatStage s(&sess, "chat", vector<InEdge>{}, basic_cfg_());
+    EXPECT_FALSE(s.allow_system_temp());
+  }
+  {
+    FlexData cfg = FlexData::from_json(
+        R"({"hf_dir":"/tmp/chat-fake-model","allow_system_temp":true})");
+    TextChatStage s(&sess, "chat", vector<InEdge>{}, std::move(cfg));
+    EXPECT_TRUE(s.config_error().empty());
+    EXPECT_TRUE(s.allow_system_temp());
+  }
+}
+
+// The streaming out-port (index 1) can be narrowed to the answer only,
+// folding reasoning + tool-call spans out. Off by default. Pure config
+// parse -- no model.
+TEST(text_chat_stage, stream_answer_only_config) {
+  Session sess;
+  CerrSilencer hush;
+  {
+    TextChatStage s(&sess, "chat", vector<InEdge>{}, basic_cfg_());
+    EXPECT_FALSE(s.stream_answer_only());
+  }
+  {
+    FlexData cfg = FlexData::from_json(
+        R"({"hf_dir":"/tmp/chat-fake-model","stream_answer_only":true})");
+    TextChatStage s(&sess, "chat", vector<InEdge>{}, std::move(cfg));
+    EXPECT_TRUE(s.config_error().empty());
+    EXPECT_TRUE(s.stream_answer_only());
+  }
+}
+
+// The streaming out-port's chunk: ~20 words by default (speakable units),
+// 0 for every decoded piece as it comes. Pure config parse.
+TEST(text_chat_stage, stream_words_config) {
+  Session sess;
+  CerrSilencer hush;
+  {
+    TextChatStage s(&sess, "chat", vector<InEdge>{}, basic_cfg_());
+    EXPECT_TRUE(s.stream_words() == 20);
+  }
+  {
+    FlexData cfg = FlexData::from_json(
+        R"({"hf_dir":"/tmp/chat-fake-model","stream_words":0})");
+    TextChatStage s(&sess, "chat", vector<InEdge>{}, std::move(cfg));
+    EXPECT_TRUE(s.config_error().empty());
+    EXPECT_TRUE(s.stream_words() == 0);
+  }
+}
+
+TEST(text_chat_stage, enable_python_tool_config) {
+  Session sess;
+  CerrSilencer hush;
+  FlexData cfg = FlexData::from_json(
+      R"({"hf_dir":"/tmp/chat-fake-model","enable_python_tool":true})");
+  TextChatStage s(&sess, "chat", vector<InEdge>{}, std::move(cfg));
+  EXPECT_TRUE(s.config_error().empty());
+  EXPECT_TRUE(s.python_tool_enabled());
+  // Independent of enable_tools (which stays default-off here).
+  EXPECT_FALSE(s.tools_enabled());
+}
+
+TEST(text_chat_stage, enable_file_tools_config) {
+  Session sess;
+  CerrSilencer hush;
+  FlexData cfg = FlexData::from_json(
+      R"({"hf_dir":"/tmp/chat-fake-model","enable_file_tools":true})");
+  TextChatStage s(&sess, "chat", vector<InEdge>{}, std::move(cfg));
+  EXPECT_TRUE(s.config_error().empty());
+  EXPECT_TRUE(s.file_tools_enabled());
+  EXPECT_FALSE(s.tools_enabled());
+  EXPECT_FALSE(s.python_tool_enabled());
+  // Default file-sandbox mode is the ephemeral per-chat workspace.
+  EXPECT_TRUE(s.file_sandbox_mode() == "per-chat");
+}
+
+TEST(text_chat_stage, file_sandbox_persistent_config) {
+  Session sess;
+  CerrSilencer hush;
+  FlexData cfg = FlexData::from_json(
+      R"({"hf_dir":"/tmp/chat-fake-model","enable_file_tools":true,)"
+      R"("file_sandbox":"persistent"})");
+  TextChatStage s(&sess, "chat", vector<InEdge>{}, std::move(cfg));
+  EXPECT_TRUE(s.config_error().empty());
+  EXPECT_TRUE(s.file_tools_enabled());
+  EXPECT_TRUE(s.file_sandbox_mode() == "persistent");
+}
+
+// Persistent mode roots the file tools at the SESSION sandbox root
+// ($CWD/sandbox in the web-ui) -- not an ephemeral per-chat temp dir.
+TEST(text_chat_stage, file_sandbox_persistent_uses_session_root) {
+  namespace fs = std::filesystem;
+  const auto tmp = fs::temp_directory_path() / "vpipe_fsbx_test_root";
+  fs::create_directories(tmp);
+  Session sess(R"({"file_sandbox":{"enabled":true,"root":")"
+               + tmp.string() + R"("}})");
+  CerrSilencer hush;
+
+  TextChatStage s(&sess, "chat", vector<InEdge>{}, FlexData::from_json(
+      R"({"hf_dir":"/p","enable_file_tools":true,)"
+      R"("file_sandbox":"persistent"})"));
+  const std::string root = s.resolve_file_sandbox_for_test();
+  EXPECT_FALSE(root.empty());
+  EXPECT_TRUE(root.find("vpipe_fsbx_test_root") != std::string::npos);
+
+  // The default (per-chat) mode uses an ephemeral temp dir instead.
+  TextChatStage e(&sess, "chat", vector<InEdge>{}, FlexData::from_json(
+      R"({"hf_dir":"/p","enable_file_tools":true})"));
+  const std::string eroot = e.resolve_file_sandbox_for_test();
+  EXPECT_TRUE(eroot.find("vpipe_fsbx_test_root") == std::string::npos);
+
+  fs::remove_all(tmp);
+}
+
+TEST(text_chat_stage, enable_web_tools_config) {
+  Session sess;
+  CerrSilencer hush;
+  FlexData cfg = FlexData::from_json(
+      R"({"hf_dir":"/tmp/chat-fake-model","enable_web_tools":true})");
+  TextChatStage s(&sess, "chat", vector<InEdge>{}, std::move(cfg));
+  EXPECT_TRUE(s.config_error().empty());
+  EXPECT_TRUE(s.web_tools_enabled());
+  EXPECT_FALSE(s.tools_enabled());
+}
+
+TEST(text_chat_stage, missing_hf_dir_deferred) {
+  Session sess;
+  CerrSilencer hush;
+  FlexData cfg = FlexData::from_json(R"({"max_new_tokens":32})");
+  TextChatStage s(&sess, "chat", vector<InEdge>{}, std::move(cfg));
+  EXPECT_FALSE(s.config_error().empty());
+}
+
+TEST(text_chat_stage, bad_max_new_tokens_deferred) {
+  Session sess;
+  CerrSilencer hush;
+  FlexData cfg = FlexData::from_json(
+      R"({"hf_dir":"/p","max_new_tokens":0})");
+  TextChatStage s(&sess, "chat", vector<InEdge>{}, std::move(cfg));
+  EXPECT_FALSE(s.config_error().empty());
+}
+
+// ---- End-to-end runtime smoke (env-gated; real text model) ---------
+//
+// Targets the metal/no-MLX generation path, which only exists in the
+// no-MLX build (the MLX build drives the stage through the MLX path).
+#if defined(VPIPE_BUILD_APPLE_SILICON)
+
+namespace {
+
+// Emits one FlexData user-message string, then signals done.
+class OnePromptSource : public TypedStage<OnePromptSource> {
+public:
+  static constexpr const char* kTypeName = "ut-chat-prompt-source";
+  using TypedStage::TypedStage;
+
+  std::string prompt = "What is the capital of France? Answer in one word.";
+
+  Job process(RuntimeContext& ctx) override
+  {
+    if (_sent) { ctx.signal_done(); co_return; }
+    _sent = true;
+    co_await ctx.write(0,
+        make_payload<FlexDataPayload>(FlexData::make_string(prompt)));
+  }
+
+private:
+  bool _sent = false;
+};
+
+// Collects every per-turn FlexData beat the stage emits on oport0.
+class TurnSink : public TypedStage<TurnSink> {
+public:
+  static constexpr const char* kTypeName = "ut-chat-turn-sink";
+  using TypedStage::TypedStage;
+
+  std::vector<FlexData> take()
+  {
+    lock_guard<mutex> g(_mu);
+    return _collected;
+  }
+
+  Job process(RuntimeContext& ctx) override
+  {
+    auto in = co_await ctx.read(0);
+    if (!in) { ctx.signal_done(); co_return; }
+    const auto* p = dynamic_cast<const FlexDataPayload*>(in.get());
+    if (p) {
+      lock_guard<mutex> g(_mu);
+      _collected.push_back(p->data);
+    }
+  }
+
+private:
+  mutex                 _mu;
+  std::vector<FlexData> _collected;
+};
+
+// Collects every {text, end_of_response} beat from the streaming oport
+// (out-port 1) in arrival order.
+class StreamSink : public TypedStage<StreamSink> {
+public:
+  static constexpr const char* kTypeName = "ut-chat-stream-sink";
+  using TypedStage::TypedStage;
+
+  struct Beat { std::string text; bool eor; };
+
+  std::vector<Beat> take()
+  {
+    lock_guard<mutex> g(_mu);
+    return _beats;
+  }
+
+  Job process(RuntimeContext& ctx) override
+  {
+    auto in = co_await ctx.read(0);
+    if (!in) { ctx.signal_done(); co_return; }
+    const auto* p = dynamic_cast<const FlexDataPayload*>(in.get());
+    if (p && p->data.is_object()) {
+      auto o = p->data.as_object();
+      Beat b;
+      b.text = o.contains("text")
+          ? std::string(o.at("text").as_string("")) : std::string();
+      b.eor = o.contains("end_of_response")
+          && o.at("end_of_response").as_bool(false);
+      lock_guard<mutex> g(_mu);
+      _beats.push_back(std::move(b));
+    }
+  }
+
+private:
+  mutex             _mu;
+  std::vector<Beat> _beats;
+};
+
+// Emits a fixed list of user messages, one per beat, then signals done.
+// (OnePromptSource's multi-turn sibling.)
+class PromptListSource : public TypedStage<PromptListSource> {
+public:
+  static constexpr const char* kTypeName = "ut-chat-prompt-list-source";
+  using TypedStage::TypedStage;
+
+  std::vector<std::string> prompts;
+
+  Job process(RuntimeContext& ctx) override
+  {
+    if (_i >= prompts.size()) { ctx.signal_done(); co_return; }
+    const std::string p = prompts[_i++];
+    co_await ctx.write(0,
+        make_payload<FlexDataPayload>(FlexData::make_string(p)));
+  }
+
+private:
+  std::size_t _i = 0;
+};
+
+// UI delegate that swallows everything, so an end-to-end test can hold
+// a pointer to it (to fire interrupts through its handler registry)
+// without the model's streamed reply landing in the test log.
+class SilentUi final : public UiDelegateIntf {
+public:
+  void error(const VpipeFormat&) override {}
+  void warn(const VpipeFormat&) override {}
+  void info(const VpipeFormat&) override {}
+  UiInputStatus
+  getline(const VpipeFormat&, std::string&,
+          const std::function<bool()>&) override
+  {
+    return UiInputStatus::Eof;
+  }
+  unique_ptr<UiTextStream> open_text_stream() override
+  {
+    return make_unique<NullUiTextStream>();
+  }
+};
+
+}  // namespace
+
+// The flattened `mtp` flag wires into _mtp_enabled (metal path only).
+// Default on; explicit false disables the MTP speculative-decode fast path.
+// MTP is token-exact, so this is a perf-only switch. Pure config parse --
+// no model.
+TEST(text_chat_stage, mtp_flag_parsed) {
+  Session sess;
+  CerrSilencer hush;
+  {
+    TextChatStage s(&sess, "chat", vector<InEdge>{}, basic_cfg_());
+    EXPECT_TRUE(s.mtp_enabled());   // kSpec default = true
+  }
+  {
+    FlexData cfg = FlexData::from_json(R"({"hf_dir":"/p","mtp":false})");
+    TextChatStage s(&sess, "chat", vector<InEdge>{}, std::move(cfg));
+    EXPECT_FALSE(s.mtp_enabled());
+  }
+}
+
+TEST(text_chat_stage, metal_chat_smoke) {
+  const char* path = std::getenv("VPIPE_METAL_LM_SMOKE_MODEL");
+  if (!path || !*path) {
+    return;
+  }
+  ::setenv("VPIPE_LLM_BACKEND", "metal", 1);
+
+  Session  sess;
+  Pipeline pl("chat-smoke", &sess);
+
+  auto src = make_unique<OnePromptSource>(
+      &sess, "prompt", vector<InEdge>{}, FlexData::make_object());
+  src->allocate_oports(1);
+  auto* promptsrc = static_cast<OnePromptSource*>(
+      pl.insert_stage(std::move(src)));
+
+  FlexData cfg = FlexData::make_object();
+  {
+    auto o = cfg.as_object();
+    o.insert("hf_dir", FlexData::make_string(path));
+    o.insert("compute_dtype", FlexData::make_string("f16"));
+    o.insert("max_new_tokens", FlexData::make_int(24));
+    o.insert("max_pages", FlexData::make_int(8));
+  }
+  auto ch = make_unique<TextChatStage>(
+      &sess, "chat", vector<InEdge>{ { promptsrc, 0 } }, std::move(cfg));
+  auto* chat = static_cast<TextChatStage*>(
+      pl.insert_stage(std::move(ch)));
+
+  auto sk = make_unique<TurnSink>(
+      &sess, "sink", vector<InEdge>{ { chat, 0 } },
+      FlexData::make_object());
+  auto* sink = static_cast<TurnSink*>(pl.insert_stage(std::move(sk)));
+
+  PipelineRuntime rt(&pl, &sess);
+  const bool launched = rt.launch();
+  ::unsetenv("VPIPE_LLM_BACKEND");
+  ASSERT_TRUE(launched);
+  rt.wait_idle();
+  rt.stop();
+
+  auto turns = sink->take();
+  ASSERT_TRUE(!turns.empty());
+  bool found = false;
+  for (const auto& fd : turns) {
+    if (!fd.is_object()) { continue; }
+    auto root = fd.as_object();
+    const std::string text = root.contains("text")
+        ? std::string(root.at("text").as_string("")) : std::string();
+    const std::int64_t ctx_pos = root.contains("ctx_pos")
+        ? root.at("ctx_pos").as_int(0) : 0;
+    // ctx_pos comes from the owns_kv exec's context_seq_len (the metal
+    // backends track K/V internally); after a full turn it must be a
+    // real position: prompt + generated tokens + assistant close.
+    std::printf("[text_chat_stage.metal_smoke] ctx_pos=%lld text='%s'\n",
+                static_cast<long long>(ctx_pos), text.c_str());
+    if (!text.empty()) { found = true; }
+    EXPECT_TRUE(ctx_pos > 0);
+  }
+  EXPECT_TRUE(found);
+}
+
+// End-to-end streaming out-port (out-port 1): a real turn must arrive as
+// one or more {text, end_of_response} beats whose concatenation equals
+// the full turn text, with exactly one end_of_response beat and it last.
+TEST(text_chat_stage, metal_chat_stream) {
+  const char* path = std::getenv("VPIPE_QWEN35_TEST_MODEL_PATH");
+  if (!path || !*path) {
+    return;
+  }
+  ::setenv("VPIPE_LLM_BACKEND", "metal", 1);
+
+  Session  sess;
+  Pipeline pl("chat-stream-smoke", &sess);
+
+  auto src = make_unique<OnePromptSource>(
+      &sess, "prompt", vector<InEdge>{}, FlexData::make_object());
+  src->allocate_oports(1);
+  // A descriptive prompt so the reply spans several ~20-word chunks.
+  src->prompt = "In three or four sentences, describe a walk through a "
+                "spring garden. Keep it flowing and vivid.";
+  auto* promptsrc = static_cast<OnePromptSource*>(
+      pl.insert_stage(std::move(src)));
+
+  FlexData cfg = FlexData::make_object();
+  {
+    auto o = cfg.as_object();
+    o.insert("hf_dir", FlexData::make_string(path));
+    o.insert("compute_dtype", FlexData::make_string("f16"));
+    o.insert("max_new_tokens", FlexData::make_int(200));
+    o.insert("max_pages", FlexData::make_int(24));
+  }
+  auto ch = make_unique<TextChatStage>(
+      &sess, "chat", vector<InEdge>{ { promptsrc, 0 } }, std::move(cfg));
+  auto* chat = static_cast<TextChatStage*>(pl.insert_stage(std::move(ch)));
+
+  // out-port 0 -> full-turn record; out-port 1 -> progressive stream.
+  auto turnsk = make_unique<TurnSink>(
+      &sess, "turn", vector<InEdge>{ { chat, 0 } }, FlexData::make_object());
+  auto* turnsink = static_cast<TurnSink*>(pl.insert_stage(std::move(turnsk)));
+
+  auto strsk = make_unique<StreamSink>(
+      &sess, "stream", vector<InEdge>{ { chat, 1 } },
+      FlexData::make_object());
+  auto* streamsink = static_cast<StreamSink*>(
+      pl.insert_stage(std::move(strsk)));
+
+  PipelineRuntime rt(&pl, &sess);
+  const bool launched = rt.launch();
+  ::unsetenv("VPIPE_LLM_BACKEND");
+  ASSERT_TRUE(launched);
+  rt.wait_idle();
+  rt.stop();
+
+  auto beats = streamsink->take();
+  auto turns = turnsink->take();
+  ASSERT_TRUE(!beats.empty());
+  ASSERT_TRUE(!turns.empty());
+
+  // Exactly one end_of_response beat, and it is the final beat.
+  int eor_count = 0;
+  for (std::size_t i = 0; i < beats.size(); ++i) {
+    if (beats[i].eor) {
+      ++eor_count;
+      EXPECT_TRUE(i + 1 == beats.size());   // end_of_response is terminal
+    }
+  }
+  EXPECT_TRUE(eor_count == 1);
+
+  // Concatenated stream chunks == the full turn text (no tools here => a
+  // single decode round, so the stream is exactly the turn text).
+  std::string streamed;
+  for (const auto& b : beats) { streamed += b.text; }
+  std::string full;
+  for (const auto& fd : turns) {
+    if (!fd.is_object()) { continue; }
+    auto root = fd.as_object();
+    if (root.contains("text")) {
+      full = std::string(root.at("text").as_string(""));
+    }
+  }
+  std::printf("[text_chat_stage.metal_chat_stream] beats=%zu eor=%d "
+              "streamed=%zuB full=%zuB\n",
+              beats.size(), eor_count, streamed.size(), full.size());
+  EXPECT_TRUE(streamed == full);
+}
+
+// A user interrupt (Ctrl-C / the web UI's Interrupt button) cuts a
+// running generation short. The stage registers a handler with the
+// session's UI delegate in initialize(); firing it must end the turn
+// promptly WITHOUT an EOT from the model, while still emitting the
+// partial reply on both out-ports exactly as a natural stop would.
+//
+// The budget is deliberately huge (2000 tokens) so an un-interrupted
+// run would take tens of seconds: the stop-latency assertion below is
+// what proves the interrupt was actually honoured rather than the model
+// having finished on its own.
+TEST(text_chat_stage, metal_chat_user_interrupt) {
+  const char* path = std::getenv("VPIPE_QWEN35_TEST_MODEL_PATH");
+  if (!path || !*path) {
+    return;
+  }
+  ::setenv("VPIPE_LLM_BACKEND", "metal", 1);
+
+  Session sess;
+  // Own the delegate so the test can fire interrupts through it, and
+  // keep the streamed essay out of the test log.
+  auto ui_owned = make_unique<SilentUi>();
+  SilentUi* ui = ui_owned.get();
+  sess.set_ui_delegate(std::move(ui_owned));
+
+  Pipeline pl("chat-interrupt-smoke", &sess);
+
+  // Two turns: the second one exercises the "leave the context as is"
+  // contract -- an interrupted turn must leave a clean turn boundary in
+  // the K/V cache, so the conversation simply continues.
+  auto src = make_unique<PromptListSource>(
+      &sess, "prompt", vector<InEdge>{}, FlexData::make_object());
+  src->allocate_oports(1);
+  src->prompts = {
+      "Write a long, detailed essay about the history of cartography. "
+      "Cover every era in depth.",
+      "Now do the same for the history of clockmaking, at equal length.",
+  };
+  auto* promptsrc = static_cast<PromptListSource*>(
+      pl.insert_stage(std::move(src)));
+
+  FlexData cfg = FlexData::make_object();
+  {
+    auto o = cfg.as_object();
+    o.insert("hf_dir", FlexData::make_string(path));
+    o.insert("compute_dtype", FlexData::make_string("f16"));
+    o.insert("max_new_tokens", FlexData::make_int(2000));
+    o.insert("max_pages", FlexData::make_int(200));
+  }
+  auto ch = make_unique<TextChatStage>(
+      &sess, "chat", vector<InEdge>{ { promptsrc, 0 } }, std::move(cfg));
+  auto* chat = static_cast<TextChatStage*>(pl.insert_stage(std::move(ch)));
+
+  auto turnsk = make_unique<TurnSink>(
+      &sess, "turn", vector<InEdge>{ { chat, 0 } }, FlexData::make_object());
+  auto* turnsink = static_cast<TurnSink*>(pl.insert_stage(std::move(turnsk)));
+
+  auto strsk = make_unique<StreamSink>(
+      &sess, "stream", vector<InEdge>{ { chat, 1 } },
+      FlexData::make_object());
+  auto* streamsink = static_cast<StreamSink*>(
+      pl.insert_stage(std::move(strsk)));
+
+  PipelineRuntime rt(&pl, &sess);
+  const bool launched = rt.launch();
+  ::unsetenv("VPIPE_LLM_BACKEND");
+  ASSERT_TRUE(launched);
+
+  // Interrupt one turn: wait until the reply is genuinely under way (a
+  // streaming beat means ~20 words are already decoded, so we cut into
+  // mid-DECODE rather than racing the model load or the prefill), then
+  // fire and report how long the stage took to come to rest.
+  auto interrupt_one_turn =
+      [&](std::size_t beats_before) -> double {
+    bool streaming = false;
+    for (int i = 0; i < 2400 && !streaming; ++i) {   // up to ~120 s
+      this_thread::sleep_for(chrono::milliseconds(50));
+      streaming = streamsink->take().size() > beats_before;
+    }
+    if (!streaming) { return -1.0; }
+    // A dispatch while the stage is between turns reports 0; retry
+    // until a handler says it actually acted.
+    for (int i = 0; i < 200; ++i) {
+      if (ui->dispatch_interrupt() > 0) {
+        const auto t0 = chrono::steady_clock::now();
+        // Rest = this turn's beats stop arriving. Two consecutive
+        // quiet polls, so we don't mistake the gap between chunks for
+        // the end of the turn.
+        std::size_t last  = streamsink->take().size();
+        int         quiet = 0;
+        for (int k = 0; k < 1500 && quiet < 2; ++k) {   // up to ~15 s
+          this_thread::sleep_for(chrono::milliseconds(10));
+          const std::size_t now = streamsink->take().size();
+          quiet = (now == last) ? quiet + 1 : 0;
+          last  = now;
+        }
+        return chrono::duration<double>(
+            chrono::steady_clock::now() - t0).count();
+      }
+      this_thread::sleep_for(chrono::milliseconds(10));
+    }
+    return -1.0;
+  };
+
+  const double stop1 = interrupt_one_turn(0);
+  ASSERT_TRUE(stop1 >= 0.0);
+  const std::size_t beats_turn1 = streamsink->take().size();
+  const double stop2 = interrupt_one_turn(beats_turn1);
+  ASSERT_TRUE(stop2 >= 0.0);
+
+  rt.wait_idle();
+  rt.stop();
+
+  auto beats = streamsink->take();
+  auto turns = turnsink->take();
+
+  // One turn beat per user message, each carrying whatever was decoded
+  // before its interrupt -- emitted exactly as on a stop token.
+  ASSERT_TRUE(turns.size() == 2);
+  std::vector<std::string> texts;
+  std::vector<int64_t>     ctx_pos;
+  for (const auto& fd : turns) {
+    ASSERT_TRUE(fd.is_object());
+    auto root = fd.as_object();
+    texts.push_back(root.contains("text")
+        ? std::string(root.at("text").as_string("")) : std::string());
+    ctx_pos.push_back(root.contains("ctx_pos")
+        ? root.at("ctx_pos").as_int(0) : 0);
+  }
+  EXPECT_TRUE(!texts[0].empty());
+  EXPECT_TRUE(!texts[1].empty());
+  // The context was LEFT AS IS: turn 2 built on turn 1's cache rather
+  // than starting over, so its end position is strictly further along.
+  EXPECT_TRUE(ctx_pos[1] > ctx_pos[0]);
+
+  // Each interrupted turn closed its streaming out-port the same way a
+  // natural stop does: exactly one end_of_response beat per turn, and
+  // the turn's last beat is the one carrying it.
+  int eor_count = 0;
+  for (std::size_t i = 0; i < beats.size(); ++i) {
+    if (beats[i].eor) { ++eor_count; }
+  }
+  EXPECT_TRUE(eor_count == 2);
+  ASSERT_TRUE(!beats.empty());
+  EXPECT_TRUE(beats.back().eor);
+
+  // The whole point: decoding stopped when asked. The 2000-token budget
+  // would otherwise have run for tens of seconds per turn.
+  std::printf("[text_chat_stage.metal_chat_user_interrupt] "
+              "stop=%.2fs/%.2fs reply=%zuB/%zuB ctx_pos=%lld->%lld "
+              "beats=%zu\n",
+              stop1, stop2, texts[0].size(), texts[1].size(),
+              (long long)ctx_pos[0], (long long)ctx_pos[1], beats.size());
+  EXPECT_TRUE(stop1 < 15.0);
+  EXPECT_TRUE(stop2 < 15.0);
+}
+
+// stream_answer_only: the reasoning block is folded OUT of the streaming
+// out-port (index 1) while out-port 0 still carries the full reply. The
+// Qwen3.5-VL default is thinking-ON, so out-port 0 opens with the unified
+// thinking-START marker; the stream must contain NEITHER thinking marker,
+// and must equal the full text with the [START..END] reasoning span removed.
+TEST(text_chat_stage, metal_chat_stream_answer_only) {
+  const char* path = std::getenv("VPIPE_QWEN35_TEST_MODEL_PATH");
+  if (!path || !*path) {
+    return;
+  }
+  ::setenv("VPIPE_LLM_BACKEND", "metal", 1);
+
+  Session  sess;
+  Pipeline pl("chat-stream-answer-only", &sess);
+
+  auto src = make_unique<OnePromptSource>(
+      &sess, "prompt", vector<InEdge>{}, FlexData::make_object());
+  src->allocate_oports(1);
+  src->prompt = "What is the capital of France? Answer in one word.";
+  auto* promptsrc = static_cast<OnePromptSource*>(
+      pl.insert_stage(std::move(src)));
+
+  FlexData cfg = FlexData::make_object();
+  {
+    auto o = cfg.as_object();
+    o.insert("hf_dir", FlexData::make_string(path));
+    o.insert("compute_dtype", FlexData::make_string("f16"));
+    o.insert("max_new_tokens", FlexData::make_int(256));
+    o.insert("max_pages", FlexData::make_int(24));
+    o.insert("stream_answer_only", FlexData::make_bool(true));
+  }
+  auto ch = make_unique<TextChatStage>(
+      &sess, "chat", vector<InEdge>{ { promptsrc, 0 } }, std::move(cfg));
+  auto* chat = static_cast<TextChatStage*>(pl.insert_stage(std::move(ch)));
+
+  auto turnsk = make_unique<TurnSink>(
+      &sess, "turn", vector<InEdge>{ { chat, 0 } }, FlexData::make_object());
+  auto* turnsink = static_cast<TurnSink*>(pl.insert_stage(std::move(turnsk)));
+  auto strsk = make_unique<StreamSink>(
+      &sess, "stream", vector<InEdge>{ { chat, 1 } },
+      FlexData::make_object());
+  auto* streamsink = static_cast<StreamSink*>(
+      pl.insert_stage(std::move(strsk)));
+
+  PipelineRuntime rt(&pl, &sess);
+  const bool launched = rt.launch();
+  ::unsetenv("VPIPE_LLM_BACKEND");
+  ASSERT_TRUE(launched);
+  rt.wait_idle();
+  rt.stop();
+
+  auto beats = streamsink->take();
+  auto turns = turnsink->take();
+  ASSERT_TRUE(!turns.empty());
+
+  std::string streamed;
+  for (const auto& b : beats) { streamed += b.text; }
+  std::string full;
+  for (const auto& fd : turns) {
+    if (!fd.is_object()) { continue; }
+    auto root = fd.as_object();
+    if (root.contains("text")) {
+      full = std::string(root.at("text").as_string(""));
+    }
+  }
+
+  const std::string ts(vpipe::media_line::kThinkStart);
+  const std::string te(vpipe::media_line::kThinkEnd);
+  std::printf("[text_chat_stage.stream_answer_only] streamed=%zuB full=%zuB\n",
+              streamed.size(), full.size());
+
+  // out-port 0 opened the reasoning block; out-port 1 dropped both markers.
+  EXPECT_TRUE(full.find(ts) != std::string::npos);
+  EXPECT_TRUE(streamed.find(ts) == std::string::npos);
+  EXPECT_TRUE(streamed.find(te) == std::string::npos);
+
+  // The stream is exactly the full reply with the [START..END] reasoning
+  // span removed (no tools => a single decode round). Only assert the exact
+  // match when the model closed reasoning within budget (END present).
+  const auto s = full.find(ts);
+  const auto e = full.find(te);
+  if (s != std::string::npos && e != std::string::npos && e >= s) {
+    std::string expected = full;
+    expected.erase(s, (e + te.size()) - s);
+    EXPECT_TRUE(streamed == expected);
+    EXPECT_TRUE(!streamed.empty());   // "Paris" survives the fold
+  }
+}
+
+// ---- MCP tool calling (env-gated; a Qwen/ChatML checkpoint) ---------
+//
+// Drives one "what time is it?" turn with enable_tools=true against a
+// real ChatML model and asserts the tool loop actually fired: the stage
+// logs a `tool call 'get_current_time'` line when it dispatches the
+// model-emitted <tool_call>, and the final answer beat is non-empty.
+
+namespace {
+
+// UI delegate that records every info/warn/error message into shared
+// storage (Session routes info/warn/error through the UI delegate) so a
+// test can assert a specific line was emitted. Streams are no-ops.
+class CapturingUiDelegate : public UiDelegateIntf {
+public:
+  CapturingUiDelegate(std::shared_ptr<std::mutex>               mu,
+                      std::shared_ptr<std::vector<std::string>> lines)
+    : _mu(std::move(mu)), _lines(std::move(lines)) {}
+
+  void error(const VpipeFormat& f) override { record_(f); }
+  void warn (const VpipeFormat& f) override { record_(f); }
+  void info (const VpipeFormat& f) override { record_(f); }
+
+  UiInputStatus
+  getline(const VpipeFormat&, std::string&,
+          const std::function<bool()>&) override
+  {
+    return UiInputStatus::Eof;
+  }
+
+  std::unique_ptr<UiTextStream> open_text_stream() override
+  {
+    return std::make_unique<NullUiTextStream>();
+  }
+
+private:
+  void record_(const VpipeFormat& f)
+  {
+    std::string s = f();
+    lock_guard<mutex> g(*_mu);
+    _lines->push_back(std::move(s));
+  }
+  std::shared_ptr<std::mutex>               _mu;
+  std::shared_ptr<std::vector<std::string>> _lines;
+};
+
+}  // namespace
+
+TEST(text_chat_stage, metal_chat_tool_call_time) {
+  const char* path = std::getenv("VPIPE_QWEN35_TEST_MODEL_PATH");
+  if (!path || !*path) {
+    return;
+  }
+  ::setenv("VPIPE_LLM_BACKEND", "metal", 1);
+
+  auto mu    = std::make_shared<std::mutex>();
+  auto lines = std::make_shared<std::vector<std::string>>();
+  Session sess;
+  sess.set_ui_delegate(std::make_unique<CapturingUiDelegate>(mu, lines));
+  Pipeline pl("chat-tool-smoke", &sess);
+
+  auto src = make_unique<OnePromptSource>(
+      &sess, "prompt", vector<InEdge>{}, FlexData::make_object());
+  src->allocate_oports(1);
+  src->prompt = "What is the current date and time? Use your tools.";
+  auto* promptsrc = static_cast<OnePromptSource*>(
+      pl.insert_stage(std::move(src)));
+
+  FlexData cfg = FlexData::make_object();
+  {
+    auto o = cfg.as_object();
+    o.insert("hf_dir", FlexData::make_string(path));
+    o.insert("compute_dtype", FlexData::make_string("f16"));
+    o.insert("max_new_tokens", FlexData::make_int(256));
+    o.insert("max_pages", FlexData::make_int(16));
+    o.insert("enable_tools", FlexData::make_bool(true));
+  }
+  auto ch = make_unique<TextChatStage>(
+      &sess, "chat", vector<InEdge>{ { promptsrc, 0 } }, std::move(cfg));
+  auto* chat = static_cast<TextChatStage*>(
+      pl.insert_stage(std::move(ch)));
+
+  auto sk = make_unique<TurnSink>(
+      &sess, "sink", vector<InEdge>{ { chat, 0 } },
+      FlexData::make_object());
+  auto* sink = static_cast<TurnSink*>(pl.insert_stage(std::move(sk)));
+
+  PipelineRuntime rt(&pl, &sess);
+  const bool launched = rt.launch();
+  ::unsetenv("VPIPE_LLM_BACKEND");
+  ASSERT_TRUE(launched);
+  rt.wait_idle();
+  rt.stop();
+
+  // The final answer beat must be non-empty.
+  auto turns = sink->take();
+  ASSERT_TRUE(!turns.empty());
+  std::string final_text;
+  for (const auto& fd : turns) {
+    if (!fd.is_object()) { continue; }
+    auto root = fd.as_object();
+    if (root.contains("text")) {
+      final_text = std::string(root.at("text").as_string(""));
+    }
+  }
+  std::printf("[text_chat_stage.tool_call] final='%s'\n",
+              final_text.c_str());
+  EXPECT_TRUE(!final_text.empty());
+
+  // The stage logged a get_current_time dispatch => the tool loop fired.
+  bool tool_fired = false;
+  {
+    lock_guard<mutex> g(*mu);
+    for (const auto& l : *lines) {
+      if (l.find("tool call 'get_current_time'") != string::npos) {
+        tool_fired = true;
+        break;
+      }
+    }
+  }
+  EXPECT_TRUE(tool_fired);
+}
+
+// Same end-to-end tool-call smoke, but against a Gemma-4 checkpoint --
+// which uses the bespoke `<|tool>`/`<|tool_call>`/`<|tool_response>` DSL
+// (not Hermes JSON). Exercises the full Gemma runtime path: tools system
+// turn -> decode -> model emits `<|tool_call>call:get_current_time{}`
+// and stops on `<|tool_response>` (the assistant-close commit is skipped
+// so the turn stays open) -> parse -> dispatch -> render `response:...`
+// -> continue decoding the final answer in the SAME turn. Gated on the
+// e4b test model (VPIPE_GEMMA4_TEST_MODEL_PATH).
+TEST(text_chat_stage, metal_chat_tool_call_time_gemma) {
+  const char* path = std::getenv("VPIPE_GEMMA4_TEST_MODEL_PATH");
+  if (!path || !*path) {
+    return;
+  }
+  ::setenv("VPIPE_LLM_BACKEND", "metal", 1);
+
+  auto mu    = std::make_shared<std::mutex>();
+  auto lines = std::make_shared<std::vector<std::string>>();
+  Session sess;
+  sess.set_ui_delegate(std::make_unique<CapturingUiDelegate>(mu, lines));
+  Pipeline pl("chat-tool-smoke-gemma", &sess);
+
+  auto src = make_unique<OnePromptSource>(
+      &sess, "prompt", vector<InEdge>{}, FlexData::make_object());
+  src->allocate_oports(1);
+  src->prompt = "What is the current date and time? Use your tools.";
+  auto* promptsrc = static_cast<OnePromptSource*>(
+      pl.insert_stage(std::move(src)));
+
+  FlexData cfg = FlexData::make_object();
+  {
+    auto o = cfg.as_object();
+    o.insert("hf_dir", FlexData::make_string(path));
+    o.insert("compute_dtype", FlexData::make_string("f16"));
+    o.insert("max_new_tokens", FlexData::make_int(256));
+    o.insert("max_pages", FlexData::make_int(16));
+    o.insert("enable_tools", FlexData::make_bool(true));
+  }
+  auto ch = make_unique<TextChatStage>(
+      &sess, "chat", vector<InEdge>{ { promptsrc, 0 } }, std::move(cfg));
+  auto* chat = static_cast<TextChatStage*>(
+      pl.insert_stage(std::move(ch)));
+
+  auto sk = make_unique<TurnSink>(
+      &sess, "sink", vector<InEdge>{ { chat, 0 } },
+      FlexData::make_object());
+  auto* sink = static_cast<TurnSink*>(pl.insert_stage(std::move(sk)));
+
+  PipelineRuntime rt(&pl, &sess);
+  const bool launched = rt.launch();
+  ::unsetenv("VPIPE_LLM_BACKEND");
+  ASSERT_TRUE(launched);
+  rt.wait_idle();
+  rt.stop();
+
+  // The stage must NOT have disabled tools at init (the bug this fixes):
+  // no "no tool-calling support" warning may appear.
+  {
+    lock_guard<mutex> g(*mu);
+    for (const auto& l : *lines) {
+      EXPECT_TRUE(l.find("no tool-calling support") == string::npos);
+    }
+  }
+
+  auto turns = sink->take();
+  ASSERT_TRUE(!turns.empty());
+  std::string final_text;
+  for (const auto& fd : turns) {
+    if (!fd.is_object()) { continue; }
+    auto root = fd.as_object();
+    if (root.contains("text")) {
+      final_text = std::string(root.at("text").as_string(""));
+    }
+  }
+  std::printf("[text_chat_stage.tool_call_gemma] final='%s'\n",
+              final_text.c_str());
+  EXPECT_TRUE(!final_text.empty());
+
+  // The stage logged a get_current_time dispatch => the Gemma tool loop
+  // parsed the `<|tool_call>` DSL and ran the tool.
+  bool tool_fired = false;
+  {
+    lock_guard<mutex> g(*mu);
+    for (const auto& l : *lines) {
+      if (l.find("tool call 'get_current_time'") != string::npos) {
+        tool_fired = true;
+        break;
+      }
+    }
+  }
+  EXPECT_TRUE(tool_fired);
+}
+
+TEST(text_chat_stage, metal_chat_python_tool_compute) {
+  const char* path = std::getenv("VPIPE_QWEN35_TEST_MODEL_PATH");
+  if (!path || !*path) {
+    return;
+  }
+  if (::access("/usr/bin/sandbox-exec", X_OK) != 0) {
+    return;   // no seatbelt -> the run_python tool can't run here
+  }
+  ::setenv("VPIPE_LLM_BACKEND", "metal", 1);
+
+  auto mu    = std::make_shared<std::mutex>();
+  auto lines = std::make_shared<std::vector<std::string>>();
+  Session sess;
+  sess.set_ui_delegate(std::make_unique<CapturingUiDelegate>(mu, lines));
+  Pipeline pl("chat-python-smoke", &sess);
+
+  auto src = make_unique<OnePromptSource>(
+      &sess, "prompt", vector<InEdge>{}, FlexData::make_object());
+  src->allocate_oports(1);
+  src->prompt = "Use the run_python tool to compute 12345 * 67890 and "
+                "tell me the exact integer result.";
+  auto* promptsrc = static_cast<OnePromptSource*>(
+      pl.insert_stage(std::move(src)));
+
+  FlexData cfg = FlexData::make_object();
+  {
+    auto o = cfg.as_object();
+    o.insert("hf_dir", FlexData::make_string(path));
+    o.insert("compute_dtype", FlexData::make_string("f16"));
+    o.insert("max_new_tokens", FlexData::make_int(512));
+    o.insert("max_pages", FlexData::make_int(24));
+    o.insert("enable_python_tool", FlexData::make_bool(true));
+  }
+  auto ch = make_unique<TextChatStage>(
+      &sess, "chat", vector<InEdge>{ { promptsrc, 0 } }, std::move(cfg));
+  auto* chat = static_cast<TextChatStage*>(
+      pl.insert_stage(std::move(ch)));
+
+  auto sk = make_unique<TurnSink>(
+      &sess, "sink", vector<InEdge>{ { chat, 0 } },
+      FlexData::make_object());
+  auto* sink = static_cast<TurnSink*>(pl.insert_stage(std::move(sk)));
+
+  PipelineRuntime rt(&pl, &sess);
+  const bool launched = rt.launch();
+  ::unsetenv("VPIPE_LLM_BACKEND");
+  ASSERT_TRUE(launched);
+  rt.wait_idle();
+  rt.stop();
+
+  std::string final_text;
+  for (const auto& fd : sink->take()) {
+    if (!fd.is_object()) { continue; }
+    auto root = fd.as_object();
+    if (root.contains("text")) {
+      final_text = std::string(root.at("text").as_string(""));
+    }
+  }
+  std::printf("[text_chat_stage.python_tool] final='%s'\n",
+              final_text.c_str());
+
+  bool tool_fired = false;
+  {
+    lock_guard<mutex> g(*mu);
+    for (const auto& l : *lines) {
+      if (l.find("tool call 'run_python'") != string::npos) {
+        tool_fired = true;
+        break;
+      }
+    }
+  }
+  EXPECT_TRUE(tool_fired);
+  // 12345 * 67890 == 838102050 -- the sandboxed python computed it and
+  // the model relayed it.
+  EXPECT_TRUE(final_text.find("838102050") != string::npos);
+}
+
+TEST(text_chat_stage, metal_chat_file_tools_write_read) {
+  const char* path = std::getenv("VPIPE_QWEN35_TEST_MODEL_PATH");
+  if (!path || !*path) {
+    return;
+  }
+  ::setenv("VPIPE_LLM_BACKEND", "metal", 1);
+
+  // Use an explicit workspace dir so the test can inspect the file the
+  // model writes.
+  namespace fs = std::filesystem;
+  fs::path ws = fs::temp_directory_path() / "vpipe-ut-chat-ws";
+  std::error_code ec;
+  fs::remove_all(ws, ec);
+  fs::create_directories(ws, ec);
+
+  auto mu    = std::make_shared<std::mutex>();
+  auto lines = std::make_shared<std::vector<std::string>>();
+  Session sess;
+  sess.set_ui_delegate(std::make_unique<CapturingUiDelegate>(mu, lines));
+  Pipeline pl("chat-file-smoke", &sess);
+
+  auto src = make_unique<OnePromptSource>(
+      &sess, "prompt", vector<InEdge>{}, FlexData::make_object());
+  src->allocate_oports(1);
+  src->prompt = "Use the write_file tool to save the exact text "
+                "'vpipe-was-here' to a file named marker.txt, then use "
+                "read_file to read it back and tell me its contents.";
+  auto* promptsrc = static_cast<OnePromptSource*>(
+      pl.insert_stage(std::move(src)));
+
+  FlexData cfg = FlexData::make_object();
+  {
+    auto o = cfg.as_object();
+    o.insert("hf_dir", FlexData::make_string(path));
+    o.insert("compute_dtype", FlexData::make_string("f16"));
+    o.insert("max_new_tokens", FlexData::make_int(512));
+    o.insert("max_pages", FlexData::make_int(24));
+    o.insert("enable_file_tools", FlexData::make_bool(true));
+    o.insert("file_sandbox_dir", FlexData::make_string(ws.string()));
+  }
+  auto ch = make_unique<TextChatStage>(
+      &sess, "chat", vector<InEdge>{ { promptsrc, 0 } }, std::move(cfg));
+  auto* chat = static_cast<TextChatStage*>(
+      pl.insert_stage(std::move(ch)));
+
+  auto sk = make_unique<TurnSink>(
+      &sess, "sink", vector<InEdge>{ { chat, 0 } },
+      FlexData::make_object());
+  auto* sink = static_cast<TurnSink*>(pl.insert_stage(std::move(sk)));
+
+  PipelineRuntime rt(&pl, &sess);
+  const bool launched = rt.launch();
+  ::unsetenv("VPIPE_LLM_BACKEND");
+  ASSERT_TRUE(launched);
+  rt.wait_idle();
+  rt.stop();
+
+  std::string final_text;
+  for (const auto& fd : sink->take()) {
+    if (!fd.is_object()) { continue; }
+    auto root = fd.as_object();
+    if (root.contains("text")) {
+      final_text = std::string(root.at("text").as_string(""));
+    }
+  }
+  std::printf("[text_chat_stage.file_tools] final='%s'\n",
+              final_text.c_str());
+
+  bool wrote = false, read = false;
+  {
+    lock_guard<mutex> g(*mu);
+    for (const auto& l : *lines) {
+      if (l.find("tool call 'write_file'") != string::npos) { wrote = true; }
+      if (l.find("tool call 'read_file'")  != string::npos) { read = true; }
+    }
+  }
+  EXPECT_TRUE(wrote);
+  EXPECT_TRUE(read);
+  // The file the model wrote must actually exist in the workspace with
+  // the requested content.
+  std::ifstream f(ws / "marker.txt");
+  std::string body((std::istreambuf_iterator<char>(f)),
+                   std::istreambuf_iterator<char>());
+  EXPECT_TRUE(body.find("vpipe-was-here") != string::npos);
+  fs::remove_all(ws, ec);
+}
+
+TEST(text_chat_stage, metal_chat_web_tool_scrape) {
+  const char* path = std::getenv("VPIPE_QWEN35_TEST_MODEL_PATH");
+  const char* net  = std::getenv("VPIPE_MCP_NET_TEST");
+  if (!path || !*path || !net || !*net) {
+    return;   // needs a model AND explicit network opt-in
+  }
+  ::setenv("VPIPE_LLM_BACKEND", "metal", 1);
+
+  auto mu    = std::make_shared<std::mutex>();
+  auto lines = std::make_shared<std::vector<std::string>>();
+  Session sess;
+  sess.set_ui_delegate(std::make_unique<CapturingUiDelegate>(mu, lines));
+  Pipeline pl("chat-web-smoke", &sess);
+
+  auto src = make_unique<OnePromptSource>(
+      &sess, "prompt", vector<InEdge>{}, FlexData::make_object());
+  src->allocate_oports(1);
+  src->prompt = "Use the scrape_page tool on https://example.com/ and "
+                "tell me the main heading or title of the page.";
+  auto* promptsrc = static_cast<OnePromptSource*>(
+      pl.insert_stage(std::move(src)));
+
+  FlexData cfg = FlexData::make_object();
+  {
+    auto o = cfg.as_object();
+    o.insert("hf_dir", FlexData::make_string(path));
+    o.insert("compute_dtype", FlexData::make_string("f16"));
+    o.insert("max_new_tokens", FlexData::make_int(512));
+    o.insert("max_pages", FlexData::make_int(24));
+    o.insert("enable_web_tools", FlexData::make_bool(true));
+  }
+  auto ch = make_unique<TextChatStage>(
+      &sess, "chat", vector<InEdge>{ { promptsrc, 0 } }, std::move(cfg));
+  auto* chat = static_cast<TextChatStage*>(
+      pl.insert_stage(std::move(ch)));
+
+  auto sk = make_unique<TurnSink>(
+      &sess, "sink", vector<InEdge>{ { chat, 0 } },
+      FlexData::make_object());
+  auto* sink = static_cast<TurnSink*>(pl.insert_stage(std::move(sk)));
+
+  PipelineRuntime rt(&pl, &sess);
+  const bool launched = rt.launch();
+  ::unsetenv("VPIPE_LLM_BACKEND");
+  ASSERT_TRUE(launched);
+  rt.wait_idle();
+  rt.stop();
+
+  std::string final_text;
+  for (const auto& fd : sink->take()) {
+    if (!fd.is_object()) { continue; }
+    auto root = fd.as_object();
+    if (root.contains("text")) {
+      final_text = std::string(root.at("text").as_string(""));
+    }
+  }
+  std::printf("[text_chat_stage.web_tool] final='%s'\n",
+              final_text.c_str());
+
+  bool fired = false;
+  {
+    lock_guard<mutex> g(*mu);
+    for (const auto& l : *lines) {
+      if (l.find("tool call 'scrape_page'") != string::npos
+          || l.find("tool call 'fetch_url'") != string::npos) {
+        fired = true;
+        break;
+      }
+    }
+  }
+  EXPECT_TRUE(fired);
+  // example.com's page is titled/headed "Example Domain".
+  EXPECT_TRUE(final_text.find("Example Domain") != string::npos);
+}
+
+// ---- Media-line turns (env-gated; the VL checkpoint) ----------------
+
+namespace {
+
+// Run one prompt through a fresh {source -> text-chat -> sink} mini-
+// pipeline against `model_path` and return the collected turn texts.
+std::vector<std::string>
+run_chat_turn_(const std::string& model_path, const std::string& prompt)
+{
+  ::setenv("VPIPE_LLM_BACKEND", "metal", 1);
+  Session  sess;
+  Pipeline pl("chat-media-smoke", &sess);
+
+  auto src = make_unique<OnePromptSource>(
+      &sess, "prompt", vector<InEdge>{}, FlexData::make_object());
+  src->allocate_oports(1);
+  src->prompt = prompt;
+  auto* promptsrc = static_cast<OnePromptSource*>(
+      pl.insert_stage(std::move(src)));
+
+  FlexData cfg = FlexData::make_object();
+  {
+    auto o = cfg.as_object();
+    o.insert("hf_dir", FlexData::make_string(model_path));
+    o.insert("compute_dtype", FlexData::make_string("f16"));
+    o.insert("max_new_tokens", FlexData::make_int(96));
+    o.insert("max_pages", FlexData::make_int(8));
+  }
+  auto ch = make_unique<TextChatStage>(
+      &sess, "chat", vector<InEdge>{ { promptsrc, 0 } }, std::move(cfg));
+  auto* chat = static_cast<TextChatStage*>(
+      pl.insert_stage(std::move(ch)));
+
+  auto sk = make_unique<TurnSink>(
+      &sess, "sink", vector<InEdge>{ { chat, 0 } },
+      FlexData::make_object());
+  auto* sink = static_cast<TurnSink*>(pl.insert_stage(std::move(sk)));
+
+  PipelineRuntime rt(&pl, &sess);
+  const bool launched = rt.launch();
+  ::unsetenv("VPIPE_LLM_BACKEND");
+  if (!launched) {
+    return {};
+  }
+  rt.wait_idle();
+  rt.stop();
+
+  std::vector<std::string> texts;
+  for (const auto& fd : sink->take()) {
+    if (!fd.is_object()) { continue; }
+    auto root = fd.as_object();
+    if (root.contains("text")) {
+      texts.emplace_back(root.at("text").as_string(""));
+    }
+  }
+  return texts;
+}
+
+std::string
+lower_(std::string s)
+{
+  std::transform(s.begin(), s.end(), s.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  return s;
+}
+
+// Write a solid-red 128x128 binary PPM under the temp dir.
+std::string
+write_red_ppm_()
+{
+  const auto path = std::filesystem::temp_directory_path()
+      / "vpipe-ut-chat-red.ppm";
+  std::ofstream f(path, std::ios::binary | std::ios::trunc);
+  f << "P6\n128 128\n255\n";
+  for (int i = 0; i < 128 * 128; ++i) {
+    f.put(static_cast<char>(0xff));
+    f.put(static_cast<char>(0x00));
+    f.put(static_cast<char>(0x00));
+  }
+  return path.string();
+}
+
+}  // namespace
+
+// An image attached via a media-line fs marker reaches the model: the
+// marker is parsed before the tokenizer, the file decodes through
+// FFmpeg, the LM's own vision tower encodes it, and the embeddings
+// splice into the prefill at the marker position. A solid-red image +
+// "what color" must put "red" somewhere in the reply (the VL family
+// default keeps thinking on; the reasoning text counts too).
+TEST(text_chat_stage, metal_chat_media_image_turn) {
+  const char* path = std::getenv("VPIPE_QWEN35_TEST_MODEL_PATH");
+  if (!path || !*path) {
+    return;
+  }
+  const std::string img = write_red_ppm_();
+  const std::string prompt =
+      "Look at this image: "
+      + vpipe::media_line::make_fs_marker(
+            vpipe::media_line::Modality::Image, img)
+      + " What is the dominant color of the image? "
+        "Answer in one word.";
+  auto texts = run_chat_turn_(path, prompt);
+  ASSERT_TRUE(!texts.empty());
+  bool has_red = false;
+  for (const auto& t : texts) {
+    std::printf("[text_chat_stage.media_image] text='%s'\n", t.c_str());
+    if (lower_(t).find("red") != std::string::npos) { has_red = true; }
+  }
+  EXPECT_TRUE(has_red);
+}
+
+// An attachment whose modality the model does not provide (audio on
+// Qwen3.5-VL: no audio tower, no audio_pad token) is warned about and
+// DROPPED, and the surrounding text still runs as a plain turn.
+TEST(text_chat_stage, metal_chat_media_unsupported_drops) {
+  const char* path = std::getenv("VPIPE_QWEN35_TEST_MODEL_PATH");
+  if (!path || !*path) {
+    return;
+  }
+  // The capability check rejects the modality before touching the
+  // path, so a nonexistent file is fine here.
+  const std::string prompt =
+      "What is the capital of France? "
+      + vpipe::media_line::make_fs_marker(
+            vpipe::media_line::Modality::Audio, "/nonexistent/clip.wav")
+      + " Answer in one word.";
+  auto texts = run_chat_turn_(path, prompt);
+  ASSERT_TRUE(!texts.empty());
+  bool has_paris = false;
+  for (const auto& t : texts) {
+    std::printf("[text_chat_stage.media_drop] text='%s'\n", t.c_str());
+    if (lower_(t).find("paris") != std::string::npos) {
+      has_paris = true;
+    }
+  }
+  EXPECT_TRUE(has_paris);
+}
+
+namespace {
+
+// Write a 1 s, 16 kHz, s16 mono WAV carrying a 440 Hz sine.
+std::string
+write_sine_wav_()
+{
+  const auto path = std::filesystem::temp_directory_path()
+      / "vpipe-ut-chat-sine.wav";
+  std::ofstream f(path, std::ios::binary | std::ios::trunc);
+  constexpr int      kRate    = 16000;
+  constexpr int      kSamples = kRate;
+  constexpr uint32_t kDataLen = kSamples * 2;
+  auto u32 = [&](uint32_t v) {
+    for (int i = 0; i < 4; ++i) {
+      f.put(static_cast<char>((v >> (8 * i)) & 0xff));
+    }
+  };
+  auto u16 = [&](uint16_t v) {
+    f.put(static_cast<char>(v & 0xff));
+    f.put(static_cast<char>(v >> 8));
+  };
+  f << "RIFF"; u32(36 + kDataLen); f << "WAVE";
+  f << "fmt "; u32(16); u16(1); u16(1); u32(kRate);
+  u32(kRate * 2); u16(2); u16(16);
+  f << "data"; u32(kDataLen);
+  for (int i = 0; i < kSamples; ++i) {
+    const double v = 0.5 * std::sin(2.0 * 3.14159265358979 * 440.0
+                                    * i / kRate);
+    u16(static_cast<uint16_t>(static_cast<int16_t>(v * 32767.0)));
+  }
+  return path.string();
+}
+
+}  // namespace
+
+// The Qwen3.5-VL family default is thinking-ON: the template opens the
+// reasoning block in the prompt, the stage emits the unified
+// thinking-START marker into the stream, and the model's generated
+// `</think>` is rewritten to the unified END marker by the
+// detokenizer. The turn text must carry the START marker (and, when
+// the model closed its reasoning within budget, the END marker) --
+// never the family-specific `</think>` literal.
+TEST(text_chat_stage, metal_chat_thinking_markers_unified) {
+  const char* path = std::getenv("VPIPE_QWEN35_TEST_MODEL_PATH");
+  if (!path || !*path) {
+    return;
+  }
+  auto texts = run_chat_turn_(
+      path, "What is the capital of France? Answer in one word.");
+  ASSERT_TRUE(!texts.empty());
+  bool has_start = false, has_literal = false;
+  for (const auto& t : texts) {
+    if (t.find(vpipe::media_line::kThinkStart) != std::string::npos) {
+      has_start = true;
+    }
+    if (t.find("</think>") != std::string::npos) { has_literal = true; }
+  }
+  EXPECT_TRUE(has_start);
+  EXPECT_TRUE(!has_literal);
+}
+
+// Gemma-4 e4b is the tree's image+audio chat family: one turn mixing
+// BOTH modalities must render (boi/pad/eoi + boa/pad/eoa in-line) and
+// splice through the gemma towers. The signal here is mechanical --
+// the turn prefills with both blocks and decodes a non-empty reply
+// mentioning the image's color; the audio content assert stays loose
+// (a bare sine has no canonical name).
+TEST(text_chat_stage, metal_chat_media_gemma_image_audio_turn) {
+  const char* path = std::getenv("VPIPE_GEMMA4_TEST_MODEL_PATH");
+  if (!path || !*path) {
+    return;
+  }
+  const std::string img = write_red_ppm_();
+  const std::string wav = write_sine_wav_();
+  const std::string prompt =
+      "Here is a picture: "
+      + vpipe::media_line::make_fs_marker(
+            vpipe::media_line::Modality::Image, img)
+      + " and a sound clip: "
+      + vpipe::media_line::make_fs_marker(
+            vpipe::media_line::Modality::Audio, wav)
+      + " What is the dominant color of the picture?";
+  auto texts = run_chat_turn_(path, prompt);
+  ASSERT_TRUE(!texts.empty());
+  bool has_red = false;
+  for (const auto& t : texts) {
+    std::printf("[text_chat_stage.media_gemma] text='%s'\n", t.c_str());
+    if (lower_(t).find("red") != std::string::npos) { has_red = true; }
+  }
+  EXPECT_TRUE(has_red);
+}
+
+// ---- CONVERSATION beats -------------------------------------------
+//
+// A host that runs a graph per turn sends the whole conversation as an
+// object beat; the context the turn ends on is kept under its key with
+// the model (kept warm), taken back by the next graph and only the new
+// messages prefilled; saved to the host's folder when the model must go
+// and read back from there. The host's tools are called back, not run.
+
+namespace {
+
+// Emits one FlexData object beat, then signals done.
+class ObjectBeatSource : public TypedStage<ObjectBeatSource> {
+public:
+  static constexpr const char* kTypeName = "ut-chat-object-source";
+  using TypedStage::TypedStage;
+
+  FlexData beat;
+
+  Job process(RuntimeContext& ctx) override
+  {
+    if (_sent) { ctx.signal_done(); co_return; }
+    _sent = true;
+    co_await ctx.write(0, make_payload<FlexDataPayload>(beat));
+  }
+
+private:
+  bool _sent = false;
+};
+
+// One graph -- source, text-chat, sink -- on `sess`, as a host runs a
+// turn: the turn record, or null.
+FlexData
+run_conversation_turn_(Session& sess, const char* path, const string& beat)
+{
+  Pipeline pl("chat-conversation", &sess);
+  auto src = make_unique<ObjectBeatSource>(
+      &sess, "beat", vector<InEdge>{}, FlexData::make_object());
+  src->allocate_oports(1);
+  src->beat = FlexData::from_json(beat);
+  auto* bsrc = static_cast<ObjectBeatSource*>(pl.insert_stage(std::move(src)));
+  FlexData cfg = FlexData::make_object();
+  {
+    auto o = cfg.as_object();
+    o.insert("hf_dir", FlexData::make_string(path));
+    o.insert("compute_dtype", FlexData::make_string("f16"));
+    o.insert("max_new_tokens", FlexData::make_int(96));
+    o.insert("page_tokens", FlexData::make_int(16));
+    o.insert("max_pages", FlexData::make_int(512));
+    o.insert("keep_loaded", FlexData::make_real(60.0));
+    o.insert("disable_thinking", FlexData::make_bool(true));
+  }
+  auto ch = make_unique<TextChatStage>(
+      &sess, "chat", vector<InEdge>{ { bsrc, 0 } }, std::move(cfg));
+  auto* chat = static_cast<TextChatStage*>(pl.insert_stage(std::move(ch)));
+  auto sk = make_unique<TurnSink>(
+      &sess, "sink", vector<InEdge>{ { chat, 0 } }, FlexData::make_object());
+  auto* sink = static_cast<TurnSink*>(pl.insert_stage(std::move(sk)));
+  ::setenv("VPIPE_LLM_BACKEND", "metal", 1);
+  PipelineRuntime rt(&pl, &sess);
+  const bool launched = rt.launch();
+  ::unsetenv("VPIPE_LLM_BACKEND");
+  if (!launched) { return FlexData(); }
+  rt.wait_idle();
+  rt.stop();
+  auto turns = sink->take();
+  return turns.empty() ? FlexData() : turns.back();
+}
+
+string
+field_(const FlexData& t, const char* key)
+{
+  if (!t.is_object() || !t.as_object().contains(key)) { return {}; }
+  const FlexData v = t.as_object().at(key);
+  return v.is_string() ? string(v.as_string()) : v.to_json();
+}
+
+int64_t
+int_field_(const FlexData& t, const char* key)
+{
+  if (!t.is_object() || !t.as_object().contains(key)) { return -1; }
+  return t.as_object().at(key).as_int(-1);
+}
+
+// A message as JSON.
+string
+msg_(const string& role, const string& content)
+{
+  FlexData m = FlexData::make_object();
+  {
+    auto o = m.as_object();
+    o.insert("role", FlexData::make_string(role));
+    o.insert("content", FlexData::make_string(content));
+  }
+  return m.to_json();
+}
+
+string
+conv_beat_(const vector<string>& msgs, const string& key,
+           const string& dir, const string& tools = "")
+{
+  string s = "{\"messages\":[";
+  for (size_t i = 0; i < msgs.size(); ++i) {
+    s += (i ? "," : "") + msgs[i];
+  }
+  s += "],\"context\":\"" + key + "\"";
+  if (!dir.empty()) { s += ",\"context_dir\":\"" + dir + "\""; }
+  if (!tools.empty()) { s += ",\"tools\":" + tools; }
+  return s + "}";
+}
+
+}  // namespace
+
+TEST(text_chat_stage, metal_chat_conversation_kept_saved_read_back) {
+  const char* path = std::getenv("VPIPE_QWEN35_TEST_MODEL_PATH");
+  if (!path || !*path) { return; }
+  Session sess;
+  sess.set_ui_delegate(std::make_unique<SilentUi>());
+  const auto dir = std::filesystem::temp_directory_path()
+      / ("vpipe-conv-" + std::to_string(::getpid()));
+  std::filesystem::remove_all(dir);
+  const string d = dir.string();
+
+  vector<string> msgs = {
+      msg_("system", "You are a terse assistant. Answer in a few words."),
+      msg_("user", "My name is Ada. Reply with just: OK")};
+  const FlexData r1 = run_conversation_turn_(sess, path,
+                                             conv_beat_(msgs, "conv", d));
+  std::printf("[conversation] 1: '%s' restored=%s prefilled=%lld\n",
+              field_(r1, "text").c_str(), field_(r1, "restored").c_str(),
+              (long long)int_field_(r1, "prefilled"));
+  ASSERT_TRUE(!field_(r1, "text").empty());
+  EXPECT_TRUE(field_(r1, "restored") == "new");
+  EXPECT_TRUE(field_(r1, "finish") == "stop");
+  // Its speed, as a host shows it: the tokens decoded beside the time.
+  EXPECT_TRUE(int_field_(r1, "decoded") >= 1);
+  EXPECT_TRUE(int_field_(r1, "prefilled") > 0);
+
+  // The next turn: what it held is reused, the new message prefilled.
+  msgs.push_back(msg_("assistant", field_(r1, "text")));
+  msgs.push_back(msg_("user", "What is my name? One word."));
+  const FlexData r2 = run_conversation_turn_(sess, path,
+                                             conv_beat_(msgs, "conv", d));
+  std::printf("[conversation] 2: '%s' restored=%s reused=%lld "
+              "prefilled=%lld\n", field_(r2, "text").c_str(),
+              field_(r2, "restored").c_str(),
+              (long long)int_field_(r2, "reused"),
+              (long long)int_field_(r2, "prefilled"));
+  EXPECT_TRUE(field_(r2, "restored") == "memory");
+  EXPECT_TRUE(int_field_(r2, "reused") > int_field_(r1, "prefilled"));
+  EXPECT_TRUE(int_field_(r2, "prefilled") < int_field_(r1, "prefilled"));
+  EXPECT_TRUE(field_(r2, "text").find("Ada") != string::npos);
+  // What the kept context holds is what the conversation rendered again
+  // reads: a fresh context of the same messages prefills as many tokens
+  // as the kept one reused and prefilled.
+  const FlexData r2f = run_conversation_turn_(
+      sess, path, conv_beat_(msgs, "conv-fresh", ""));
+  std::printf("[conversation] 2 fresh: '%s' prefilled=%lld\n",
+              field_(r2f, "text").c_str(),
+              (long long)int_field_(r2f, "prefilled"));
+  EXPECT_TRUE(field_(r2f, "restored") == "new");
+  EXPECT_TRUE(int_field_(r2f, "prefilled")
+              == int_field_(r2, "reused") + int_field_(r2, "prefilled"));
+  EXPECT_TRUE(sess.drop_chat_context("conv-fresh").code == 0);
+
+  // The model must go (a launch claims other weights and does not fit
+  // beside it): the conversation is saved to its folder first ...
+  auto* mgr = sess.generative_model_manager();
+  ASSERT_TRUE(mgr != nullptr);
+  mgr->clear_declarations();
+  mgr->declare_weights("/nonexistent/another-model", 1 << 20);
+  EXPECT_TRUE(mgr->release_warm_unclaimed() == 1);
+  mgr->clear_declarations();
+  const auto file = dir / "conv.vctx";
+  EXPECT_TRUE(std::filesystem::exists(file));
+  // ... and the next turn, the model loaded again, reads it back.
+  msgs.push_back(msg_("assistant", field_(r2, "text")));
+  msgs.push_back(msg_("user", "Spell my name backwards."));
+  const FlexData r3 = run_conversation_turn_(sess, path,
+                                             conv_beat_(msgs, "conv", d));
+  std::printf("[conversation] 3: '%s' restored=%s reused=%lld "
+              "prefilled=%lld\n", field_(r3, "text").c_str(),
+              field_(r3, "restored").c_str(),
+              (long long)int_field_(r3, "reused"),
+              (long long)int_field_(r3, "prefilled"));
+  EXPECT_TRUE(field_(r3, "restored") == "disk");
+  EXPECT_TRUE(int_field_(r3, "reused") > int_field_(r2, "reused"));
+  EXPECT_TRUE(!std::filesystem::exists(file));
+
+  // Messages that do not begin with what it holds: a new context.
+  vector<string> other = {msg_("user", "Say hello.")};
+  const FlexData r4 = run_conversation_turn_(sess, path,
+                                             conv_beat_(other, "conv", d));
+  EXPECT_TRUE(field_(r4, "restored") == "new");
+  EXPECT_TRUE(sess.drop_chat_context("conv").code == 0);
+  EXPECT_TRUE(sess.drop_chat_context("conv").code != 0);
+  std::filesystem::remove_all(dir);
+}
+
+TEST(text_chat_stage, metal_chat_conversation_calls_the_host_tools) {
+  const char* path = std::getenv("VPIPE_QWEN35_TEST_MODEL_PATH");
+  if (!path || !*path) { return; }
+  Session sess;
+  sess.set_ui_delegate(std::make_unique<SilentUi>());
+  const string tools = R"([{"name":"set_title",
+      "description":"Sets the title of the current slide.",
+      "parameters":{"type":"object",
+        "properties":{"title":{"type":"string"}},"required":["title"]}}])";
+  vector<string> msgs = {
+      msg_("system", "You edit slides with the tools you are given."),
+      msg_("user", "Set the slide's title to Water.")};
+  const FlexData r1 = run_conversation_turn_(
+      sess, path, conv_beat_(msgs, "tools", "", tools));
+  std::printf("[conversation.tools] 1: '%s' finish=%s calls=%s\n",
+              field_(r1, "text").c_str(), field_(r1, "finish").c_str(),
+              field_(r1, "tool_calls").c_str());
+  EXPECT_TRUE(field_(r1, "finish") == "tool_calls");
+  const string calls = field_(r1, "tool_calls");
+  EXPECT_TRUE(calls.find("set_title") != string::npos);
+  EXPECT_TRUE(calls.find("Water") != string::npos);
+  // Its result back as a tool message: the reply continues from it.
+  msgs.push_back(msg_("assistant", field_(r1, "text")));
+  msgs.push_back(msg_("tool", R"({"ok":true,"title":"Water"})"));
+  const FlexData r2 = run_conversation_turn_(
+      sess, path, conv_beat_(msgs, "tools", "", tools));
+  std::printf("[conversation.tools] 2: '%s' finish=%s restored=%s\n",
+              field_(r2, "text").c_str(), field_(r2, "finish").c_str(),
+              field_(r2, "restored").c_str());
+  EXPECT_TRUE(field_(r2, "restored") == "memory");
+  EXPECT_TRUE(field_(r2, "finish") == "stop");
+  // The host's tools change: the kept context advertises the old ones,
+  // so the conversation starts again in a new one.
+  const string tools2 = tools.substr(0, tools.size() - 1)
+      + R"(,{"name":"set_color","description":"Sets the text color.",
+      "parameters":{"type":"object",
+        "properties":{"color":{"type":"string"}}}}])";
+  msgs.push_back(msg_("assistant", field_(r2, "text")));
+  msgs.push_back(msg_("user", "Thanks."));
+  const FlexData r3 = run_conversation_turn_(
+      sess, path, conv_beat_(msgs, "tools", "", tools2));
+  std::printf("[conversation.tools] 3 (tools changed): restored=%s\n",
+              field_(r3, "restored").c_str());
+  EXPECT_TRUE(field_(r3, "restored") == "new");
+  EXPECT_TRUE(sess.drop_chat_context("tools").code == 0);
+}
+
+#endif  // VPIPE_BUILD_APPLE_SILICON

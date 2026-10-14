@@ -1,0 +1,401 @@
+// vpipe::SessionIntf -- the abstract surface a vpipe library user
+// drives. Concrete sessions are constructed through SessionManager
+// (vpipe/session-manager.h) and outlive every PipelineHandle /
+// StageHandle they hand out.
+//
+// Threading model:
+//   * `load_pipeline`, `create_pipeline`, and the lifecycle
+//     methods (`launch_pipeline`, `pause_pipeline`,
+//     `stop_pipeline`, `unload_pipeline`, `store_pipeline`) are
+//     serialized by an internal mutex; they are safe to call from
+//     any thread.
+//   * `debug_level`, `log_to_stdout`, `log_to_db` are *not*
+//     guaranteed safe to interleave with active log writes from
+//     worker threads; they are rejected with Status{3} while any
+//     pipeline owned by the session is currently launched.
+//
+// Lifetime:
+//   Every PipelineHandle returned from a SessionIntf is opaque and
+//   borrowed -- the impl is owned by the session. When the session
+//   is destroyed every handle it produced becomes invalid; using a
+//   stale handle is a Status{1} (bad request), not undefined
+//   behaviour.
+
+#ifndef SESSION_INTF_H
+#define SESSION_INTF_H
+
+#include "vpipe/pipeline-handle.h"
+#include "vpipe/status.h"
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <string_view>
+
+#include "vpipe/export.h"
+
+VPIPE_API_BEGIN
+
+namespace vpipe {
+
+class SessionIntf {
+public:
+  SessionIntf() {};
+  virtual ~SessionIntf() = default;
+
+  // Load a pipeline from either an inline spec or a file path.
+  //
+  // If `spec` begins with `{` or `[` (after leading whitespace) it
+  // is parsed directly as an inline JSON spec document. Otherwise it
+  // is a filesystem path, whose contents are format-auto-detected: a
+  // leading `{`/`[` is JSON, anything else the FlexData binary
+  // encoding.
+  //
+  // The returned handle is null (use !valid()) if the inline spec /
+  // file fails to parse, the file cannot be read, or any stage fails
+  // to instantiate; failures are reported through the session log
+  // delegate. A file path is remembered on the handle's impl so a
+  // subsequent no-arg `store_pipeline(handle)` round-trips back to
+  // it; an inline spec carries no path, so that call reports
+  // Status{1} until a path-taking `store_pipeline` sets one.
+  virtual PipelineHandle load_pipeline(std::string_view spec) = 0;
+
+  // Load a pipeline from a spec document already in memory -- the
+  // document the JSON form parses into -- so a host that builds its
+  // graphs in code skips writing and re-parsing JSON. Otherwise as
+  // above: a null handle on failure, reported through the log delegate;
+  // no storage path. Needs common/flex-data.h. (Non-virtual: the library
+  // implements it for the sessions it creates, and the interface's
+  // vtable stays as it was.)
+  PipelineHandle load_pipeline(const FlexData& spec);
+
+  // Create a new empty pipeline with the given id. The returned
+  // handle is owned by this session and remains valid until the
+  // session is destroyed or `unload_pipeline` is called on it.
+  virtual PipelineHandle create_pipeline(std::string) = 0;
+
+  // Lifecycle -- all four take a handle previously returned by
+  // load_/create_pipeline. An unknown handle gets Status{1}; a
+  // runtime-level failure gets Status{2}.
+  //
+  //   launch_pipeline -- spin up the runtime: allocate edge buffers,
+  //                      schedule one driver coroutine per stage on
+  //                      the session ThreadPool. Returns once every
+  //                      driver has been scheduled (not once they
+  //                      have finished).
+  //   pause_pipeline  -- ask the runtime to stop on the next
+  //                      iteration boundary; non-blocking.
+  //   stop_pipeline   -- pause + close every edge buffer + wait for
+  //                      every driver to reach final_suspend, then
+  //                      destroy the runtime.
+  //   unload_pipeline -- stop (if running) + destroy the pipeline
+  //                      graph + drop the impl.
+  //   store_pipeline  -- persist the pipeline to its storage URL
+  //                      (set by `load_pipeline` or by the
+  //                      path-taking overload). The format is
+  //                      chosen from the path extension:
+  //                      `.json` -> pretty JSON; anything else ->
+  //                      FlexData binary. Returns Status{1} if
+  //                      no URL has been associated with this
+  //                      handle yet.
+  virtual Status launch_pipeline(PipelineHandle) = 0;
+  virtual Status pause_pipeline(PipelineHandle) = 0;
+  virtual Status stop_pipeline(PipelineHandle) = 0;
+  virtual Status unload_pipeline(PipelineHandle) = 0;
+  virtual Status store_pipeline(PipelineHandle) = 0;
+  // Path-taking overload of store_pipeline: associates `path` with
+  // the handle (so subsequent no-arg calls reuse it) and persists
+  // immediately. Format is selected from the extension as above.
+  virtual Status store_pipeline(PipelineHandle,
+                                std::string_view path) = 0;
+
+  // Block the calling thread until every pipeline owned by this
+  // session that is currently launched has reached *data-driven*
+  // idle -- i.e. every driver coroutine has returned. Pipelines
+  // that have one-shot work (e.g. a single inference, a finite
+  // transcode) signal their own completion via
+  // RuntimeContext::signal_done() and the EOS cascades through
+  // the graph; wait_pipelines blocks until that cascade finishes
+  // for every launched pipeline. Compare to stop_pipeline(), which
+  // *preempts* in-flight work by closing edge buffers and waking
+  // suspended drivers -- it does not let one-shot stages finish.
+  //
+  // `timeout_ms`:
+  //   negative   -- wait forever (the default).
+  //   0          -- non-blocking probe.
+  //   positive   -- wait up to this many milliseconds.
+  //
+  // Returns:
+  //   Status{0}  -- every pipeline in the snapshot taken at call
+  //                 time reached idle.
+  //   Status{4}  -- timeout elapsed before all pipelines reached
+  //                 idle. Pipelines still launched continue to
+  //                 run; the caller may retry, stop_pipeline, or
+  //                 unload_pipeline.
+  //
+  // Snapshot semantics: the wait operates on the set of launched
+  // pipelines captured at entry. A pipeline launched while the
+  // wait is in progress is NOT picked up -- call wait_pipelines
+  // again to include it.
+  //
+  // Thread-safety note: this method is intentionally NOT safe to
+  // call from one thread while another thread calls stop_pipeline
+  // / unload_pipeline on the same session. The typical pattern is
+  // a single control thread (e.g. Python's main thread) doing
+  // launch -> wait -> unload sequentially. SIGINT handling is
+  // expected to interrupt the wait via the binding layer
+  // (Python's signal machinery; the binding releases the GIL with
+  // periodic PyErr_CheckSignals), after which the caller's
+  // exception path can sequentially issue stop_pipeline /
+  // unload_pipeline from the same thread that was blocked here. A host
+  // with a control thread per pipeline waits with wait_pipeline (below).
+  virtual Status wait_pipelines(int timeout_ms = -1) = 0;
+
+  // Block until ONE pipeline has reached data-driven idle, as
+  // wait_pipelines does for all of them -- for a host that drives
+  // several pipelines at once, each from a control thread of its own (a
+  // download beside a generation). wait_pipelines cannot serve that: it
+  // waits for every launched pipeline, so a thread never sees its own
+  // finish while another runs, and it holds raw pointers to the others,
+  // which their threads may stop and unload under it.
+  //
+  // `timeout_ms` as wait_pipelines'. Returns Status{0} once it is idle
+  // (or not launched), Status{4} on a timeout -- it still runs -- and
+  // Status{1} for an unknown handle.
+  //
+  // Thread-safety: safe while other threads launch, stop and unload
+  // OTHER pipelines of the session. Stopping or unloading THIS pipeline
+  // from another thread while the wait runs is the caller's to
+  // serialize, as for wait_pipelines. (Non-virtual, as progress() is:
+  // the interface's vtable stays as it was.)
+  Status wait_pipeline(PipelineHandle, int timeout_ms = -1);
+
+  // A CONVERSATION let go: the K/V that text-chat's conversation beats
+  // kept under `key` with its model (their `context`), dropped from
+  // memory now rather than when the model's warm hold ends -- the host's
+  // conversation is over. A context saved to the host's `context_dir`
+  // stays there: the folder is the host's. Status{0} when one was kept,
+  // Status{1} when none was. Non-virtual, as wait_pipeline.
+  Status drop_chat_context(std::string_view key);
+
+  // MODELS LET GO: every model checkpoint nothing holds at this moment --
+  // its weights, the copies a model made of them -- given back now,
+  // rather than kept for a later run, which then reads it from disk
+  // again. For a host that would rather have the memory than a faster
+  // next start.
+  //
+  // What decides it is what is HELD now, not which pipelines exist:
+  //   - A LOADED pipeline holds what its stages hold, launched or not.
+  //     One that finished but was not unloaded still has its models, so
+  //     unload it first.
+  //   - A RUNNING pipeline whose stage has let a model go for now (a
+  //     stage with `unload_when_idle`, between beats; a video model
+  //     released between clips on a small machine) loses it, and its
+  //     stage reads it from disk when it takes it back.
+  //   - The model text-chat keeps warm (keep_loaded) holds its own, and
+  //     stays, with its conversations.
+  // Without this, an UNLOADED pipeline's checkpoints are kept, PARKED --
+  // purgeable, so the kernel may take them -- until another load needs
+  // the room. Returns the bytes given back (0 without a model manager);
+  // a parked checkpoint counts in full, even where the kernel had
+  // already taken some of its pages. Non-virtual, as wait_pipeline.
+  std::size_t release_idle_models();
+
+  // Runtime overrides on top of the boot-time `log.*` config block.
+  // All four are rejected with Status{3} while any pipeline owned
+  // by this session is currently launched -- log-delegate swaps
+  // must not race against worker-thread log() calls.
+  //
+  // debug_level(unsigned): numeric form, mapped to LogLevel by
+  //   integer value -- 0=Error, 1=Warn, 2=Info, 3=Normal,
+  //   4=Verbose, 5=Debug. Out-of-range values are clamped to Debug.
+  // debug_level(string_view): name form, parsed via parse_log_level
+  //   ("error"/"warn"/"info"/"normal"/"verbose"/"debug"/"always");
+  //   unknown names leave the threshold unchanged and warn.
+  // log_to_stdout(): swap the active delegate to a fresh
+  //   StdoutLogDelegate carrying the current threshold.
+  // log_to_db(): swap the active delegate to a fresh DbLogDelegate
+  //   that writes into the session-shared LmdbEnv (opened on
+  //   demand from the boot config's top-level `db.path` /
+  //   `db.map_size_mb`). When `db.path` is missing the env opens
+  //   in the process CWD; only an env open failure makes this a
+  //   no-op + warn that returns Status{1}.
+  virtual Status debug_level(unsigned) = 0;
+  virtual Status debug_level(std::string_view) = 0;
+  virtual Status log_to_stdout() = 0;
+  virtual Status log_to_db() = 0;
+
+  // Set the UI/message locale (an IETF tag, e.g. "en-us", "zh-cn",
+  // "zh-tw"). The tag is normalized; an unsupported tag is rejected with
+  // Status{2} and the language is left unchanged. Safe to call at any
+  // time (it only affects how user-facing strings are rendered). Read it
+  // back via SessionContextIntf::language(). This is the application UI
+  // locale, NOT a per-stage model/ASR language hint.
+  virtual Status set_language(std::string_view tag) = 0;
+
+  // ---- Progress ------------------------------------------------
+  //
+  // The live progress reports -- what stages open through
+  // SessionContextIntf::open_progress (a denoise counted per DiT
+  // block, a VAE decode per tile, a download per byte) and what the
+  // console footer and the web UI's status bar draw -- for a host that
+  // draws its own. The same document /api/io/progress serves:
+  //
+  //   {"version": u,
+  //    "items": [{"id": u, "desc": s, "done": u, "total": u,
+  //               "detail": s, "seq": u, "elapsed_ms": u}, ...]}
+  //
+  // Items are OLDEST-OPENED FIRST (a stable order as reports come and
+  // go); `total` 0 is INDETERMINATE; `seq` is bumped per update, so the
+  // highest is the most recently moved; `elapsed_ms` is the report's
+  // age at the snapshot. Ids are never reused and only grow, which is
+  // how a caller tells its run's reports from an earlier run's. A
+  // report lives from its stage opening it to closing it -- an empty
+  // list between phases is normal.
+  //
+  // Producers update without throttling and this reads one snapshot
+  // under one lock, so poll at whatever rate the host repaints (vpipe's
+  // own renderers use 10 Hz and 1 Hz); compare progress_version() first
+  // and skip the document when nothing moved. Safe from any thread.
+  // Needs common/flex-data.h. (Non-virtual, as load_pipeline(const
+  // FlexData&) is: the interface's vtable stays as it was.)
+  FlexData      progress() const;
+  std::uint64_t progress_version() const;
+
+  // ---- Reports, for a host to act on -----------------------------
+  //
+  // What a stage refused and why, as NUMBERS rather than the log's
+  // sentence: a host shows what a clip asked for and points at the
+  // setting that would make it fit, without parsing English that is
+  // free to change. The latest 32, oldest first:
+  //
+  //   {"version": u,
+  //    "items": [{"id": u, "kind": s, "data": {...}, "age_ms": u}, ...]}
+  //
+  // `kind` names the shape of `data` (common/host-report.h lists them:
+  // "memory", a refusal for lack of memory -- what it needed, part by
+  // part, and each budget's need and room; "memory-plan", the resource
+  // plan's peak by phase). Ids only grow and are never reused, and
+  // `version` is the newest: read reports_version() when a job starts
+  // and take the items above it when it ends. Safe from any thread.
+  // (Non-virtual, as progress() is.)
+  FlexData      reports() const;
+  std::uint64_t reports_version() const;
+
+  // ---- The session's log, for a host ------------------------------
+  //
+  // Every line the session reports -- its stages' errors, warnings and
+  // info (what the UI delegate shows: the console's "[INFO] ..." lines)
+  // and its diagnostic log at or above the log level -- is ALSO handed
+  // to `listener` as it is reported, so a host can show vpipe's log in
+  // its own window rather than only on stdout. Nothing is diverted: the
+  // delegates see what they saw before.
+  //
+  // `level` is the log's: 0 error, 1 warn, 2 info, 3 normal, 4 verbose,
+  // 5 debug, 6 always. The listener runs on the reporting thread, any of
+  // them, while that thread waits: keep it quick, and thread-safe. One
+  // listener per session; an empty one removes it. (Non-virtual, as
+  // progress() is.)
+  using LogListener = std::function<void(int level, std::string_view)>;
+  void set_log_listener(LogListener listener);
+
+  // ---- The wired pool ------------------------------------------
+  //
+  // The ceiling on memory this process makes UNSWAPPABLE -- model
+  // weights, the blocks a streaming transformer keeps, activation
+  // scratch. Wired pages cannot be compressed or swapped, so this is
+  // the one setting that says what the process will genuinely hold
+  // rather than what it would like to. See docs/MODEL-MEMORY.md.
+  //
+  // `mb` is an absolute figure in megabytes and REPLACES the
+  // `wired_pool_pct` share-of-the-box form; 0 restores that form. The
+  // effective limit is additionally capped by what the GPU can keep
+  // resident (recommendedMaxWorkingSetSize), so a larger number is
+  // accepted and clamped rather than refused -- read it back to see
+  // what was actually taken.
+  //
+  // MUTABLE WHILE A PIPELINE RUNS, but only UPWARDS. Lowering it mid-run
+  // would leave more wired than the new limit allows, and the only way
+  // to make that true again is to unwire buffers a model is still
+  // reading -- which on this platform also marks them purgeable
+  // volatile, i.e. reclaimable underneath their owner. So a shrink
+  // during a run is rejected with Status{3} and the limit is left
+  // unchanged; stop the pipeline to lower it. Raising it is always safe:
+  // nothing has to be given back.
+  //
+  // Status{2} when there is no model manager (a non-Apple build).
+  virtual Status set_wired_pool_mb(std::size_t mb) = 0;
+
+  // The effective limit in megabytes -- after the device cap and after
+  // any ceiling the box turned out to grant. 0 when wiring is off.
+  virtual std::size_t wired_pool_mb() const = 0;
+
+  // ---- The swap allowance --------------------------------------
+  //
+  // The OPPOSITE question to the wired pool: how much memory a run may
+  // plan to push OUT to the compressor or the swap file, in megabytes,
+  // on top of what the OS reports as reclaimable.
+  //
+  // A preflight otherwise sizes itself against free + purgeable +
+  // file-backed pages, which excludes dirty anonymous memory that would
+  // need swap. That is the right exclusion for a decision held for a
+  // whole run and too strict for one clip, so this allows a bounded
+  // amount of it to count -- bounded because the pages displaced belong
+  // to other processes, and spending them without limit is how a box
+  // starts thrashing.
+  //
+  // MUTABLE AT ANY TIME, in both directions, running or not: nothing is
+  // reserved or held, so there is nothing to give back and no
+  // shrink-while-running refusal. 0 is a real setting (gate on
+  // reclaimable RAM alone), not "use the default".
+  //
+  // Status{2} when there is no model manager (a non-Apple build).
+  virtual Status set_swap_allowance_mb(std::size_t mb) = 0;
+
+  // The allowance in megabytes. Honoured by the video preflight; the
+  // image stage still gates on the unwidened figure.
+  virtual std::size_t swap_allowance_mb() const = 0;
+
+  // ---- Performance profiling -----------------------------------
+  //
+  // A low-overhead per-stage event tracer. When enabled, each
+  // Stage carries a fixed-size PerfBuffer of `max_events_per_stage`
+  // slots. From inside a stage, code calls
+  // Stage::record_perf_event(type, value) -- a single-branch no-op
+  // when profiling is off, and a relaxed-atomic claim-then-write
+  // when on. Events are dropped (newest-wins) once the buffer is
+  // full so the producer cost stays constant.
+  //
+  // enable_profiling(N):
+  //   * Captures a session-level steady_clock anchor.
+  //   * Walks every stage in every pipeline (including sub-
+  //     pipelines) and allocates a PerfBuffer of capacity N.
+  //   * Sets a session flag so stages constructed AFTER this call
+  //     also self-allocate at construction.
+  //   * Calling enable_profiling again clears any previously
+  //     captured events and re-allocates with the new size.
+  //   Returns Status{1} if N == 0.
+  //
+  // disable_profiling():
+  //   * Clears the flag and drops every stage's PerfBuffer. After
+  //     disable, record_perf_event is a single-branch no-op. Dump
+  //     anything you care about BEFORE disabling.
+  //
+  // dump_profiling(path):
+  //   * Snapshots all per-stage buffers into a FlexData document
+  //     and writes it to the given path. Format is selected from
+  //     the extension: `.json` -> pretty JSON; anything else ->
+  //     FlexData binary. Safe to call while profiling is still
+  //     enabled (captures a consistent prefix of each buffer).
+  //   Returns Status{1} on path / IO failure.
+  virtual Status enable_profiling(unsigned max_events_per_stage) = 0;
+  virtual Status disable_profiling() = 0;
+  virtual Status dump_profiling(std::string_view path) = 0;
+
+};
+
+}
+
+VPIPE_API_END
+
+#endif

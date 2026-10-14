@@ -1,0 +1,118 @@
+#ifndef VPIPE_STAGES_SAVE_IMAGE_STAGE_H
+#define VPIPE_STAGES_SAVE_IMAGE_STAGE_H
+
+#include "apple-silicon/tensor-beat.h"
+#include "common/job.h"
+#include "pipeline/runtime-context.h"
+#include "pipeline/typed-stage.h"
+#include "stages/output-path.h"
+
+#include <cstdint>
+#include <span>
+#include <string>
+#include <vector>
+
+namespace vpipe {
+
+class FFmpegLibraries;
+class BeatPayloadIntf;
+
+// Save-image sink: writes each planar U8 RGB TensorBeat [3, H, W]
+// (channel order R, G, B, 0..255 -- the format load-image / vae-decode
+// emit) to an image file via FFmpeg's still-image encoders. The inverse
+// of load-image. On Apple, ImageIO writes what FFmpeg would where FFmpeg
+// cannot be loaded -- every format but WebP -- so an application that
+// ships no FFmpeg still saves its pictures (VPIPE_NO_FFMPEG=1 makes a
+// process behave so).
+//
+//   iport0  TensorBeatPayload, U8 [3, H, W] planar RGB. Non-matching
+//           beats are warned + dropped. EOS ends the stage.
+//   (no oports -- it is a sink.)
+//
+// Config (FlexData object on the 4th constructor parameter):
+//   path        (string, required) -- output file path, a template: see
+//                 stages/output-path.h. A printf integer conversion
+//                 ("out/frame-%04d.png") takes the 0-based index, "%t"
+//                 takes the local time, and without a conversion the
+//                 first image writes `path` verbatim while each later
+//                 one gets a "-NNNNNN" suffix before the extension.
+//   no_overwrite (bool, default false) -- never write over a file that
+//                 is already there: the sequence number starts past
+//                 every name on disk instead of at 0. Off by default
+//                 because the usual graph WANTS the same name rewritten
+//                 -- it is the file somebody has open in a viewer.
+//   format      (string, default from the path extension, else "png") --
+//                 png | jpeg (jpg) | webp | bmp | tiff.
+//   quality     (int, default 90) -- lossy codecs (jpeg, lossy webp),
+//                 1..100, higher is better.
+//   compression (int, default 6) -- PNG zlib level 0..9, higher is
+//                 smaller + slower (PNG is lossless, so this is size, not
+//                 fidelity).
+//   lossless    (bool, default false) -- webp lossless mode.
+class SaveImageStage final : public TypedStage<SaveImageStage> {
+public:
+  static constexpr const char* kTypeName = "save-image";
+
+  SaveImageStage(const SessionContextIntf* session,
+                  std::string               id,
+                  std::vector<InEdge>       iports,
+                  FlexData                  config);
+  ~SaveImageStage() override;
+
+  Job initialize(RuntimeContext& ctx) override;
+  void reset_run_state() override;
+  Job process   (RuntimeContext& ctx) override;
+
+  const StageSpec& spec() const noexcept override;
+
+  // Test-only accessors.
+  const std::string& path()           const noexcept { return _path; }
+  std::uint64_t      images_written() const noexcept { return _written; }
+
+private:
+  // Encode the planar U8 RGB payload to `out_path`. Returns true on a
+  // fully-written file; logs + returns false otherwise. When `exif_tiff` is
+  // non-empty it is spliced into the encoded container (JPEG APP1 / PNG
+  // eXIf) before the bytes hit disk; a splice failure warns but still writes
+  // the image, since the pixels matter more than the metadata.
+  bool encode_(const BeatPayloadIntf& beat, const std::string& out_path,
+               std::span<const std::uint8_t> exif_tiff = {});
+
+  std::string av_err_(int rc) const;
+
+  std::string _path;
+  std::string _format;          // resolved lower-case codec key
+  int         _quality     = 90;
+  int         _compression = 6;
+  bool        _lossless    = false;
+
+  bool            _no_overwrite = false;
+  outpath::Tokens _tok;         // which template tokens `path` carries
+  // Who ran the graph ("ExampleApp 1.0"): written ahead of vpipe's own
+  // line in EXIF Software, which then goes in brackets.
+  std::string     _software_host;
+  // 8 or 16 bits per component for png / tiff; 0 = from the picture
+  // (16 for F16, 8 for U8). 16 bits, OpenEXR and F16 pictures are
+  // encoded by ImageIO (Apple), with the colour the picture is tagged.
+  int             _bit_depth = 0;
+
+  // The ImageIO path: a picture as deep as it is, its colour embedded.
+  bool encode_apple_(const TensorBeat& pic,
+                     std::vector<std::uint8_t>* bytes);
+  // Whether this stage can write its format here: with FFmpeg, or with
+  // ImageIO where FFmpeg cannot be loaded (Apple, every format but WebP).
+  bool can_write_() const noexcept;
+  bool write_file_(const std::vector<std::uint8_t>& bytes,
+                   const std::string& out_path);
+
+  // Null where FFmpeg cannot be loaded (ffmpeg_if_present_).
+  const FFmpegLibraries* _libs = nullptr;
+  // The filename index lives in the picker now (it was `_seen`), so the
+  // numbering rule and the no-overwrite scan cannot drift apart.
+  outpath::SeqPicker     _seq;
+  std::uint64_t          _written = 0;   // files successfully written
+};
+
+}
+
+#endif

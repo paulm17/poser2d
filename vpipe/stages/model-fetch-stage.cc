@@ -1,0 +1,1277 @@
+#include "stages/model-fetch-stage.h"
+#include "stages/model-catalog.h"
+#include "stages/model-detect.h"
+#include "stages/model-registry.h"
+#include "stages/model-source.h"
+#include "stages/resumable-fetch.h"
+#include "stages/qwen-asr-tokenizer.h"
+
+#include "common/flex-data.h"
+#include "common/lmdb-db.h"
+#include "common/lmdb-env.h"
+#include "common/lmdb-txn.h"
+#include "common/vpipe-format.h"
+#include "interfaces/session-context-intf.h"
+#include "interfaces/session-services-intf.h"
+#include "pipeline/runtime-context.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <spawn.h>
+#include <sys/wait.h>
+
+using namespace std;
+namespace fs = std::filesystem;
+
+namespace vpipe {
+
+namespace {
+
+void
+trim_(string& s)
+{
+  auto ns = [](unsigned char c) { return !std::isspace(c); };
+  s.erase(s.begin(), std::find_if(s.begin(), s.end(), ns));
+  s.erase(std::find_if(s.rbegin(), s.rend(), ns).base(), s.end());
+}
+
+// "a, b, c" -- for naming the valid options back at a user who missed.
+string
+join_(const vector<string>& v)
+{
+  string out;
+  for (size_t i = 0; i < v.size(); ++i) {
+    if (i > 0) { out += ", "; }
+    out += "'" + v[i] + "'";
+  }
+  return out;
+}
+
+// Expand a leading "~/" to $HOME (getline doesn't go through a shell).
+string
+expand_user_(const string& p)
+{
+  if (p.size() >= 2 && p[0] == '~' && p[1] == '/') {
+    if (const char* home = std::getenv("HOME")) {
+      return string(home) + p.substr(1);
+    }
+  }
+  return p;
+}
+
+// Which of the catalogue entries published from one repo the caller
+// meant, from the `model_variant` config key.
+//
+// The browse flow disambiguates these by walking version -> parameter
+// class -> variant; a configured `model_path` names only the REPO, so
+// without this the fetch silently takes the first entry -- which for
+// MiniMax-H3 means asking for Ref2VA and downloading FL2VA, since the
+// two pin different files out of one repo and differ in nothing else a
+// path can express.
+//
+// Exact hits beat substrings so a fully-spelled selector is never
+// ambiguous, and anything that does not resolve to exactly one entry is
+// an ERROR listing the candidates -- the one outcome worse than
+// refusing is guessing.
+const ModelCatalogEntry*
+pick_catalog_entry_(const SessionContextIntf* s,
+                    const vector<const ModelCatalogEntry*>& cands,
+                    const string& hf_path, const string& want)
+{
+  auto describe = [&]() {
+    string out;
+    for (const ModelCatalogEntry* e : cands) {
+      out += "\n  - ";
+      out += e->version.empty() ? "(no version)" : e->version;
+      if (!e->param_class.empty()) { out += " " + e->param_class; }
+      if (!e->variant.empty())     { out += " [" + e->variant + "]"; }
+      if (!e->name.empty())        { out += " name=" + e->name; }
+      if (!e->model_type.empty())  { out += " type=" + e->model_type; }
+    }
+    return out;
+  };
+
+  if (want.empty()) {
+    s->error(fmt("ModelFetchStage: '{}' publishes {} models and "
+                 "model_path cannot say which; set model_variant to one "
+                 "of:{}", hf_path, cands.size(), describe()));
+    return nullptr;
+  }
+  // THE RULE ITSELF LIVES IN THE CATALOGUE, not here: exact-beats-
+  // substring and must-be-exactly-one are properties of what the
+  // catalogue publishes, and a second implementation of them drifts.
+  // This function keeps only what is local to the stage -- the wording
+  // of the refusal and who it is reported to.
+  vector<const ModelCatalogEntry*> hits;
+  if (const ModelCatalogEntry* e =
+          catalog_pick_variant(cands, want, &hits)) {
+    return e;
+  }
+  s->error(fmt("ModelFetchStage: model_variant '{}' matches {} of the {} "
+               "models published from '{}'; it has to select exactly one "
+               "of:{}", want, hits.size(), cands.size(), hf_path,
+               describe()));
+  return nullptr;
+}
+
+// ---- interactive selection --------------------------------------------
+
+// Outcome of one interactive level pick.
+enum class SelectResult {
+  Ok,       // a concrete option was chosen (returned in `out`)
+  Auto,     // a single option was auto-selected (in `out`); no prompt shown
+  Back,     // the user asked to step back to the previous level
+  Aborted,  // input closed / canceled
+};
+
+// Prompt the user to pick one of `options` by index; the chosen string is
+// returned via `out`. Auto-selects (-> Auto) when there is exactly one
+// option. When `allow_back` is set the user may enter 'b' to step back a
+// level (-> Back). Returns Aborted on Eof / Canceled.
+SelectResult
+select_from_(const SessionContextIntf* s, const string& title,
+             const vector<string>& options,
+             const function<bool()>& cancel, bool allow_back, string& out)
+{
+  if (options.empty()) {
+    return SelectResult::Aborted;
+  }
+  if (options.size() == 1) {
+    out = options[0];
+    s->info(fmt("{}: {}", title, out));
+    return SelectResult::Auto;
+  }
+  const VpipeFormat prompt = allow_back
+      ? fmt("Select [0-{}] (b=back): ", options.size() - 1)
+      : fmt("Select [0-{}]: ", options.size() - 1);
+  for (;;) {
+    s->info(fmt("{}", title));
+    for (size_t i = 0; i < options.size(); ++i) {
+      s->info(fmt("  [{}] {}", i, options[i]));
+    }
+    string line;
+    if (s->getline(prompt, line, cancel) != UiInputStatus::Ok) {
+      return SelectResult::Aborted;
+    }
+    trim_(line);
+    if (allow_back && (line == "b" || line == "B")) {
+      return SelectResult::Back;
+    }
+    try {
+      size_t idx = static_cast<size_t>(std::stoul(line));
+      if (idx < options.size()) {
+        out = options[idx];
+        return SelectResult::Ok;
+      }
+    } catch (...) {
+    }
+    s->info(fmt("Invalid selection '{}'; try again.", line));
+  }
+}
+
+// ---- archive extraction -----------------------------------------------
+
+// Unpack `archive` into `dest_dir` with the system tar (no shell, so paths
+// with spaces are safe). bsdtar (/usr/bin/tar on macOS) and GNU tar both
+// accept `-x -f <archive> -C <dir>` and autodetect compression. Returns
+// true on a clean exit(0); `err` carries a message otherwise.
+bool
+extract_tar_(const fs::path& archive, const fs::path& dest_dir, string& err)
+{
+  std::error_code ec;
+  fs::create_directories(dest_dir, ec);
+  const string a = archive.string();
+  const string d = dest_dir.string();
+  // posix_spawn wants a mutable argv; the strings outlive the call.
+  const char* argv[] = { "tar", "-x", "-f", a.c_str(), "-C", d.c_str(),
+                         nullptr };
+  // A minimal environment is enough for tar and sidesteps the macOS dylib
+  // `environ` symbol restriction.
+  const char* envp[] = { "PATH=/usr/bin:/bin:/usr/local/bin", nullptr };
+  pid_t pid = 0;
+  int rc = posix_spawn(&pid, "/usr/bin/tar", nullptr, nullptr,
+                       const_cast<char* const*>(argv),
+                       const_cast<char* const*>(envp));
+  if (rc != 0) {
+    // Fall back to a PATH search (non-macOS layouts).
+    rc = posix_spawnp(&pid, "tar", nullptr, nullptr,
+                      const_cast<char* const*>(argv),
+                      const_cast<char* const*>(envp));
+  }
+  if (rc != 0) {
+    err = fmt("posix_spawn(tar) failed: {}", std::strerror(rc))();
+    return false;
+  }
+  int status = 0;
+  if (waitpid(pid, &status, 0) < 0) {
+    err = "waitpid(tar) failed";
+    return false;
+  }
+  if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    err = fmt("tar exited with status {}",
+              WIFEXITED(status) ? WEXITSTATUS(status) : -1)();
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
+
+ModelFetchStage::ModelFetchStage(const SessionContextIntf* s,
+                                 string                    id,
+                                 vector<InEdge>            iports,
+                                 FlexData                  config)
+  : TypedStage<ModelFetchStage>(s, std::move(id), std::move(iports),
+                                std::move(config))
+{
+  ensure_curl_global_init();
+
+  _base_path           = attr_str("base_path");
+  _model_path          = attr_str("model_path");
+  _model_variant       = attr_str("model_variant");
+  _model_key           = attr_str("model_key");
+  _hf_token            = attr_str("hf_token");
+  _source              = attr_str("source");
+  _source_revision     = attr_str("source_revision");
+  _overwrite_existing  = attr_bool("overwrite_existing");
+  _prepare_tokenizer   = attr_bool("prepare_tokenizer");
+  _skip_existing_files = attr_bool("skip_existing_files");
+  _verify_tls          = attr_bool("verify_tls");
+  _timeout_seconds     = static_cast<unsigned>(attr_uint("timeout_seconds"));
+  _stall_seconds       = static_cast<unsigned>(attr_uint("stall_seconds"));
+  _download_retries    =
+      static_cast<unsigned>(attr_uint("download_retries"));
+  _verify_checksums    = attr_bool("verify_checksums");
+  _xet_streams         = static_cast<unsigned>(attr_uint("xet_streams"));
+
+  allocate_oports(spec().oports.size());
+}
+
+namespace {
+constexpr ConfigKey kAttrs[] = {
+  {.key = "base_path", .type = ConfigType::String,
+   .doc = "download root; empty -> ./models. Files land under "
+          "<base>/<owner>/<repo>"},
+  {.key = "model_path", .type = ConfigType::String,
+   .doc = "non-interactive: a direct 'owner/repo' (or full URL); empty "
+          "-> prompt / browse the catalogue"},
+  {.key = "model_key", .type = ConfigType::String,
+   .doc = "register under THIS key in the models DB instead of the "
+          "catalogue name / hf path. Lets two models published from one "
+          "repo share a directory on disk and still be separate DB "
+          "entries: fetch Comfy-Org/MiniMax-H3 twice, once with "
+          "model_variant=fl2va + model_key=Comfy-Org/MiniMax-H3-FL2VA and "
+          "once with ref2va, and each record carries its OWN model_type, "
+          "version and file list while the bytes are downloaded once "
+          "(skip_existing_files keeps the shared encoder and VAEs from "
+          "being fetched twice). Empty -> the catalogue name, else the hf "
+          "path, as before",
+   .def_str = ""},
+  {.key = "model_variant", .type = ConfigType::String,
+   .doc = "WHICH model, when several are published from one repo and "
+          "`model_path` cannot say. Matched (case-insensitively) against "
+          "the catalogue entry's version, variant, name and model_type; an "
+          "exact hit on any of those wins over a substring. This is the "
+          "non-interactive form of the version/variant menu the browse "
+          "flow shows -- e.g. Comfy-Org/MiniMax-H3 publishes both the "
+          "FL2VA and the Ref2VA partition, which pin DIFFERENT files, so "
+          "\"ref2va\" is what asks for the second. Empty is fine when the "
+          "repo publishes one model; when it publishes several the fetch "
+          "is refused with the candidates listed, rather than quietly "
+          "taking the first",
+   .def_str = ""},
+  {.key = "hf_token", .type = ConfigType::String,
+   .doc = "bearer token for gated/private repos; empty -> the token env "
+          "var for the chosen source ($HF_TOKEN / "
+          "$HUGGING_FACE_HUB_TOKEN for HuggingFace, "
+          "$MODELSCOPE_API_TOKEN / $MODELSCOPE_TOKEN for ModelScope), "
+          "and prompted via getpasswd if a download turns out to be "
+          "gated"},
+  {.key = "source", .type = ConfigType::String,
+   .doc = "where to DOWNLOAD from: 'huggingface' (default) or "
+          "'modelscope' (modelscope.cn, the mirror reachable from "
+          "mainland China). Empty -> $VPIPE_MODEL_SOURCE, else "
+          "huggingface -- so a machine behind the Great Firewall sets "
+          "the env var once instead of every stage. This picks the "
+          "SOURCE only: the registry key and the on-disk directory come "
+          "from the HuggingFace path either way, so the same model "
+          "fetched from either side is one model in one place, and "
+          "switching does not produce a second copy. Most of the "
+          "catalogue is mirrored under the identical owner/repo; where "
+          "it is not, the mapping is in model-source.cc",
+   .def_str = ""},
+  {.key = "source_revision", .type = ConfigType::String,
+   .doc = "branch/tag/commit to read; empty -> the source's own default, "
+          "which differs ('main' on HuggingFace, 'master' on "
+          "ModelScope). Naming one explicitly is rarely right for that "
+          "reason -- and on ModelScope a revision that does not exist "
+          "comes back as an EMPTY file list rather than an error",
+   .def_str = ""},
+  {.key = "overwrite_existing", .type = ConfigType::Bool,
+   .doc = "re-download + re-register a model already in the registry",
+   .def_bool = true},
+  {.key = "prepare_tokenizer", .type = ConfigType::Bool,
+   .doc = "synthesize tokenizer.json natively for Qwen3-ASR (no "
+          "transformers needed)", .def_bool = true},
+  {.key = "skip_existing_files", .type = ConfigType::Bool,
+   .doc = "skip files already on disk whose size matches the repo",
+   .def_bool = true},
+  {.key = "verify_tls", .type = ConfigType::Bool,
+   .doc = "enforce TLS certificate validation", .def_bool = true},
+  {.key = "timeout_seconds", .type = ConfigType::Uint,
+   .doc = "deadline for the metadata calls (the repo file listing). A "
+          "FILE transfer is bounded by stall_seconds instead: a total "
+          "deadline cannot tell a slow link from a dead one, and a 20 "
+          "GB shard at 2 MB/s is three hours of perfectly healthy "
+          "download",
+   .def_uint = 1800},
+  {.key = "stall_seconds", .type = ConfigType::Uint,
+   .doc = "abandon a file transfer after this long below 1 KB/s and "
+          "retry it FROM WHERE IT STOPPED. This is the timeout that "
+          "matters for big shards -- it fires on a connection that has "
+          "died, never on one that is merely slow. 0 -> no stall "
+          "detection (a hung transfer then blocks until the peer drops "
+          "it)",
+   .def_uint = 120},
+  {.key = "download_retries", .type = ConfigType::Uint,
+   .doc = "extra attempts per file after the first, each resuming from "
+          "the partial file on disk (waits 2/5/15/30/60s between). The "
+          "partial survives the stage either way, so a fetch that runs "
+          "out of attempts continues rather than restarts when it is "
+          "run again",
+   .def_uint = 5},
+  {.key = "xet_streams", .type = ConfigType::Uint,
+   .doc = "how many ranges to pull at once for a big file the repo "
+          "publishes a content-store hash for. Such a file is stored as "
+          "deduplicated, compressed chunks that can be fetched in "
+          "parallel and reassembled, rather than streamed down one "
+          "connection, which can be the ceiling well before the link "
+          "is. MEASURED on a 5.2 GB bf16 shard, three interleaved "
+          "pairs: 88.3 MB/s median as one stream, 94.4 at 8 -- 1.07x, "
+          "mostly the 0.873x bytes the store needs for bf16 weights "
+          "rather than the parallelism, because one stream was already "
+          "near this link's ceiling. Worth much more where a single "
+          "stream is the constraint. 0 -> always take the plain single "
+          "stream. Files under 256 MB take it regardless: two extra "
+          "round trips is not worth it for them",
+   .def_uint = 8},
+  {.key = "verify_checksums", .type = ConfigType::Bool,
+   .doc = "check every downloaded file against the checksum its repo "
+          "publishes -- SHA-256 for the LFS shards, the git blob SHA-1 "
+          "for the small files -- and re-fetch it whole if it does not "
+          "match. HuggingFace publishes no MD5 for any file, so there "
+          "is no MD5 to check against. A file whose repo publishes "
+          "nothing is reported as unchecked rather than passed",
+   .def_bool = true},
+};
+// One trigger iport (optional, any beat type) + one summary oport shared
+// by all four "preparation" stages so they can be cascaded into a recipe
+// (each stage's summary triggers the next) and/or dumped to a save-text
+// report. See the ports doc below.
+const PortSpec kIports[] = {
+  {.name = "trigger",
+   .doc  = "optional pacing trigger (any beat type); when wired, the work "
+           "waits for one beat before running -- lets these preparation "
+           "stages cascade into a recipe",
+   .type = nullptr, .clock_group = 0},
+};
+const PortSpec kOports[] = {
+  {.name = "summary",
+   .doc  = "FlexData summary of the completed work; its `text` field "
+           "renders a report via save-text, and the beat also triggers "
+           "the next stage in a recipe",
+   .type = &typeid(FlexDataPayload), .clock_group = 0},
+};
+const StageSpec kSpec = {
+  .type_name = "model-fetch",
+  .doc       = "Interactive one-shot: identify a model (browse the "
+               "internal HuggingFace catalogue or type a path), download "
+               "it from HuggingFace or a mirror (modelscope.cn) under a "
+               "base path, synthesize the Qwen3-ASR tokenizer.json "
+               "natively, and register it in the model registry keyed by "
+               "the huggingface.co path whichever source served it. "
+               "Optional trigger in / summary out.",
+  .display_name = "Model Fetch",
+  .category  = StageCategory::Preparation,
+  .iports    = kIports,
+  .oports    = kOports,
+  .attrs     = kAttrs,
+};
+}  // namespace
+
+const StageSpec&
+ModelFetchStage::spec() const noexcept
+{
+  return kSpec;
+}
+
+Job
+ModelFetchStage::process(RuntimeContext& ctx)
+{
+  // Stable object (not a temporary) so its address can be threaded into the
+  // libcurl xferinfo callback to abort an in-flight transfer mid-download.
+  const std::function<bool()> cancel = [&ctx] {
+    return ctx.stop_requested();
+  };
+  const SessionContextIntf* s = session();
+
+  // Optional trigger: when the iport is wired, wait for one beat before
+  // starting so this stage can cascade in a preparation recipe. Any beat
+  // type works (payload ignored); upstream EOS -> nothing to do.
+  if (ctx.iport_connected(0)) {
+    auto trig = co_await ctx.read(0);
+    if (!trig) {
+      ctx.signal_done();
+      co_return;
+    }
+  }
+
+  // -------- 0. Resolve the SOURCE --------------------------------------
+  // Which server the bytes come from. Settled before anything is
+  // identified because it changes the wording of the prompts below (a
+  // user pasting a modelscope.cn URL should not be asked for a
+  // HuggingFace path) and because an unusable setting is worth saying
+  // NOW rather than after a catalogue drill-down.
+  const ModelSource* src = nullptr;
+  if (!_source.empty()) {
+    src = model_source(_source);
+    if (src == nullptr) {
+      s->error(fmt("ModelFetchStage('{}'): unknown source '{}'; known "
+                   "sources are {}", this->id(), _source,
+                   join_(model_source_names())));
+    }
+  } else {
+    src = &default_model_source();
+    // An unknown $VPIPE_MODEL_SOURCE silently falling back to
+    // HuggingFace is the wrong failure for the user this setting exists
+    // for: they set it precisely because HuggingFace does not work.
+    const char* env = std::getenv("VPIPE_MODEL_SOURCE");
+    if (env != nullptr && *env != '\0' && model_source(env) == nullptr) {
+      s->warn(fmt("ModelFetchStage('{}'): $VPIPE_MODEL_SOURCE is '{}', "
+                  "which is not a known source -- falling back to {}. "
+                  "Known sources are {}",
+                  this->id(), env, src->label(),
+                  join_(model_source_names())));
+    }
+  }
+  const string revision = _source_revision.empty()
+      ? string(src->default_revision()) : _source_revision;
+
+  // -------- 1. Identify the model --------------------------------------
+  // Precedence: configured model_path > direct entry > catalogue browse.
+  string hf_path;
+  const ModelCatalogEntry* entry = nullptr;
+
+  if (!_model_path.empty()) {
+    hf_path = normalize_model_ref(_model_path);
+    if (hf_path.empty()) {
+      s->error(fmt("ModelFetchStage('{}'): invalid model_path '{}'",
+                   this->id(), _model_path));
+    }
+  } else {
+    string direct;
+    if (s->getline(
+            fmt("Model path (owner/repo, or a huggingface.co / "
+                "modelscope.cn URL), or Enter to browse the catalogue: "),
+            direct, cancel) != UiInputStatus::Ok) {
+      s->error(fmt("ModelFetchStage('{}'): input closed", this->id()));
+    }
+    trim_(direct);
+    if (!direct.empty()) {
+      hf_path = normalize_model_ref(direct);
+      if (hf_path.empty()) {
+        s->error(fmt("ModelFetchStage('{}'): could not parse '{}' as "
+                     "owner/repo", this->id(), direct));
+      }
+    } else {
+      // Catalogue drill-down: family -> version -> param -> variant. At
+      // any prompt the user may enter 'b' to step back to the previous
+      // level. `dir` remembers whether we reached the current level going
+      // forward (+1) or backward (-1) so an auto-selected (single-option)
+      // level stays transparent to back-navigation instead of trapping it.
+      string family, version, param, variant;
+      bool aborted = false;
+      for (int level = 0, dir = 1; level < 4; ) {
+        string title;
+        vector<string> opts;
+        string* out = nullptr;
+        switch (level) {
+          case 0:
+            title = "Model family"; opts = catalog_families();
+            out = &family; break;
+          case 1:
+            title = "Version"; opts = catalog_versions(family);
+            out = &version; break;
+          case 2:
+            title = "Parameter class";
+            opts = catalog_param_classes(family, version);
+            out = &param; break;
+          default:
+            title = "Variant";
+            opts = catalog_variants(family, version, param);
+            out = &variant; break;
+        }
+        switch (select_from_(s, title, opts, cancel, level > 0, *out)) {
+          case SelectResult::Ok:
+            dir = 1; ++level; break;
+          case SelectResult::Auto:
+            // A forced single-option level: keep moving the way we came,
+            // bouncing forward if there is nothing before level 0.
+            if (dir < 0 && level == 0) { dir = 1; }
+            level += dir; break;
+          case SelectResult::Back:
+            dir = -1; --level; break;
+          case SelectResult::Aborted:
+            aborted = true; break;
+        }
+        if (aborted) { break; }
+      }
+      if (aborted) {
+        s->error(fmt("ModelFetchStage('{}'): selection aborted",
+                     this->id()));
+      }
+      entry = catalog_find(family, version, param, variant);
+      if (!entry) {
+        s->error(fmt("ModelFetchStage('{}'): no catalogue entry for "
+                     "selection", this->id()));
+      }
+      hf_path = entry->hf_path;
+    }
+  }
+  if (!entry) {
+    // Enrich a typed path if the catalogue knows it. One repo can publish
+    // SEVERAL models -- MiniMax-H3's two partitions come out of one
+    // Comfy-Org repo and pin different files, and the supplement repo
+    // holds six archives -- so taking the first match would download the
+    // wrong one and register it under the right name. `model_variant` is
+    // the non-interactive form of the menu the browse flow shows.
+    const vector<const ModelCatalogEntry*> cands =
+        catalog_all_by_path(hf_path);
+    if (cands.size() == 1 && _model_variant.empty()) {
+      entry = cands.front();
+    } else if (!cands.empty()) {
+      entry = pick_catalog_entry_(s, cands, hf_path, _model_variant);
+    }
+  }
+
+  // Registration key: `model_key` when the caller named one, else a
+  // catalogue `name` (so several archives sharing one hf_path repo
+  // register under distinct keys), else the hf_path itself.
+  //
+  // Naming it is what lets two models published from ONE repo share a
+  // directory and still be separate DB entries -- MiniMax-H3's two
+  // partitions are the case: they differ only in which DiT file they
+  // pin, so the bytes want to be downloaded once while the records want
+  // to carry different model_types. The record below takes its
+  // descriptive fields from the chosen catalogue ENTRY, not from
+  // re-probing the shared directory, which is what keeps the two
+  // records distinct.
+  const string reg_key =
+      !_model_key.empty()
+          ? _model_key
+          : ((entry && !entry->name.empty()) ? entry->name : hf_path);
+
+  // -------- 2. Resolve the download location ---------------------------
+  string base_in = _base_path;
+  if (base_in.empty()) {
+    const fs::path def = default_models_dir(s);
+    string line;
+    if (s->getline(fmt("Base download path [default {}]: ", def.string()),
+                   line, cancel) == UiInputStatus::Ok) {
+      trim_(line);
+      base_in = line;
+    }
+    if (base_in.empty()) {
+      base_in = def.string();
+    }
+  }
+  const fs::path base     = fs::path(expand_user_(base_in));
+  const fs::path local_dir = base / hf_path;   // <base>/<owner>/<repo>
+
+  // -------- 3. Registry pre-check --------------------------------------
+  LmdbEnv* env = s->services()->lmdb_env();
+  if (!env) {
+    s->error(fmt("ModelFetchStage('{}'): session lmdb_env() unavailable",
+                 this->id()));
+  }
+  {
+    LmdbDb  db(*env, kModelRegistryDb);
+    LmdbTxn txn(*env, LmdbTxn::Mode::ReadOnly);
+    auto existing = db.get(txn, reg_key);
+    const bool present = existing.has_value();
+    // COPIED OUT before the abort. db.get() hands back a view into
+    // LMDB-managed memory that dies with the transaction, which is why
+    // the flag above is captured rather than the value.
+    string reg_local_path;
+    if (present) {
+      try {
+        FlexData rec = FlexData::from_binary(*existing);
+        if (rec.is_object() && rec.as_object().contains("local_path")) {
+          reg_local_path = string(
+              rec.as_object().at("local_path").as_string(""));
+        }
+      } catch (...) { /* unreadable record: fall back to local_dir */ }
+    }
+    txn.abort();
+    // A REGISTERED KEY IS NOT THE SAME AS THE FILES BEING THERE.
+    //
+    // One repo can publish several models -- MiniMax-H3 ships its FL2VA
+    // and Ref2VA partitions from one Comfy-Org repo, pinning a different
+    // file each -- and `model_variant` is how a fetch says which. The
+    // registry key does not carry the variant unless the caller sets
+    // `model_key`, so a repo fetched once for Ref2VA satisfies this
+    // check for an FL2VA fetch, whose file was never downloaded.
+    //
+    // What that cost, MEASURED on a real prepare job: the FL2VA fetch
+    // skipped, the repo held only `minimax_h3_ref2va_bf16.safetensors`,
+    // and the quantizer -- which ranks the asked-for partition first but
+    // falls back to what is there -- quantized Ref2VA into a directory
+    // named FL2VA-8bit. The output config recorded `ref2va` faithfully,
+    // so the pack was self-consistent and WRONG, and the only symptom
+    // was generate-video refusing a Ref2VA forward with no references,
+    // three stages and one pipeline later.
+    //
+    // So when the entry pins files, the pinned files decide. Missing
+    // ones fall through to the download, which already skips what is
+    // present byte-for-byte (`skip_existing_files`).
+    std::vector<string> missing;
+    if (present && !_overwrite_existing && entry != nullptr
+        && !entry->files.empty()) {
+      // Against the REGISTERED path when there is one: a previous fetch
+      // may have used a different `base_path`, and testing the path this
+      // run would compute would then report every file missing and
+      // re-download a repo that is entirely present.
+      const fs::path where =
+          reg_local_path.empty() ? local_dir : fs::path(reg_local_path);
+      for (const string& want : entry->files) {
+        std::error_code ec;
+        if (!fs::exists(where / want, ec)) { missing.push_back(want); }
+      }
+    }
+    if (present && !_overwrite_existing && !missing.empty()) {
+      s->warn(fmt(
+          "ModelFetchStage('{}'): '{}' is registered, but {} of the {} "
+          "files this variant pins are not on disk (first: '{}'). Another "
+          "variant of the same repo was probably fetched under this key -- "
+          "set model_key to keep them apart. Fetching the missing files "
+          "rather than skipping",
+          this->id(), reg_key, missing.size(), entry->files.size(),
+          missing.front()));
+    } else if (present && !_overwrite_existing) {
+      s->info(fmt(
+          "ModelFetchStage('{}'): '{}' already registered; set "
+          "overwrite_existing=true to refresh. Done.",
+          this->id(), reg_key));
+      if (ctx.has_consumers(0)) {
+        FlexData sum = FlexData::make_object();
+        auto so = sum.as_object();
+        so.insert_or_assign("stage", FlexData::make_string("model-fetch"));
+        so.insert_or_assign("hf_path", FlexData::make_string(hf_path));
+        so.insert_or_assign("already_present", FlexData::make_bool(true));
+        so.insert_or_assign("text", FlexData::make_string(
+            fmt("[model-fetch] {} already present (skipped)", hf_path)()));
+        co_await ctx.write(0,
+            make_payload<FlexDataPayload>(std::move(sum)));
+      }
+      ctx.signal_done();
+      co_return;
+    }
+  }
+
+  // Where the bytes really come from: a url_files entry names its own
+  // host, and "from HuggingFace" for a GitHub download would mislead.
+  {
+    const auto urls = entry != nullptr && entry->dataset_files.empty()
+                          ? catalog_url_files(*entry)
+                          : std::vector<std::pair<string, string>>{};
+    string from = src->label();
+    if (!urls.empty()) {
+      const string& u = urls.front().first;
+      const auto p0 = u.find("://");
+      const auto p1 = p0 == string::npos ? string::npos
+                                         : u.find('/', p0 + 3);
+      from = p0 == string::npos ? u : u.substr(p0 + 3, p1 - (p0 + 3));
+    }
+    s->info(fmt("ModelFetchStage('{}'): fetching '{}' from {} -> '{}'",
+                this->id(), hf_path, from, local_dir.string()));
+  }
+
+  // How every file below is fetched: no total deadline, a stall window,
+  // retries that resume, the content store for the big ones, and a
+  // checksum check at the end.
+  FetchOpts fopts;
+  fopts.verify_tls  = _verify_tls;
+  fopts.stall_s     = static_cast<long>(_stall_seconds);
+  fopts.retries     = _download_retries;
+  fopts.verify      = _verify_checksums;
+  fopts.xet_streams = _xet_streams;
+
+  // -------- 3b. Verbatim URL fetch: datasets, and models off the Hub ---
+  // A catalogue entry carrying explicit URLs is fetched VERBATIM into
+  // local_dir and registered -- no model-repo tree walk. Two kinds:
+  //   * dataset_files -- eval datasets (the HF datasets-server /rows
+  //     pages), which keeps dataset text out of the binary; the
+  //     model-eval stage reads the rows-*.json pages on demand.
+  //   * the `url_files` packaging fact -- a MODEL published somewhere this
+  //     stage cannot walk (a GitHub repo's raw files; madebyollin's TAEs
+  //     live there). Registered as an ordinary model, with its model_type
+  //     and the files it pins, so a picker and resolve_adapter_file()
+  //     find it exactly as they find a Hub download.
+  const bool is_dataset = entry != nullptr && !entry->dataset_files.empty();
+  const std::vector<std::pair<string, string>> url_files =
+      entry != nullptr && !is_dataset
+          ? catalog_url_files(*entry)
+          : std::vector<std::pair<string, string>>{};
+  if (is_dataset || !url_files.empty()) {
+    const auto& list = is_dataset ? entry->dataset_files : url_files;
+    const char* kind = is_dataset ? "dataset" : "model";
+    // Dataset rows are VERBATIM URLs into HuggingFace's datasets-server,
+    // which has no mirror counterpart -- there is no ModelScope endpoint
+    // that serves the same /rows pages. Say so rather than let a fetch
+    // that cannot reach the host look like a network fault. A url_files
+    // model names its own host, which no source setting moves either.
+    if (src->name() != string("huggingface")) {
+      s->warn(fmt(
+          "ModelFetchStage('{}'): '{}' is fetched from absolute URLs ({}), "
+          "so source '{}' does not apply and this fetch still needs that "
+          "host to be reachable",
+          this->id(), reg_key,
+          is_dataset ? string("HuggingFace's datasets-server")
+                     : list.front().first,
+          src->name()));
+    }
+    std::error_code ec;
+    fs::create_directories(local_dir, ec);
+    uint64_t total = 0;
+    FlexData files_arr = FlexData::make_array();
+    for (size_t i = 0; i < list.size(); ++i) {
+      if (ctx.stop_requested()) {
+        s->error(fmt("ModelFetchStage('{}'): canceled", this->id()));
+      }
+      const string& url  = list[i].first;
+      const string& dest = list[i].second;
+      const fs::path out = local_dir / dest;
+      s->info(fmt("  [{}/{}] {} ...", i + 1, list.size(), dest));
+      long st = 0;
+      string derr;
+      // Public URLs -- no auth token. Neither host publishes a checksum
+      // either, so these retry but never resume: a part with nothing to
+      // check it against is not worth continuing.
+      FetchRequest dreq;
+      dreq.url = url;
+      if (!fetch_file(s, dreq, fopts, out, st, derr, nullptr, &cancel)) {
+        s->error(fmt("ModelFetchStage('{}'): {} fetch '{}' failed: {}",
+                     this->id(), kind, dest, derr));
+      }
+      files_arr.as_array().push_back(FlexData::make_string(dest));
+      total += static_cast<uint64_t>(fs::file_size(out, ec));
+    }
+    FlexData rec = FlexData::make_object();
+    auto ro = rec.as_object();
+    ro.insert_or_assign("local_path",
+                        FlexData::make_string(local_dir.string()));
+    ro.insert_or_assign("source_url",
+                        FlexData::make_string(
+                            is_dataset ? string("https://huggingface.co/"
+                                                "datasets")
+                                       : list.front().first));
+    if (is_dataset) {
+      ro.insert_or_assign("dataset", FlexData::make_bool(true));
+    }
+    record_detected_fields(ro, detect_model_dir(local_dir.string(), hf_path));
+    ro.insert_or_assign("model_type",
+                        FlexData::make_string(entry->model_type));
+    ro.insert_or_assign("total_bytes", FlexData::make_uint(total));
+    ro.insert_or_assign("files", std::move(files_arr));
+    {
+      LmdbDb  db(*env, kModelRegistryDb);
+      LmdbTxn txn(*env, LmdbTxn::Mode::ReadWrite);
+      const string bytes = rec.to_binary();
+      db.put(txn, reg_key, bytes);
+      txn.commit();
+    }
+    s->info(fmt(
+        "ModelFetchStage('{}'): {} '{}' ({}) registered in the model "
+        "registry", this->id(), kind, reg_key, human_bytes(total)));
+    ro.insert_or_assign("stage", FlexData::make_string("model-fetch"));
+    ro.insert_or_assign("text", FlexData::make_string(
+        fmt("[model-fetch] {} {}\n  -> {}\n  {} file(s), {} bytes",
+            kind, reg_key, local_dir.string(), list.size(), total)()));
+    if (ctx.has_consumers(0)) {
+      co_await ctx.write(0, make_payload<FlexDataPayload>(std::move(rec)));
+    }
+    ctx.signal_done();
+    co_return;
+  }
+
+  // -------- 4. Resolve auth token -------------------------------------
+  // Each source has its own token env vars, so a machine set up for both
+  // does not offer HuggingFace's credential to modelscope.cn.
+  string token = _hf_token;
+  for (const string& var : src->token_env()) {
+    if (!token.empty()) { break; }
+    if (const char* e = std::getenv(var.c_str())) { token = e; }
+  }
+
+  // -------- 4b. Where the repo lives ON THIS SOURCE --------------------
+  // Everything above this line -- the catalogue entry, the registry key,
+  // `local_dir` -- is in HuggingFace terms and STAYS that way. Only the
+  // download coordinate moves.
+  string repo_path;
+  const MirrorStatus mirror = mirror_repo(src->name(), hf_path, repo_path);
+  if (mirror == MirrorStatus::Absent) {
+    s->error(fmt(
+        "ModelFetchStage('{}'): '{}' has no counterpart on {} -- it is "
+        "published only on HuggingFace. Fetch it with source=huggingface "
+        "(or clear $VPIPE_MODEL_SOURCE) if you can reach that host",
+        this->id(), hf_path, src->label()));
+  }
+  if (mirror == MirrorStatus::Renamed) {
+    s->info(fmt("ModelFetchStage('{}'): '{}' is '{}' on {}",
+                this->id(), hf_path, repo_path, src->label()));
+  }
+
+  // -------- 5. List repo files (the source's tree API) ----------------
+  const string tree_url = src->tree_url(repo_path, revision);
+  string body, err;
+  long   status = 0;
+  bool   ok = http_get_text(tree_url, token, _verify_tls,
+                        _timeout_seconds, body, status, err);
+  // Gated/private repo without a usable token: prompt once (masked) and
+  // retry. This is where getpasswd earns its keep.
+  if (!ok && (status == 401 || status == 403)) {
+    string t;
+    if (s->getpasswd(
+            fmt("'{}' is gated. {} token (blank to cancel): ",
+                repo_path, src->label()),
+            t, cancel) == UiInputStatus::Ok) {
+      trim_(t);
+      if (!t.empty()) {
+        token = t;
+        ok = http_get_text(tree_url, token, _verify_tls, _timeout_seconds,
+                       body, status, err);
+      }
+    }
+  }
+  if (!ok) {
+    s->error(fmt("ModelFetchStage('{}'): listing '{}' on {} failed: {}",
+                 this->id(), repo_path, src->label(), err));
+  }
+
+  FlexData tree;
+  try {
+    tree = FlexData::from_json(body);
+  } catch (const std::exception& e) {
+    s->error(fmt("ModelFetchStage('{}'): bad tree JSON for '{}' on {}: {}",
+                 this->id(), repo_path, src->label(), e.what()));
+  }
+  vector<HfFile> files = src->parse_tree(tree);
+  if (files.empty()) {
+    // The hint is per-source because the likely CAUSE is: HuggingFace
+    // 404s a repo that is not there, ModelScope answers a bad revision
+    // with an empty list and HTTP 200.
+    s->error(fmt("ModelFetchStage('{}'): {}", this->id(),
+                 src->empty_tree_hint(repo_path, revision)));
+  }
+
+  // A catalogue entry may pin a SUBSET of repo files (e.g. one GGUF quant
+  // plus its mmproj / imatrix companions out of a multi-quant repo) --
+  // fetch just those, not the whole repo. Preserves the pinned order.
+  if (entry && !entry->files.empty()) {
+    vector<HfFile> picked;
+    for (const string& want : entry->files) {
+      bool found = false;
+      for (const HfFile& f : files) {
+        if (f.path == want) {
+          picked.push_back(f);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        s->error(fmt("ModelFetchStage('{}'): pinned file '{}' not found "
+                     "in repo '{}'", this->id(), want, hf_path));
+      }
+    }
+    files = std::move(picked);
+  }
+
+  // -------- 6. Download ------------------------------------------------
+  uint64_t total_bytes = 0;
+  uint64_t downloaded  = 0;
+  uint64_t skipped     = 0;
+  // How much of what we fetched the repo let us check. Worth counting
+  // separately: "checked" and "publishes nothing to check against" are
+  // very different assurances, and a fetch that silently did neither
+  // reads the same as one that did both.
+  uint64_t checked     = 0;
+  uint64_t unchecked   = 0;
+  FlexData files_arr = FlexData::make_array();
+  for (size_t i = 0; i < files.size(); ++i) {
+    if (ctx.stop_requested()) {
+      s->error(fmt("ModelFetchStage('{}'): canceled after {}/{} files",
+                   this->id(), i, files.size()));
+    }
+    const HfFile& f = files[i];
+    const fs::path dest = local_dir / f.path;
+    files_arr.as_array().push_back(FlexData::make_string(f.path));
+    total_bytes += f.size;
+
+    std::error_code ec;
+    if (_skip_existing_files && f.size > 0 && fs::exists(dest)
+        && fs::file_size(dest, ec) == f.size && !ec) {
+      s->info(fmt("  [{}/{}] {} ({}) -- present, skip",
+                  i + 1, files.size(), f.path, human_bytes(f.size)));
+      ++skipped;
+      continue;
+    }
+    s->info(fmt("  [{}/{}] {} ({}) ...",
+                i + 1, files.size(), f.path,
+                f.size ? human_bytes(f.size) : string("size unknown")));
+    const string file_url = src->file_url(repo_path, revision, f.path);
+    // A live progress report for big shards -- a bar in the console
+    // footer, an entry in the web UI's progress panel. The handle
+    // closes itself when it leaves scope, including on the error path.
+    UiProgress bar;
+    if (f.size >= kBigFileBytes) {
+      bar = s->open_progress(fs::path(f.path).filename().string());
+    }
+    long dl_status = 0;
+    string dl_err;
+    FetchRequest freq;
+    freq.url          = file_url;
+    freq.token        = token;
+    freq.want.size    = f.size;
+    freq.want.sha256  = f.sha256;
+    freq.want.git_oid = f.git_oid;
+    // A repo that publishes a xet hash can be rebuilt from the content
+    // store instead of streamed, which is many ranges at once rather
+    // than one. Only worth the extra round trips on a big file -- and
+    // only HuggingFace has such a store, so a mirror leaves this empty
+    // and every file streams.
+    if (src->supports_xet() && !f.xet_hash.empty()
+        && f.size >= kBigFileBytes) {
+      freq.xet.repo     = repo_path;
+      freq.xet.revision = revision;
+      freq.xet.hash     = f.xet_hash;
+    }
+    FileCheck fc = FileCheck::NotPublished;
+    if (!fetch_file(s, freq, fopts, dest, dl_status, dl_err, &bar,
+                    &cancel, &fc)) {
+      s->error(fmt("ModelFetchStage('{}'): download of '{}' failed: {}",
+                   this->id(), f.path, dl_err));
+    }
+    ++downloaded;
+    if (fc == FileCheck::Ok) { ++checked; } else { ++unchecked; }
+  }
+  s->info(fmt("ModelFetchStage('{}'): {} file(s) ({} downloaded, {} "
+              "already present), {} total",
+              this->id(), files.size(), downloaded, skipped,
+              human_bytes(total_bytes)));
+  if (!_verify_checksums) {
+    s->info(fmt("ModelFetchStage('{}'): verify_checksums is off -- "
+                "nothing downloaded was checked", this->id()));
+  } else if (downloaded > 0) {
+    s->info(fmt("ModelFetchStage('{}'): {} of {} downloaded file(s) "
+                "matched the checksum '{}' publishes{}",
+                this->id(), checked, downloaded, hf_path,
+                unchecked > 0
+                    ? fmt("; {} publish none", unchecked)()
+                    : string()));
+  }
+
+  // -------- 6b. Companion files from another repo ---------------------
+  // What completes a weights-only repack: the tokenizer its publisher did
+  // not ship. Fetched by direct URL rather than through a second tree
+  // listing because these are a few MB of vocabulary and config -- the
+  // listing exists to pick among many candidates and to size big shards,
+  // and there is nothing to pick or size here.
+  if (entry != nullptr && !entry->companion_files.empty()) {
+    std::size_t got = 0;
+    for (const auto& c : entry->companion_files) {
+      const fs::path dest = local_dir / c.dest;
+      std::error_code cec;
+      if (_skip_existing_files && fs::exists(dest, cec) && !cec) {
+        // Presence, not size: a size check needs the other repo's tree.
+        s->info(fmt("  [companion] {} -- present, skip", c.dest));
+        files_arr.as_array().push_back(FlexData::make_string(c.dest));
+        ++got;
+        continue;
+      }
+      // A companion names ANOTHER repo, in HuggingFace terms like
+      // everything else in the catalogue, so it needs the same mirror
+      // resolution the main repo got -- MiniMax-H3's tokenizer companion
+      // is exactly such a case, and reaching for the HuggingFace spelling
+      // here would be an unreachable host in the one deployment this
+      // whole path exists for. A companion the mirror lacks is skipped
+      // with a warning rather than failing the fetch, for the reason the
+      // failure path below gives.
+      string crepo;
+      if (mirror_repo(src->name(), c.repo, crepo) == MirrorStatus::Absent) {
+        s->warn(fmt(
+            "ModelFetchStage('{}'): companion '{}' comes from '{}', which "
+            "{} does not carry; fetch it from HuggingFace and copy it to "
+            "'{}'", this->id(), c.file, c.repo, src->label(),
+            dest.string()));
+        continue;
+      }
+      const string curl_url = src->file_url(crepo, revision, c.file);
+      long   cstatus = 0;
+      string cerr;
+      UiProgress cbar;
+      // No tree listing for the other repo, so no published size or
+      // checksum to hold these to -- so, as above, they retry but do
+      // not resume. These are a few MB of vocabulary and config.
+      FetchRequest creq;
+      creq.url   = curl_url;
+      creq.token = token;
+      if (!fetch_file(s, creq, fopts, dest, cstatus, cerr, &cbar,
+                      &cancel)) {
+        // WARN, not error: error() throws, and discarding a finished
+        // multi-GB fetch over a few MB is the worse outcome. Name the
+        // file and where it goes, so this reads as "top this up" rather
+        // than as a failed download of the model itself.
+        //
+        // NOT the consequence, though it used to be. This warning said
+        // "without it this copy cannot encode a prompt", which is true
+        // of the tokenizer companion it was written for and of nothing
+        // else -- a missing VAE config.json does not stop a prompt being
+        // encoded, it stops a latent being decoded. A message that names
+        // the wrong symptom is worse than one that names none: the
+        // reader looks for a failure that never happens, and the one
+        // that does arrives later from another stage.
+        //
+        // A 401 is called out by name because it is the one cause a user
+        // can act on and the one this list makes easy to create: a
+        // companion may live in a GATED repo the fetch of the main model
+        // never needed a token for.
+        s->warn(fmt(
+            "ModelFetchStage('{}'): companion '{}' from '{}' failed ({}){}; "
+            "the rest of '{}' is complete -- copy that one file to '{}'",
+            this->id(), c.file, c.repo, cerr,
+            cstatus == 401
+                ? " -- '" + c.repo + "' is gated, so this needs a token "
+                  "that has accepted ITS licence, not the one fetched here"
+                : std::string(),
+            hf_path, dest.string()));
+        continue;
+      }
+      files_arr.as_array().push_back(FlexData::make_string(c.dest));
+      ++got;
+      s->info(fmt("  [companion] {} <- {}", c.dest, c.repo));
+    }
+    s->info(fmt("ModelFetchStage('{}'): {}/{} companion file(s) from "
+                "outside '{}'", this->id(), got,
+                entry->companion_files.size(), hf_path));
+  }
+
+  // -------- 7. Unpack archives (.tar -> *.mlpackage) ------------------
+  // Catalogue archive entries (the vpipe-supplement CoreML packages) ship a
+  // single *.mlpackage per .tar. Unpack each into <repo>/<name>/ and point
+  // the registered local_path at the contained .mlpackage so a stage's
+  // model_path / coreml_vision_path resolves straight to a loadable package.
+  // Default (non-archive) entries register the repo dir, as before.
+  string local_path_str = local_dir.string();
+  if (entry && entry->extract_archive) {
+    const string sub = entry->name.empty() ? string("extracted")
+                                           : entry->name;
+    const fs::path extract_dir = local_dir / sub;
+    for (const HfFile& f : files) {
+      if (f.path.size() < 4
+          || f.path.compare(f.path.size() - 4, 4, ".tar") != 0) {
+        continue;
+      }
+      const fs::path archive = local_dir / f.path;
+      string pkg = coreml_artifact(extract_dir.string());
+      // Re-unpack when nothing is there yet, or anything was (re)downloaded
+      // this run (so a refreshed archive overwrites a stale extraction).
+      if (pkg.empty() || downloaded > 0) {
+        s->info(fmt("ModelFetchStage('{}'): unpacking '{}' -> '{}' ...",
+                    this->id(), f.path, extract_dir.string()));
+        string xerr;
+        if (!extract_tar_(archive, extract_dir, xerr)) {
+          s->error(fmt(
+              "ModelFetchStage('{}'): unpack of '{}' failed: {}",
+              this->id(), f.path, xerr));
+        }
+        pkg = coreml_artifact(extract_dir.string());
+      }
+      if (!pkg.empty()) {
+        local_path_str = pkg;
+        s->info(fmt("ModelFetchStage('{}'): unpacked package '{}'",
+                    this->id(), local_path_str));
+      } else {
+        // The record then names a directory CoreML cannot load. Say so
+        // in those terms: the stage that eventually fails is a different
+        // one, and its error names only the path it was handed.
+        local_path_str = extract_dir.string();
+        s->warn(fmt(
+            "ModelFetchStage('{}'): no *.mlpackage / *.mlmodelc found "
+            "under '{}' after unpacking '{}'; registering the dir "
+            "itself, which CoreML will not be able to load",
+            this->id(), extract_dir.string(), f.path));
+      }
+    }
+  }
+
+  // -------- 8. Prepare tokenizer.json (Qwen3-ASR, native) -------------
+  // The Qwen3-ASR repos ship the tokenizer as vocab.json + merges.txt +
+  // tokenizer_config.json but no consolidated tokenizer.json (which our
+  // runtime needs). Synthesize it natively -- no transformers / Python.
+  bool tokenizer_ready = true;
+  const bool want_tok = _prepare_tokenizer && entry
+                        && entry->needs_tokenizer_json;
+  if (want_tok) {
+    // WHERE the sources live varies by repo, and the answer is simply
+    // where vocab.json is: the ASR repos put it at the root, a diffusers
+    // pipeline puts it in tokenizer/ beside the pipeline's other
+    // subfolders. Synthesize in that same directory, because that is
+    // also where every reader looks for the result.
+    fs::path tok_dir = local_dir;
+    if (!fs::exists(local_dir / "vocab.json")
+        && fs::exists(local_dir / "tokenizer" / "vocab.json")) {
+      tok_dir = local_dir / "tokenizer";
+    }
+    const fs::path tj = tok_dir / "tokenizer.json";
+    std::error_code ec;
+    if (fs::exists(tj) && fs::file_size(tj, ec) > 0 && !ec) {
+      s->info(fmt("ModelFetchStage('{}'): tokenizer.json already present",
+                  this->id()));
+    } else {
+      s->info(fmt("ModelFetchStage('{}'): preparing tokenizer.json "
+                  "(native byte-level BPE, no transformers) ...",
+                  this->id()));
+      string perr;
+      tokenizer_ready =
+          prepare_qwen_asr_tokenizer_json(tok_dir.string(), perr);
+      if (tokenizer_ready) {
+        s->info(fmt("ModelFetchStage('{}'): tokenizer.json prepared",
+                    this->id()));
+      } else {
+        // Non-fatal: the model is downloaded + still registers.
+        s->warn(fmt(
+            "ModelFetchStage('{}'): tokenizer.json prep failed: {} "
+            "(repo must ship vocab.json + merges.txt + "
+            "tokenizer_config.json)", this->id(), perr));
+      }
+    }
+  }
+
+  // -------- 9. Register in LMDB ---------------------------------------
+  FlexData rec = FlexData::make_object();
+  auto ro = rec.as_object();
+  ro.insert_or_assign("hf_path", FlexData::make_string(hf_path));
+  // PROVENANCE, not identity: `hf_path` above is what this record is
+  // keyed and looked up by whichever server served the bytes, and these
+  // two say where they actually came from. A record written before this
+  // field existed has no `source`, which reads correctly as HuggingFace.
+  ro.insert_or_assign("source", FlexData::make_string(src->name()));
+  ro.insert_or_assign("source_url",
+                      FlexData::make_string(src->web_url(repo_path)));
+  ro.insert_or_assign("local_path",
+                      FlexData::make_string(local_path_str));
+  ro.insert_or_assign("file_count",
+                      FlexData::make_uint(files.size()));
+  ro.insert_or_assign("total_bytes", FlexData::make_uint(total_bytes));
+  ro.insert_or_assign("files", std::move(files_arr));
+  // Describe what was downloaded (runtime type + I/O modalities) by
+  // probing it, the same way model-register does. For a CATALOGUED repo
+  // this reproduces the curated fields, which the block below then
+  // rewrites verbatim; the win is the UNcatalogued repo -- a user-typed
+  // owner/repo used to register with no metadata at all, so no stage
+  // picker would offer it.
+  record_detected_fields(ro, detect_model_dir(local_path_str, hf_path));
+  if (entry) {
+    if (!entry->name.empty()) {
+      ro.insert_or_assign("name", FlexData::make_string(entry->name));
+    }
+    ro.insert_or_assign("family", FlexData::make_string(entry->family));
+    ro.insert_or_assign("version", FlexData::make_string(entry->version));
+    ro.insert_or_assign("param_class",
+                        FlexData::make_string(entry->param_class));
+    ro.insert_or_assign("variant", FlexData::make_string(entry->variant));
+    ro.insert_or_assign("model_type",
+                        FlexData::make_string(entry->model_type));
+    ro.insert_or_assign("needs_tokenizer_json",
+                        FlexData::make_bool(entry->needs_tokenizer_json));
+    ro.insert_or_assign("tokenizer_ready",
+                        FlexData::make_bool(tokenizer_ready));
+  }
+
+  {
+    LmdbDb      db(*env, kModelRegistryDb);
+    LmdbTxn     txn(*env, LmdbTxn::Mode::ReadWrite);
+    const string bytes = rec.to_binary();
+    db.put(txn, reg_key, bytes);
+    txn.commit();
+  }
+
+  s->info(fmt("ModelFetchStage('{}'): registered '{}' in the model "
+              "registry", this->id(), reg_key));
+
+  // THE SUPPLEMENTS THIS MODEL HAS, and which of them are still absent.
+  //
+  // A supplement is a second checkpoint some stage looks for at RUN
+  // time: VOSR cross-attends to a DINOv2 tower that its own repo ships
+  // only as a torch.hub pickle, a CoreML vision tower sits beside an LM.
+  // The catalogue already records the link -- that is what
+  // `parent_model_type` is -- but nothing acted on it, so the gap
+  // surfaced as a pipeline refusing much later, in a stage that knows
+  // nothing about fetching. Said HERE the answer is one more fetch.
+  //
+  // LISTED, not fetched: the catalogue does not record whether a
+  // supplement is required or optional (a vision tower is a choice, a
+  // DINOv2 tower is not), and downloading gigabytes nobody asked for on
+  // a guess is the worse error of the two.
+  if (entry != nullptr && !entry->model_type.empty()) {
+    vector<string> absent;
+    {
+      LmdbDb  sdb(*env, kModelRegistryDb);
+      LmdbTxn stxn(*env, LmdbTxn::Mode::ReadOnly);
+      for (const ModelCatalogEntry& sup : model_catalog()) {
+        if (sup.parent_model_type != entry->model_type) { continue; }
+        if (!sup.parent_param_class.empty()
+            && sup.parent_param_class != entry->param_class) {
+          continue;
+        }
+        const string skey = sup.name.empty() ? sup.hf_path : sup.name;
+        if (sdb.get(stxn, skey).has_value()) { continue; }
+        absent.push_back(skey);
+      }
+    }
+    if (!absent.empty()) {
+      s->warn(fmt(
+          "ModelFetchStage('{}'): the catalogue lists {} companion "
+          "checkpoint(s) for this model that are NOT fetched: {}. A stage "
+          "that wants one will refuse at launch; fetch each with "
+          "model-fetch model_path=<key>", this->id(), absent.size(),
+          join_(absent)));
+    }
+  }
+  ro.insert_or_assign("stage", FlexData::make_string("model-fetch"));
+  ro.insert_or_assign("text", FlexData::make_string(
+      fmt("[model-fetch] {}\n  -> {}\n  {} file(s), {} bytes",
+          hf_path, local_path_str, files.size(), total_bytes)()));
+  if (ctx.has_consumers(0)) {
+    co_await ctx.write(0, make_payload<FlexDataPayload>(std::move(rec)));
+  }
+  ctx.signal_done();
+  co_return;
+}
+
+VPIPE_REGISTER_STAGE(ModelFetchStage)
+VPIPE_REGISTER_SPEC(ModelFetchStage, kSpec)
+
+}

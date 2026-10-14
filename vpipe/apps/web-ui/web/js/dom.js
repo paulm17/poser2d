@@ -1,0 +1,202 @@
+// Tiny DOM helpers -- no framework.
+
+export function el(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) { continue; }
+    if (k === 'class') { e.className = v; }
+    else if (k === 'style') { e.style.cssText = v; }
+    else if (k === 'html') { e.innerHTML = v; }
+    else if (k.startsWith('on') && typeof v === 'function') {
+      e.addEventListener(k.slice(2), v);
+    } else { e.setAttribute(k, v === true ? '' : v); }
+  }
+  append(e, children);
+  return e;
+}
+
+export function append(parent, children) {
+  for (const c of children.flat ? children.flat(Infinity) : children) {
+    if (c === null || c === undefined || c === false) { continue; }
+    parent.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+}
+
+export function clear(node) {
+  while (node.firstChild) { node.removeChild(node.firstChild); }
+  return node;
+}
+
+// SVG element factory (namespaced).
+export function svgEl(tag, attrs = {}) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined) { continue; }
+    if (k.startsWith('on') && typeof v === 'function') {
+      e.addEventListener(k.slice(2), v);
+    } else { e.setAttribute(k, v); }
+  }
+  return e;
+}
+
+// A small keyboard-shortcut badge, e.g. kbd('⏎') or kbd('N'). Rendered
+// inside buttons to advertise their shortcut.
+export function kbd(label) {
+  return el('kbd', { class: 'kbd' }, label);
+}
+
+// Simple modal. actions: [{label, kind?, cancel?, onClick(close)}].
+// Returns a close() function. Keyboard: Enter triggers the primary
+// action (kind:'primary'); Escape / backdrop click triggers the cancel
+// action (cancel:true or label "Cancel"), else just closes. The
+// primary and cancel buttons render ⏎ / Esc hint badges.
+export function openModal({ title, body, actions = [], className = '' }) {
+  const root = document.getElementById('modal-root');
+  const back = el('div', { class: 'modal-back' });
+  const modal = el('div',
+    { class: 'modal' + (className ? ' ' + className : '') });
+  const close = () => { back.remove(); document.removeEventListener('keydown', onKey); };
+
+  const primary = actions.find((a) => a.kind === 'primary');
+  const cancel = actions.find(
+    (a) => a.cancel || /^cancel$/i.test(a.label || ''));
+  const dismiss = () => { if (cancel) { cancel.onClick(close); } else { close(); } };
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      dismiss();
+    } else if (e.key === 'Enter') {
+      // Let textareas keep newlines and let a focused button click itself.
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'TEXTAREA' || tag === 'BUTTON') { return; }
+      if (primary) { e.preventDefault(); primary.onClick(close); }
+    }
+  };
+
+  modal.append(el('h3', {}, title));
+  const b = el('div', { class: 'body' });
+  append(b, [body]);
+  modal.append(b);
+  const foot = el('div', { class: 'foot' });
+  for (const a of actions) {
+    const hint = a.kind === 'primary' ? '⏎' : (a === cancel ? 'Esc' : null);
+    foot.append(el('button', { class: 'btn ' + (a.kind || ''),
+      onclick: () => a.onClick(close) },
+      a.label, hint ? kbd(hint) : null));
+  }
+  modal.append(foot);
+  back.append(modal);
+  back.addEventListener('click', (e) => { if (e.target === back) { dismiss(); } });
+  document.addEventListener('keydown', onKey);
+  root.append(back);
+  return close;
+}
+
+// A refusal the user has to READ, rather than a toast they can miss.
+//
+// The backend now answers a rejected load or launch with the reason the
+// loader gave -- a parse position, a stage id, the field it objected to
+// -- and that text is the whole point of the message: it is often more
+// than one line, and it is usually something to go and fix in an
+// editor. A toast shows it for three seconds in a corner and takes it
+// away again, and it cannot be selected while it is there. So this.
+//
+// `message` is the server's text as-is. Its first line is the summary
+// (what failed) and anything after it is the reason, which is rendered
+// preformatted so a line/column or an indented list survives.
+export function openErrorModal({ title, message, okLabel = 'Close' }) {
+  const text = String(message == null ? '' : message);
+  const nl = text.indexOf('\n');
+  const summary = nl < 0 ? text : text.slice(0, nl);
+  const detail = nl < 0 ? '' : text.slice(nl + 1);
+  const body = el('div', { class: 'err-body' },
+    summary ? el('div', { class: 'err-summary' }, summary) : null,
+    detail ? el('pre', { class: 'err-detail' }, detail) : null);
+  return openModal({
+    title,
+    body,
+    className: 'error-modal',
+    actions: [{ label: okLabel, kind: 'primary', onClick: (c) => c() }],
+  });
+}
+
+// A lightweight context menu anchored at viewport point (x, y). `items`
+// is a list of { label, danger?, onClick }; a null entry renders a
+// divider. The menu closes on selection, click-away, Escape, scroll or
+// resize, and is clamped to stay on-screen. Returns a close fn.
+//
+// An item may also carry a SHIFT variant -- { altLabel, onAlt } -- for a
+// second, related action that would otherwise need a second menu entry.
+// While the menu is open and Shift is held, such an item shows altLabel
+// and invokes onAlt. It is marked with a ⇧ badge whether or not Shift is
+// down, because a modifier nobody can see is a modifier nobody finds.
+export function openMenu(x, y, items) {
+  const root = document.getElementById('modal-root') || document.body;
+  const menu = el('div', { class: 'ctx-menu' });
+  const close = () => {
+    menu.remove();
+    document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('pointerdown', onAway, true);
+    document.removeEventListener('keyup', onMod, true);
+    document.removeEventListener('pointermove', onMod, true);
+    window.removeEventListener('resize', close);
+    window.removeEventListener('scroll', close, true);
+  };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    onMod(e);
+  };
+  const onAway = (e) => { if (!menu.contains(e.target)) { close(); } };
+  // Every listener here carries `shiftKey`, so the label tracks the key
+  // whether the user presses it, releases it, or was already holding it
+  // when the pointer first moved over the menu.
+  const alts = [];
+  const onMod = (e) => {
+    for (const a of alts) {
+      a.text.textContent = e.shiftKey ? a.it.altLabel : a.it.label;
+    }
+  };
+  for (const it of items) {
+    if (!it) { menu.append(el('div', { class: 'ctx-sep' })); continue; }
+    const hasAlt = typeof it.onAlt === 'function' && it.altLabel;
+    const text = el('span', { class: 'ctx-item-text' }, it.label);
+    const btn = el('button', {
+      class: 'ctx-item' + (it.danger ? ' danger' : ''),
+      // Read the modifier off the CLICK, not off the last key event: that
+      // is the state the user acted on, and it is what the label showed.
+      onclick: (e) => {
+        close();
+        if (hasAlt && e.shiftKey) { it.onAlt(); } else { it.onClick(); }
+      },
+    }, text, hasAlt ? el('span', { class: 'ctx-item-mod' }, '⇧') : null);
+    if (hasAlt) { alts.push({ it, text }); }
+    menu.append(btn);
+  }
+  root.append(menu);
+  const r = menu.getBoundingClientRect();
+  menu.style.left =
+    Math.max(4, Math.min(x, window.innerWidth - r.width - 6)) + 'px';
+  menu.style.top =
+    Math.max(4, Math.min(y, window.innerHeight - r.height - 6)) + 'px';
+  document.addEventListener('keydown', onKey, true);
+  // Defer the away-listener a tick so the opening click doesn't close it.
+  setTimeout(() => document.addEventListener('pointerdown', onAway, true), 0);
+  if (alts.length) {
+    document.addEventListener('keyup', onMod, true);
+    document.addEventListener('pointermove', onMod, true);
+  }
+  window.addEventListener('resize', close);
+  window.addEventListener('scroll', close, true);
+  return close;
+}
+
+let toastRoot = null;
+export function toast(message, kind = 'info', ms = 3500) {
+  if (!toastRoot) { toastRoot = document.getElementById('toast-root'); }
+  const t = el('div', { class: 'toast ' + (kind === 'error' ? 'err'
+                       : kind === 'ok' ? 'ok' : '') }, message);
+  toastRoot.append(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 200); },
+             ms);
+}

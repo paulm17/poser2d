@@ -1,0 +1,2202 @@
+// metal-compute-sdpa-mma.cc -- correctness + throughput for the M5
+// matrix-core flash attention (sdpa_mma, head_dim 256) vs a CPU oracle
+// and the scalar query-tiled kernel (sdpa_paged_qtile). Contiguous K/V,
+// causal, GQA. Runs in BOTH builds; skips the matrix-core half on GPUs
+// without matrix cores (steel-only is still a valid pass).
+
+#include "minitest.h"
+#include "apple-silicon/metal-compute/command-stream.h"
+#include "apple-silicon/metal-compute/compute-encoder.h"
+#include "apple-silicon/metal-compute/compute-library.h"
+#include "apple-silicon/metal-compute/metal-compute.h"
+#include "apple-silicon/metal-compute/shared-buffer.h"
+#include "common/session.h"
+#include "generative-models/shared/kernel-sets/prefill-gqa-attn-set.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <random>
+#include <string>
+#include <vector>
+
+using namespace vpipe;
+using namespace vpipe::metal_compute;
+
+namespace {
+
+inline std::uint16_t f32_to_h(float f) {  // f32 -> IEEE half (round-to-nearest)
+  std::uint32_t x; std::memcpy(&x, &f, 4);
+  const std::uint32_t sign = (x >> 16) & 0x8000u;
+  std::int32_t exp = (std::int32_t)((x >> 23) & 0xff) - 127 + 15;
+  std::uint32_t man = x & 0x7fffffu;
+  if (exp <= 0) { return (std::uint16_t)sign; }
+  if (exp >= 0x1f) { return (std::uint16_t)(sign | 0x7c00u); }
+  return (std::uint16_t)(sign | (exp << 10) | (man >> 13));
+}
+inline float h_to_f32(std::uint16_t h) {
+  const std::uint32_t sign = (std::uint32_t)(h & 0x8000) << 16;
+  const std::uint32_t exp = (h >> 10) & 0x1f;
+  const std::uint32_t man = h & 0x3ff;
+  std::uint32_t out;
+  if (exp == 0) { out = sign; }
+  else if (exp == 0x1f) { out = sign | 0x7f800000u | (man << 13); }
+  else { out = sign | ((exp - 15 + 127) << 23) | (man << 13); }
+  float f; std::memcpy(&f, &out, 4); return f;
+}
+
+MetalCompute* get_mc_(Session& s) {
+  MetalCompute* mc = s.metal_compute();
+  return (mc != nullptr && mc->valid()) ? mc : nullptr;
+}
+double secs_(std::chrono::steady_clock::time_point a,
+             std::chrono::steady_clock::time_point b) {
+  return std::chrono::duration<double>(b - a).count();
+}
+
+}  // namespace
+
+TEST(sdpa_mma, correctness_and_speed) {
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  ComputeLibrary lib = mc->load_library("sdpa_mma");
+  ComputeFunction fn = lib.function("sdpa_mma_f16");
+  if (!fn.valid()) {
+    std::printf("[sdpa_mma] no matrix cores -- skipped.\n");
+    return;
+  }
+  ComputeLibrary lib_q = mc->load_library("sdpa");
+  ComputeFunction fq = lib_q.function("sdpa_paged_qtile_f16");
+
+  const int D = 256, Hq = 16, Hkv = 4;
+  struct Cfg { int n; const char* tag; };
+  const Cfg cfgs[] = {{64, "n64"}, {512, "n512"}, {1024, "n1024"}};
+
+  for (const auto& cf : cfgs) {
+    const int n = cf.n;
+    std::mt19937 rng(123 + n);
+    std::uniform_real_distribution<float> d(-1.0f, 1.0f);
+    std::vector<std::uint16_t> q((size_t)Hq * n * D), k((size_t)Hkv * n * D),
+        vv((size_t)Hkv * n * D);
+    for (auto& e : q) e = f32_to_h(d(rng) * 0.2f);
+    for (auto& e : k) e = f32_to_h(d(rng) * 0.2f);
+    for (auto& e : vv) e = f32_to_h(d(rng) * 0.2f);
+    const float scale = 1.0f / std::sqrt((float)D);
+
+    SharedBuffer qb = mc->make_shared_buffer(q.size() * 2);
+    SharedBuffer kb = mc->make_shared_buffer(k.size() * 2);
+    SharedBuffer vb = mc->make_shared_buffer(vv.size() * 2);
+    SharedBuffer ob = mc->make_shared_buffer((size_t)Hq * n * D * 2);
+    std::memcpy(qb.contents(), q.data(), q.size() * 2);
+    std::memcpy(kb.contents(), k.data(), k.size() * 2);
+    std::memcpy(vb.contents(), vv.data(), vv.size() * 2);
+
+    // Single-page paged setup: pool [1, Hkv, page_tokens=n, D] == our
+    // contiguous [Hkv, n, D]; page_table {pid=0, nvalid=n, gstart=0}.
+    std::vector<std::int32_t> pt = {0, n, 0};
+    SharedBuffer ptb = mc->make_shared_buffer(pt.size() * 4);
+    std::memcpy(ptb.contents(), pt.data(), pt.size() * 4);
+    auto run_mma = [&]() {
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder enc = st.begin_compute();
+        enc.set_function(fn);
+        enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+        enc.set_buffer(3, ob);
+        enc.set_constant(4, scale); enc.set_constant(5, D);
+        enc.set_constant(6, Hq); enc.set_constant(7, Hkv);
+        enc.set_constant(8, n); enc.set_constant(9, 0);
+        enc.set_constant(10, n); enc.set_constant(11, 1);
+        enc.set_buffer(12, ptb);
+        const unsigned tiles = (unsigned)((n + 15) / 16);   // SA_BQ=16
+        enc.dispatch({128, (unsigned)Hq, tiles}, {128, 1, 1});
+      }
+      st.commit().wait();
+    };
+
+    // Correctness vs CPU oracle on a few (h, qi) samples (full O is large).
+    run_mma();
+    const auto* op = static_cast<const std::uint16_t*>(ob.contents());
+    double num = 0.0, den = 0.0;
+    const int hs[] = {0, 7, 15};
+    for (int h : hs) {
+      const int kvh = h / (Hq / Hkv);
+      for (int qi = 0; qi < n; qi += (n / 8 > 0 ? n / 8 : 1)) {
+        std::vector<float> sc(qi + 1);
+        float mx = -1e30f;
+        for (int ki = 0; ki <= qi; ++ki) {
+          float s = 0.0f;
+          for (int dd = 0; dd < D; ++dd) {
+            s += h_to_f32(q[((size_t)h * n + qi) * D + dd]) *
+                 h_to_f32(k[((size_t)kvh * n + ki) * D + dd]);
+          }
+          sc[ki] = s * scale; mx = std::max(mx, sc[ki]);
+        }
+        float l = 0.0f; for (float& s : sc) { s = std::exp(s - mx); l += s; }
+        for (int dd = 0; dd < D; ++dd) {
+          float o = 0.0f;
+          for (int ki = 0; ki <= qi; ++ki) {
+            o += sc[ki] * h_to_f32(vv[((size_t)kvh * n + ki) * D + dd]);
+          }
+          o /= l;
+          const float got = h_to_f32(op[((size_t)h * n + qi) * D + dd]);
+          num += (got - o) * (got - o); den += o * o;
+        }
+      }
+    }
+    const double rel = den > 0 ? std::sqrt(num / den) : std::sqrt(num);
+
+    // Speed: matrix-core vs scalar qtile (single-page paged setup).
+    auto bench = [&](auto launch) {
+      for (int w = 0; w < 3; ++w) { launch(); }
+      const auto t0 = std::chrono::steady_clock::now();
+      const int it = 20;
+      for (int i = 0; i < it; ++i) { launch(); }
+      const auto t1 = std::chrono::steady_clock::now();
+      return secs_(t0, t1) / it * 1e3;   // ms/call
+    };
+    const double ms_mma = bench(run_mma);
+
+    double ms_q = 0.0;
+    if (fq.valid()) {
+      auto run_q = [&]() {
+        CommandStream st = mc->make_command_stream();
+        { ComputeEncoder enc = st.begin_compute();
+          enc.set_function(fq);
+          enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+          enc.set_buffer(3, ob);
+          enc.set_constant(4, scale); enc.set_constant(5, D);
+          enc.set_constant(6, Hq); enc.set_constant(7, Hkv);
+          enc.set_constant(8, n); enc.set_constant(9, 0);
+          enc.set_constant(10, n); enc.set_constant(11, 1);
+          enc.set_buffer(12, ptb);
+          const unsigned tiles = (unsigned)((n + 15) / 16);
+          enc.dispatch({512, (unsigned)Hq, tiles}, {512, 1, 1});
+        }
+        st.commit().wait();
+      };
+      ms_q = bench(run_q);
+    }
+    std::printf("[sdpa_mma] %-6s n=%4d  rel-L2=%.3e | mma %.3f ms | "
+                "scalar-qtile %.3f ms | %.2fx\n",
+                cf.tag, n, rel, ms_mma, ms_q, ms_q > 0 ? ms_q / ms_mma : 0.0);
+    EXPECT_TRUE(rel < 5e-2);
+  }
+}
+
+// ENCODER full (bidirectional) attention: sdpa_full_mma_f16 vs the scalar
+// sdpa_full_f16, contiguous [H, n, D] Q/K/V, head_dim 64 (the ViT/Conformer
+// shape). Correctness (rel-L2 vs scalar) + speed at the vision-tower seq
+// length. This is the fix for the metal encoder perf gap (scalar 1-simdgroup-
+// per-query was ~93% of the vision encode wall).
+TEST(sdpa_mma, full_encoder_d64) {
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  ComputeLibrary lib = mc->load_library("sdpa");
+  ComputeFunction f_sc = lib.function("sdpa_full_f16");
+  ComputeFunction f_mma = lib.function("sdpa_full_mma_f16");
+  if (!f_sc.valid() || !f_mma.valid()) {
+    std::printf("[full_enc] missing kernels -- skipped\n"); return;
+  }
+  const int D = 64, H = 12;
+  const float scale = 1.0f / std::sqrt((float)D);
+  for (int n : {512, 2394}) {
+    std::mt19937 rng(11 + n);
+    std::uniform_real_distribution<float> d(-1.0f, 1.0f);
+    std::vector<std::uint16_t> q((size_t)H * n * D), k((size_t)H * n * D),
+        vv((size_t)H * n * D);
+    for (auto& e : q) e = f32_to_h(d(rng) * 0.3f);
+    for (auto& e : k) e = f32_to_h(d(rng) * 0.3f);
+    for (auto& e : vv) e = f32_to_h(d(rng) * 0.3f);
+    SharedBuffer qb = mc->make_shared_buffer(q.size() * 2);
+    SharedBuffer kb = mc->make_shared_buffer(k.size() * 2);
+    SharedBuffer vb = mc->make_shared_buffer(vv.size() * 2);
+    SharedBuffer o_sc = mc->make_shared_buffer((size_t)H * n * D * 2);
+    SharedBuffer o_mma = mc->make_shared_buffer((size_t)H * n * D * 2);
+    std::memcpy(qb.contents(), q.data(), q.size() * 2);
+    std::memcpy(kb.contents(), k.data(), k.size() * 2);
+    std::memcpy(vb.contents(), vv.data(), vv.size() * 2);
+
+    auto run_sc = [&]() {
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder enc = st.begin_compute();
+        enc.set_function(f_sc);
+        enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+        enc.set_buffer(3, o_sc);
+        enc.set_constant(4, scale); enc.set_constant(5, n);
+        enc.set_constant(6, D); enc.set_constant(7, H);
+        enc.set_constant(8, H); enc.set_constant(9, n);
+        enc.set_constant(10, n);
+        enc.dispatch({32, (unsigned)H, (unsigned)n}, {32, 1, 1}); }
+      st.commit().wait();
+    };
+    auto run_mma = [&]() {
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder enc = st.begin_compute();
+        enc.set_function(f_mma);
+        enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+        enc.set_buffer(3, o_mma);
+        enc.set_constant(4, scale); enc.set_constant(5, n);
+        enc.set_constant(6, D); enc.set_constant(7, H);
+        enc.set_constant(8, H); enc.set_constant(9, n);
+        enc.set_constant(10, n);
+        const unsigned tiles = (unsigned)((n + 31) / 32);  // MMAF_BQ=32
+        enc.dispatch({128, (unsigned)H, tiles}, {128, 1, 1}); }  // WM*WD*32
+      st.commit().wait();
+    };
+    run_sc(); run_mma();
+    const auto* a = static_cast<const std::uint16_t*>(o_sc.contents());
+    const auto* b = static_cast<const std::uint16_t*>(o_mma.contents());
+    double num = 0, den = 0;
+    for (size_t i = 0; i < (size_t)H * n * D; ++i) {
+      const float x = h_to_f32(a[i]), y = h_to_f32(b[i]);
+      num += (x - y) * (x - y); den += x * x;
+    }
+    const double rel = den > 0 ? std::sqrt(num / den) : 0.0;
+    auto bench = [&](auto fn) {
+      for (int w = 0; w < 3; ++w) { fn(); }
+      const auto t0 = std::chrono::steady_clock::now();
+      const int it = 10;
+      for (int i = 0; i < it; ++i) { fn(); }
+      return secs_(t0, std::chrono::steady_clock::now()) / it * 1e3;
+    };
+    const double ms_sc = bench(run_sc), ms_mma = bench(run_mma);
+    std::printf("[full_enc] n=%4d D=%d H=%d | rel-L2=%.3e | scalar %.3f ms | "
+                "mma %.3f ms | %.2fx\n", n, D, H, rel, ms_sc, ms_mma,
+                ms_mma > 0 ? ms_sc / ms_mma : 0.0);
+    EXPECT_TRUE(rel < 2e-2);
+  }
+}
+
+// sdpa_full_mma2_d{64,512} -- the matmul2d FULL flash attention, against a
+// DOUBLE-precision CPU oracle, in both element types and at two input SCALES.
+//
+// The scale sweep is the point. This kernel's consumers are the VAE mid-block
+// self-attention (D = 384/512) and the bf16 vision tower (D = 64), and unlike
+// every LM attention path its Q/K are raw conv/linear outputs -- not RMSNorm'd
+// projections -- so the QK^T dot can leave f16's range. It did: the kernel
+// accumulated QK in the element type, and Boogu's VAE decode came out at
+// rel-L2 2.23 against the simdgroup-matrix flash while staying finite (no NaN,
+// no crash) and while FLUX.2's VAE -- same kernel, same D=512 -- sat at 5e-4.
+// The `big` arm below has a POSITIVE-MEAN Q/K, which is what a VAE's smooth
+// latent actually produces: the dot is then ~D*s^2 rather than a random walk,
+// so it crosses 65504 and pins the range. A benign arm keeps the ordinary
+// numerics honest (the big arm's softmax is near-one-hot).
+//
+// The query tile is swept alongside, because the WIDE variants (_q16/_q32/_q64)
+// are the same math with the O accumulator moved from threadgroup memory into a
+// cooperative tensor -- and that hands the row index of each accumulator
+// element to an implementation-defined layout query. Get that axis backwards
+// and the online-softmax correction lands on the wrong row: still finite, still
+// plausible, silently wrong. n=40 is deliberately no multiple of any tile, so
+// every arm also exercises the ragged query AND key tails.
+TEST(sdpa_mma, full_mma2_matches_oracle_across_range) {
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  struct Lib { const char* name; bool bf16; double tol; };
+  const Lib libs[] = {{"sdpa_mma", false, 3e-3}, {"sdpa_mma_bf16", true, 2e-2}};
+  struct Case { int D; int H; int n; float s; bool mean; const char* tag; };
+  const Case cases[] = {
+    {384, 1, 40, 0.3f,  false, "benign"},
+    {512, 1, 40, 0.3f,  false, "benign"},
+    // s chosen so D*s^2*(mean^2) > 65504: the f16 accumulator overflows here.
+    {384, 1, 40, 19.0f, true,  "big"},
+    {512, 1, 40, 16.0f, true,  "big"},
+  };
+  auto enc16 = [](float v, bool bf16) -> std::uint16_t {
+    if (!bf16) { return f32_to_h(v); }
+    std::uint32_t u; std::memcpy(&u, &v, 4);
+    return (std::uint16_t)((u + 0x7fffu + ((u >> 16) & 1u)) >> 16);
+  };
+  auto dec16 = [](std::uint16_t b, bool bf16) -> float {
+    if (!bf16) { return h_to_f32(b); }
+    const std::uint32_t u = (std::uint32_t)b << 16;
+    float f; std::memcpy(&f, &u, 4); return f;
+  };
+
+  const int bqs[] = {8, 16, 32, 64};   // 8 = the threadgroup-accumulator kernel
+  for (const Lib& L : libs) {
+    ComputeLibrary lib = mc->load_library(L.name);
+    for (const Case& c : cases) {
+    for (const int bq : bqs) {
+      const std::string fname =
+          "sdpa_full_mma2_d" + std::to_string(c.D) +
+          (bq == 8 ? "" : "_q" + std::to_string(bq)) + "_f16";
+      ComputeFunction fn = lib.function(fname);
+      if (!fn.valid()) {
+        std::printf("[full_mma2] %s/%s unavailable -- skipped\n", L.name,
+                    fname.c_str());
+        continue;
+      }
+      const unsigned nt =
+          (bq == 8 || bq == 16) ? 128u : (bq == 32 ? 256u : 512u);
+      const std::size_t nel = (std::size_t)c.H * c.n * c.D;
+      std::vector<std::uint16_t> q(nel), k(nel), v(nel);
+      std::mt19937 rng(7 + c.D + (c.mean ? 1 : 0));
+      std::uniform_real_distribution<float> u(-1.0f, 1.0f);
+      // Round-trip every input through the storage type so the oracle sees the
+      // SAME values the kernel does -- otherwise the encode error dominates.
+      std::vector<float> qf(nel), kf(nel), vf(nel);
+      for (std::size_t i = 0; i < nel; ++i) {
+        const float bias = c.mean ? 0.8f : 0.0f;
+        q[i] = enc16(c.s * (bias + 0.2f * u(rng)), L.bf16);
+        k[i] = enc16(c.s * (bias + 0.2f * u(rng)), L.bf16);
+        v[i] = enc16(0.5f * u(rng), L.bf16);
+        qf[i] = dec16(q[i], L.bf16);
+        kf[i] = dec16(k[i], L.bf16);
+        vf[i] = dec16(v[i], L.bf16);
+      }
+      SharedBuffer qb = mc->make_shared_buffer(nel * 2);
+      SharedBuffer kb = mc->make_shared_buffer(nel * 2);
+      SharedBuffer vb = mc->make_shared_buffer(nel * 2);
+      SharedBuffer ob = mc->make_shared_buffer(nel * 2);
+      if (qb.empty() || kb.empty() || vb.empty() || ob.empty()) { return; }
+      std::memcpy(qb.contents(), q.data(), nel * 2);
+      std::memcpy(kb.contents(), k.data(), nel * 2);
+      std::memcpy(vb.contents(), v.data(), nel * 2);
+      const float scale = 1.0f / std::sqrt((float)c.D);
+      { CommandStream st = mc->make_command_stream();
+        { ComputeEncoder e = st.begin_compute();
+          e.set_function(fn);
+          e.set_buffer(0, qb); e.set_buffer(1, kb); e.set_buffer(2, vb);
+          e.set_buffer(3, ob);
+          e.set_constant(4, scale); e.set_constant(5, c.n);
+          e.set_constant(6, c.D); e.set_constant(7, c.H);
+          e.set_constant(8, c.H); e.set_constant(9, c.n);
+          e.set_constant(10, c.n);
+          e.dispatch({nt, (unsigned)c.H, (unsigned)((c.n + bq - 1) / bq)},
+                     {nt, 1, 1}); }
+        st.commit().wait(); }
+
+      double num = 0.0, den = 0.0;
+      const auto* got = static_cast<const std::uint16_t*>(ob.contents());
+      std::vector<double> s((std::size_t)c.n);
+      for (int h = 0; h < c.H; ++h) {
+        const std::size_t hb = (std::size_t)h * c.n * c.D;
+        for (int i = 0; i < c.n; ++i) {
+          double m = -1e300;
+          for (int j = 0; j < c.n; ++j) {
+            double dot = 0.0;
+            for (int d = 0; d < c.D; ++d) {
+              dot += (double)qf[hb + (std::size_t)i * c.D + d] *
+                     (double)kf[hb + (std::size_t)j * c.D + d];
+            }
+            s[(std::size_t)j] = dot * (double)scale;
+            if (s[(std::size_t)j] > m) { m = s[(std::size_t)j]; }
+          }
+          double z = 0.0;
+          for (int j = 0; j < c.n; ++j) {
+            s[(std::size_t)j] = std::exp(s[(std::size_t)j] - m);
+            z += s[(std::size_t)j];
+          }
+          for (int d = 0; d < c.D; ++d) {
+            double acc = 0.0;
+            for (int j = 0; j < c.n; ++j) {
+              acc += s[(std::size_t)j] *
+                     (double)vf[hb + (std::size_t)j * c.D + d];
+            }
+            const double want = acc / z;
+            const double diff =
+                (double)dec16(got[hb + (std::size_t)i * c.D + d], L.bf16) - want;
+            num += diff * diff; den += want * want;
+          }
+        }
+      }
+      const double rel = den > 0.0 ? std::sqrt(num / den) : std::sqrt(num);
+      std::printf("[full_mma2] %-14s D=%3d n=%d BQ=%-2d %-6s (|q|~%.0f) rel-L2 "
+                  "= %.4e\n", L.name, c.D, c.n, bq, c.tag, (double)c.s, rel);
+      EXPECT_TRUE(std::isfinite(rel) && rel < L.tol);
+    }
+    }
+  }
+}
+
+// Query-tile sweep at the VAE mid-block shape (one head, D = the mid channel
+// count, n_q = n_kv = the full latent grid). This attention is BANDWIDTH-bound:
+// each threadgroup streams all of K and V, so bytes moved scale as
+// ceil(n/BQ) * 2*n*D*2 and BQ is the only term that touches them. The sweep is
+// what says whether the hardware agrees.
+//
+// Arms are INTERLEAVED, one iteration each per round, and scored on the MINIMUM
+// -- on this box the GPU clock is gated by the SoC power budget, so running one
+// arm at a time hands the first the cold clock and reads back a win that is
+// really a power artifact. n defaults to a 512x512 image's latent
+// (64x64 grid); VPIPE_VAE_ATTN_BENCH_N raises it (12288 = 1024x768).
+TEST(sdpa_mma, full_mma2_vae_tile_sweep) {
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  if (!mc->supports_matrix_cores()) {
+    std::printf("[vae_tiles] no matrix cores -- skipped\n"); return;
+  }
+  ComputeLibrary lib = mc->load_library("sdpa_mma");
+  const int D = 512;
+  int n = 4096;
+  if (const char* e = std::getenv("VPIPE_VAE_ATTN_BENCH_N")) {
+    n = std::atoi(e);
+  }
+  const float scale = 1.0f / std::sqrt((float)D);
+  const std::size_t nel = (std::size_t)n * D;
+  std::vector<std::uint16_t> q(nel), k(nel), v(nel);
+  std::mt19937 rng(31);
+  std::uniform_real_distribution<float> u(-1.0f, 1.0f);
+  for (std::size_t i = 0; i < nel; ++i) {
+    q[i] = f32_to_h(0.3f * u(rng));
+    k[i] = f32_to_h(0.3f * u(rng));
+    v[i] = f32_to_h(0.5f * u(rng));
+  }
+  SharedBuffer qb = mc->make_shared_buffer(nel * 2);
+  SharedBuffer kb = mc->make_shared_buffer(nel * 2);
+  SharedBuffer vb = mc->make_shared_buffer(nel * 2);
+  if (qb.empty() || kb.empty() || vb.empty()) { return; }
+  std::memcpy(qb.contents(), q.data(), nel * 2);
+  std::memcpy(kb.contents(), k.data(), nel * 2);
+  std::memcpy(vb.contents(), v.data(), nel * 2);
+
+  struct Arm {
+    const char* sfx; int bq; unsigned nt;
+    ComputeFunction fn; SharedBuffer out; double best; double sum;
+  };
+  std::vector<Arm> arms;
+  struct Cand { const char* sfx; int bq; unsigned nt; };
+  // Suffix, query tile, and the threadgroup size its instantiation was built
+  // with -- the dispatch must match the kernel's execution_simdgroups exactly.
+  const Cand cands[] = {
+    {"", 8, 128}, {"_q16", 16, 128}, {"_q32", 32, 256}, {"_q64", 64, 512},
+  };
+  for (const Cand& c : cands) {
+    const std::string fname =
+        "sdpa_full_mma2_d" + std::to_string(D) + c.sfx + "_f16";
+    ComputeFunction fn = lib.function(fname);
+    if (!fn.valid()) { continue; }
+    SharedBuffer ob = mc->make_shared_buffer(nel * 2);
+    if (ob.empty()) { return; }
+    arms.push_back(Arm{c.sfx, c.bq, c.nt, std::move(fn), std::move(ob),
+                       1e30, 0.0});
+  }
+  ASSERT_TRUE(arms.size() >= 2);
+  auto run = [&](Arm& a) {
+    CommandStream st = mc->make_command_stream();
+    { ComputeEncoder e = st.begin_compute();
+      e.set_function(a.fn);
+      e.set_buffer(0, qb); e.set_buffer(1, kb); e.set_buffer(2, vb);
+      e.set_buffer(3, a.out);
+      e.set_constant(4, scale); e.set_constant(5, n);
+      e.set_constant(6, D); e.set_constant(7, 1);
+      e.set_constant(8, 1); e.set_constant(9, n);
+      e.set_constant(10, n);
+      e.dispatch({a.nt, 1, (unsigned)((n + a.bq - 1) / a.bq)},
+                 {a.nt, 1, 1}); }
+    st.commit().wait();
+  };
+  for (Arm& a : arms) { run(a); }               // warm every arm first
+  const int reps = 5;
+  for (int r = 0; r < reps; ++r) {
+    for (Arm& a : arms) {
+      const auto t0 = std::chrono::steady_clock::now();
+      run(a);
+      const double ms = secs_(t0, std::chrono::steady_clock::now()) * 1e3;
+      a.best = std::min(a.best, ms); a.sum += ms;
+    }
+  }
+  // Traffic model: threadgroups * (K + V) bytes, the term BQ divides.
+  const double base = arms[0].best;
+  const auto* ref = static_cast<const std::uint16_t*>(arms[0].out.contents());
+  for (const Arm& a : arms) {
+    const double gb = (double)((n + a.bq - 1) / a.bq) * 2.0 * n * D * 2.0 / 1e9;
+    double num = 0.0, den = 0.0;
+    const auto* got = static_cast<const std::uint16_t*>(a.out.contents());
+    for (std::size_t i = 0; i < nel; ++i) {
+      const double x = h_to_f32(ref[i]), y = h_to_f32(got[i]);
+      num += (y - x) * (y - x); den += x * x;
+    }
+    const double rel = den > 0.0 ? std::sqrt(num / den) : 0.0;
+    std::printf("[vae_tiles] n=%5d D=%d BQ=%-2d%-8s | %7.2f ms (mean %7.2f) | "
+                "%.2fx | K/V %6.1f GB -> %5.0f GB/s | rel-L2 vs BQ8 %.2e\n",
+                n, D, a.bq, a.sfx, a.best, a.sum / reps, base / a.best, gb,
+                gb / (a.best * 1e-3), rel);
+    EXPECT_TRUE(rel < 2e-3);
+  }
+}
+
+// sdpa_full_mma2_d64 -- the ViT twin of the above, and a DIFFERENT kernel
+// despite the shared name prefix: [n, Hq*D] INTERLEAVED layout (no q/k/v/o
+// transposes), BQ=32, one extra constant (q_offset at 10, kv_stride at 11), and
+// the caller pads q/k/v by BQ rows because the last K/V block is matmul-read
+// before it is masked. It carries the bf16 vision tower's attention (Boogu and
+// other wrapped checkpoints cast their whole text encoder, and the steel/NAX
+// flash kernels are f16-only, so this is the DEFAULT there) and is opt-in in
+// f16.
+TEST(sdpa_mma, full_mma2_d64_vit_matches_oracle) {
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  struct Lib { const char* name; bool bf16; double tol; };
+  const Lib libs[] = {{"sdpa_mma", false, 3e-3}, {"sdpa_mma_bf16", true, 2e-2}};
+  auto enc16 = [](float v, bool bf16) -> std::uint16_t {
+    if (!bf16) { return f32_to_h(v); }
+    std::uint32_t u; std::memcpy(&u, &v, 4);
+    return (std::uint16_t)((u + 0x7fffu + ((u >> 16) & 1u)) >> 16);
+  };
+  auto dec16 = [](std::uint16_t b, bool bf16) -> float {
+    if (!bf16) { return h_to_f32(b); }
+    const std::uint32_t u = (std::uint32_t)b << 16;
+    float f; std::memcpy(&f, &u, 4); return f;
+  };
+  const int D = 64, Hq = 4, n = 70;          // n deliberately not a BQ multiple
+  const int rs = Hq * D, npad = n + 32;
+  const float scale = 1.0f / std::sqrt((float)D);
+
+  for (const Lib& L : libs) {
+    ComputeLibrary lib = mc->load_library(L.name);
+    ComputeFunction fn = lib.function("sdpa_full_mma2_d64_f16");
+    if (!fn.valid()) {
+      std::printf("[full_mma2_d64] %s unavailable -- skipped\n", L.name);
+      continue;
+    }
+    // A ViT's q/k are post-LayerNorm projections: O(1), zero-mean. The dot runs
+    // over only 64 terms, so unlike the D=384/512 twin this one has no range
+    // problem -- what it has is 8-bit-mantissa ACCUMULATION in bf16, which is
+    // what the tolerance band below pins.
+    const std::size_t nel = (std::size_t)npad * rs;
+    std::vector<std::uint16_t> q(nel, 0), k(nel, 0), v(nel, 0);
+    std::vector<float> qf(nel, 0.0f), kf(nel, 0.0f), vf(nel, 0.0f);
+    std::mt19937 rng(31);
+    std::uniform_real_distribution<float> u(-1.0f, 1.0f);
+    for (int r = 0; r < n; ++r) {
+      for (int cix = 0; cix < rs; ++cix) {
+        const std::size_t i = (std::size_t)r * rs + cix;
+        q[i] = enc16(u(rng) * 1.5f, L.bf16);
+        k[i] = enc16(u(rng) * 1.5f, L.bf16);
+        v[i] = enc16(u(rng) * 0.5f, L.bf16);
+        qf[i] = dec16(q[i], L.bf16);
+        kf[i] = dec16(k[i], L.bf16);
+        vf[i] = dec16(v[i], L.bf16);
+      }
+    }
+    SharedBuffer qb = mc->make_shared_buffer(nel * 2);
+    SharedBuffer kb = mc->make_shared_buffer(nel * 2);
+    SharedBuffer vb = mc->make_shared_buffer(nel * 2);
+    SharedBuffer ob = mc->make_shared_buffer(nel * 2);
+    if (qb.empty() || kb.empty() || vb.empty() || ob.empty()) { return; }
+    std::memcpy(qb.contents(), q.data(), nel * 2);
+    std::memcpy(kb.contents(), k.data(), nel * 2);
+    std::memcpy(vb.contents(), v.data(), nel * 2);
+    { CommandStream st = mc->make_command_stream();
+      { ComputeEncoder e = st.begin_compute();
+        e.set_function(fn);
+        e.set_buffer(0, qb); e.set_buffer(1, kb); e.set_buffer(2, vb);
+        e.set_buffer(3, ob);
+        e.set_constant(4, scale); e.set_constant(5, n);
+        e.set_constant(6, D); e.set_constant(7, Hq);
+        e.set_constant(8, Hq); e.set_constant(9, n);
+        e.set_constant(10, 0); e.set_constant(11, n);
+        e.dispatch({128, (unsigned)Hq, (unsigned)((n + 31) / 32)},
+                   {128, 1, 1}); }
+      st.commit().wait(); }
+
+    double num = 0.0, den = 0.0;
+    const auto* got = static_cast<const std::uint16_t*>(ob.contents());
+    std::vector<double> s((std::size_t)n);
+    for (int h = 0; h < Hq; ++h) {
+      const int hc = h * D;
+      for (int i = 0; i < n; ++i) {
+        double m = -1e300;
+        for (int j = 0; j < n; ++j) {
+          double dot = 0.0;
+          for (int d = 0; d < D; ++d) {
+            dot += (double)qf[(std::size_t)i * rs + hc + d] *
+                   (double)kf[(std::size_t)j * rs + hc + d];
+          }
+          s[(std::size_t)j] = dot * (double)scale;
+          if (s[(std::size_t)j] > m) { m = s[(std::size_t)j]; }
+        }
+        double z = 0.0;
+        for (int j = 0; j < n; ++j) {
+          s[(std::size_t)j] = std::exp(s[(std::size_t)j] - m);
+          z += s[(std::size_t)j];
+        }
+        for (int d = 0; d < D; ++d) {
+          double acc = 0.0;
+          for (int j = 0; j < n; ++j) {
+            acc += s[(std::size_t)j] * (double)vf[(std::size_t)j * rs + hc + d];
+          }
+          const double want = acc / z;
+          const double diff =
+              (double)dec16(got[(std::size_t)i * rs + hc + d], L.bf16) - want;
+          num += diff * diff; den += want * want;
+        }
+      }
+    }
+    const double rel = den > 0.0 ? std::sqrt(num / den) : std::sqrt(num);
+    std::printf("[full_mma2_d64] %-14s D=64 Hq=%d n=%d rel-L2 = %.4e\n",
+                L.name, Hq, n, rel);
+    EXPECT_TRUE(std::isfinite(rel) && rel < L.tol);
+  }
+}
+
+// Gemma-4 GLOBAL-layer prefill attention: sdpa_causal_mma_f16 over a
+// CONTIGUOUS [Hkv, T_kv, D] K/V, head_dim 512, full causal, Hkv=1 (unified
+// K/V). This is the O(n^2) path that dominates long-context prefill. Bench
+// ms/call at n in {1024,2048,4096} + correctness (rel-L2 vs CPU oracle on
+// sampled rows). The iteration harness for optimizing this kernel.
+TEST(sdpa_mma, gemma_global_d512) {
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  ComputeLibrary lib = mc->load_library("sdpa");
+  ComputeFunction fn = lib.function("sdpa_causal_mma_f16");
+  if (!fn.valid()) { std::printf("[sdpa_global] no sdpa_causal_mma\n"); return; }
+
+  ComputeFunction fn_dev = lib.function("sdpa_causal_mma_dev_f16");
+  ComputeFunction fn_flash = lib.function("sdpa_causal_flash_f16");
+  // Matrix-core (matmul2d) candidate: QK^T/PV on the M5 matrix units vs the
+  // simdgroup_matrix (ALU) flash kernel above.
+  ComputeLibrary lib_mma = mc->load_library("sdpa_mma");
+  ComputeFunction fn_mma2 = lib_mma.function("sdpa_causal_mma2_d512_f16");
+  const int D = 512, Hq = 16, Hkv = 1;
+  struct Cfg { int n, it; const char* tag; };
+  const Cfg cfgs[] = {{1024, 20, "n1024"}, {2048, 10, "n2048"},
+                      {4096, 5, "n4096"}};
+
+  for (const auto& cf : cfgs) {
+    const int n = cf.n;
+    std::mt19937 rng(7 + n);
+    std::uniform_real_distribution<float> d(-1.0f, 1.0f);
+    // K/V padded by 32 rows (zeroed): the device-direct kernel over-reads the
+    // final key block past T_kv; the slack keeps it inside the allocation.
+    std::vector<std::uint16_t> q((size_t)Hq * n * D),
+        k((size_t)(n + 32) * D, 0), vv((size_t)(n + 32) * D, 0);
+    for (auto& e : q) { e = f32_to_h(d(rng) * 0.2f); }
+    for (size_t i = 0; i < (size_t)n * D; ++i) { k[i] = f32_to_h(d(rng) * 0.2f); }
+    for (size_t i = 0; i < (size_t)n * D; ++i) { vv[i] = f32_to_h(d(rng) * 0.2f); }
+    const float scale = 1.0f / std::sqrt((float)D);
+
+    SharedBuffer qb = mc->make_shared_buffer(q.size() * 2);
+    SharedBuffer kb = mc->make_shared_buffer(k.size() * 2);
+    SharedBuffer vb = mc->make_shared_buffer(vv.size() * 2);
+    // out padded by MMAF_BQ(32) rows: the kernel over-reads the last Q tile.
+    SharedBuffer obA = mc->make_shared_buffer((size_t)Hq * (n + 32) * D * 2);
+    SharedBuffer obB = mc->make_shared_buffer((size_t)Hq * (n + 32) * D * 2);
+    SharedBuffer obC = mc->make_shared_buffer((size_t)Hq * (n + 32) * D * 2);
+    SharedBuffer obD = mc->make_shared_buffer((size_t)Hq * (n + 32) * D * 2);
+    std::memcpy(qb.contents(), q.data(), q.size() * 2);
+    std::memcpy(kb.contents(), k.data(), k.size() * 2);
+    std::memcpy(vb.contents(), vv.data(), vv.size() * 2);
+
+    auto run = [&](ComputeFunction& f, SharedBuffer& ob) {
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder enc = st.begin_compute();
+        enc.set_function(f);
+        enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+        enc.set_buffer(3, ob);
+        enc.set_constant(4, scale); enc.set_constant(5, n);     // T_kv
+        enc.set_constant(6, D); enc.set_constant(7, Hq);
+        enc.set_constant(8, Hkv); enc.set_constant(9, n);       // n_q
+        enc.set_constant(10, 0); enc.set_constant(11, n);       // q_off,kv_str
+        enc.set_constant(12, 0); enc.set_constant(13, 0);       // window,ring
+        const unsigned tg = (unsigned)(4 * (D / 64) * 32);      // WM*WD*32
+        enc.dispatch({tg, (unsigned)Hq, (unsigned)((n + 31) / 32)},
+                     {tg, 1, 1});
+      }
+      st.commit().wait();
+    };
+
+    // rel-L2 of a kernel's output vs a CPU oracle on sampled (h,qi,col).
+    auto rel_vs_oracle = [&](SharedBuffer& ob) {
+      const auto* op = static_cast<const std::uint16_t*>(ob.contents());
+      double num = 0.0, den = 0.0;
+      const int hs[] = {0, 15};
+      for (int h : hs) {
+        for (int qi = 0; qi < n; qi += (n / 6 > 0 ? n / 6 : 1)) {
+          std::vector<float> sc(qi + 1);
+          float mx = -1e30f;
+          for (int ki = 0; ki <= qi; ++ki) {
+            float s = 0.0f;
+            for (int dd = 0; dd < D; ++dd) {
+              s += h_to_f32(q[((size_t)h * n + qi) * D + dd]) *
+                   h_to_f32(k[(size_t)ki * D + dd]);   // Hkv=1 -> kvh=0
+            }
+            sc[ki] = s * scale; mx = std::max(mx, sc[ki]);
+          }
+          float l = 0.0f; for (float& s : sc) { s = std::exp(s - mx); l += s; }
+          for (int dd = 0; dd < D; dd += 37) {     // sample cols
+            float o = 0.0f;
+            for (int ki = 0; ki <= qi; ++ki) {
+              o += sc[ki] * h_to_f32(vv[(size_t)ki * D + dd]);
+            }
+            o /= l;
+            const float got = h_to_f32(op[((size_t)h * n + qi) * D + dd]);
+            num += (got - o) * (got - o); den += o * o;
+          }
+        }
+      }
+      return den > 0 ? std::sqrt(num / den) : std::sqrt(num);
+    };
+
+    auto bench = [&](ComputeFunction& f, SharedBuffer& ob) {
+      for (int w = 0; w < 3; ++w) { run(f, ob); }
+      const auto t0 = std::chrono::steady_clock::now();
+      for (int i = 0; i < cf.it; ++i) { run(f, ob); }
+      const auto t1 = std::chrono::steady_clock::now();
+      return secs_(t0, t1) / cf.it * 1e3;
+    };
+    // Flash kernel: Q=8 rows/tg, NSG=8 simdgroups (256 threads), grid n/8.
+    auto run_flash = [&](SharedBuffer& ob) {
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder enc = st.begin_compute();
+        enc.set_function(fn_flash);
+        enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+        enc.set_buffer(3, ob);
+        enc.set_constant(4, scale); enc.set_constant(5, n);
+        enc.set_constant(6, D); enc.set_constant(7, Hq);
+        enc.set_constant(8, Hkv); enc.set_constant(9, n);
+        enc.set_constant(10, 0); enc.set_constant(11, n);
+        enc.set_constant(12, 0); enc.set_constant(13, 0);
+        enc.dispatch({256, (unsigned)Hq, (unsigned)((n + 7) / 8)},
+                     {256, 1, 1});
+      }
+      st.commit().wait();
+    };
+    auto bench_flash = [&](SharedBuffer& ob) {
+      for (int w = 0; w < 3; ++w) { run_flash(ob); }
+      const auto t0 = std::chrono::steady_clock::now();
+      for (int i = 0; i < cf.it; ++i) { run_flash(ob); }
+      const auto t1 = std::chrono::steady_clock::now();
+      return secs_(t0, t1) / cf.it * 1e3;
+    };
+    // matmul2d candidate: BQ=8 rows/tg, SA2_SG=4 simdgroups (128 threads),
+    // grid ceil(n/8). Same contiguous-KV buffer contract as run().
+    auto run_mma2 = [&](SharedBuffer& ob) {
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder enc = st.begin_compute();
+        enc.set_function(fn_mma2);
+        enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+        enc.set_buffer(3, ob);
+        enc.set_constant(4, scale); enc.set_constant(5, n);
+        enc.set_constant(6, D); enc.set_constant(7, Hq);
+        enc.set_constant(8, Hkv); enc.set_constant(9, n);
+        enc.set_constant(10, 0); enc.set_constant(11, n);
+        enc.set_constant(12, 0); enc.set_constant(13, 0);
+        enc.dispatch({128, (unsigned)Hq, (unsigned)((n + 7) / 8)},
+                     {128, 1, 1});
+      }
+      st.commit().wait();
+    };
+    auto bench_mma2 = [&](SharedBuffer& ob) {
+      for (int w = 0; w < 3; ++w) { run_mma2(ob); }
+      const auto t0 = std::chrono::steady_clock::now();
+      for (int i = 0; i < cf.it; ++i) { run_mma2(ob); }
+      const auto t1 = std::chrono::steady_clock::now();
+      return secs_(t0, t1) / cf.it * 1e3;
+    };
+
+    run(fn, obA);
+    const double relA = rel_vs_oracle(obA);
+    const double msA = bench(fn, obA);
+
+    double relC = 0.0, msC = 0.0;
+    if (fn_flash.valid()) {
+      run_flash(obC);
+      relC = rel_vs_oracle(obC);
+      msC = bench_flash(obC);
+    }
+
+    double relB = 0.0, msB = 0.0, relBA = 0.0;
+    if (fn_dev.valid()) {
+      run(fn_dev, obB);
+      relB = rel_vs_oracle(obB);
+      // B vs A (should be ~identical; same math, device-direct vs staged).
+      const auto* pa = static_cast<const std::uint16_t*>(obA.contents());
+      const auto* pb = static_cast<const std::uint16_t*>(obB.contents());
+      double num = 0.0, den = 0.0;
+      for (size_t i = 0; i < (size_t)Hq * n * D; i += 101) {
+        const float a = h_to_f32(pa[i]), b = h_to_f32(pb[i]);
+        num += (a - b) * (a - b); den += a * a;
+      }
+      relBA = den > 0 ? std::sqrt(num / den) : std::sqrt(num);
+      msB = bench(fn_dev, obB);
+    }
+    double relD = 0.0, msD = 0.0;
+    if (fn_mma2.valid()) {
+      run_mma2(obD);
+      relD = rel_vs_oracle(obD);
+      msD = bench_mma2(obD);
+    }
+    std::printf("[sdpa_global] %-6s n=%4d | A(staged) rel=%.2e %.3f ms | "
+                "B(dev) rel=%.2e %.3f ms | C(flash) rel=%.2e %.3f ms | "
+                "D(mma2) rel=%.2e %.3f ms | C-speedup %.2fx | "
+                "D-vs-C %.2fx\n",
+                cf.tag, n, relA, msA, relB, msB, relC, msC, relD, msD,
+                msC > 0 ? msA / msC : 0.0, msD > 0 ? msC / msD : 0.0);
+    EXPECT_TRUE(relA < 5e-2);
+    if (fn_dev.valid()) {
+      EXPECT_TRUE(relB < 5e-2);
+      EXPECT_TRUE(relBA < 5e-2);
+    }
+    if (fn_flash.valid()) { EXPECT_TRUE(relC < 5e-2); }
+    if (fn_mma2.valid()) { EXPECT_TRUE(relD < 5e-2); }
+  }
+}
+
+// Gemma-4 SLIDING-layer prefill attention in the NO-WRAP regime:
+// sdpa_causal_flash_f16 over a CONTIGUOUS [Hkv, cap, D] K/V at head_dim 256
+// with a trailing window (1024) -- the path the dispatch now routes sliding
+// layers to before the ring wraps. Validates the window mask + the window-base
+// scan skip against a CPU oracle (and the staged kernel), exercises the
+// FL_C(64) over-read into the zeroed cache tail (n not a multiple of 64), and
+// benches flash vs staged. window mask: key ki contributes to query qi only
+// when max(0, qi-window+1) <= ki <= qi.
+TEST(sdpa_mma, gemma_sliding_d256_flash) {
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  ComputeLibrary lib = mc->load_library("sdpa");
+  ComputeFunction fn = lib.function("sdpa_causal_mma_f16");
+  ComputeFunction fn_flash = lib.function("sdpa_causal_flash_f16");
+  if (!fn.valid() || !fn_flash.valid()) {
+    std::printf("[sdpa_sliding] kernels unavailable -- skipped\n");
+    return;
+  }
+  ComputeLibrary lib_mma = mc->load_library("sdpa_mma");
+  ComputeFunction fn_mma2 = lib_mma.function("sdpa_causal_mma2_d256_f16");
+  const int D = 256, Hq = 16, Hkv = 1, window = 1024;
+  struct Cfg { int n, it; const char* tag; };
+  const Cfg cfgs[] = {{1536, 12, "n1536"}, {2040, 8, "n2040"},
+                      {3000, 6, "n3000"}};
+
+  for (const auto& cf : cfgs) {
+    const int n = cf.n;
+    std::mt19937 rng(31 + n);
+    std::uniform_real_distribution<float> d(-1.0f, 1.0f);
+    // No-wrap single forward: cap >= n + 64 (the over-read slack), tail zeroed.
+    const int cap = n + 64;
+    std::vector<std::uint16_t> q((size_t)Hq * n * D),
+        k((size_t)cap * D, 0), vv((size_t)cap * D, 0);
+    for (auto& e : q) { e = f32_to_h(d(rng) * 0.2f); }
+    for (size_t i = 0; i < (size_t)n * D; ++i) { k[i] = f32_to_h(d(rng) * 0.2f); }
+    for (size_t i = 0; i < (size_t)n * D; ++i) { vv[i] = f32_to_h(d(rng) * 0.2f); }
+    const float scale = 1.0f / std::sqrt((float)D);
+
+    SharedBuffer qb = mc->make_shared_buffer(q.size() * 2);
+    SharedBuffer kb = mc->make_shared_buffer(k.size() * 2);
+    SharedBuffer vb = mc->make_shared_buffer(vv.size() * 2);
+    SharedBuffer obA = mc->make_shared_buffer((size_t)Hq * (n + 32) * D * 2);
+    SharedBuffer obC = mc->make_shared_buffer((size_t)Hq * (n + 32) * D * 2);
+    SharedBuffer obD = mc->make_shared_buffer((size_t)Hq * (n + 32) * D * 2);
+    std::memcpy(qb.contents(), q.data(), q.size() * 2);
+    std::memcpy(kb.contents(), k.data(), k.size() * 2);
+    std::memcpy(vb.contents(), vv.data(), vv.size() * 2);
+
+    auto run_staged = [&](SharedBuffer& ob) {
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder enc = st.begin_compute();
+        enc.set_function(fn);
+        enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+        enc.set_buffer(3, ob);
+        enc.set_constant(4, scale); enc.set_constant(5, n);
+        enc.set_constant(6, D); enc.set_constant(7, Hq);
+        enc.set_constant(8, Hkv); enc.set_constant(9, n);
+        enc.set_constant(10, 0); enc.set_constant(11, cap);    // kv_stride
+        enc.set_constant(12, window); enc.set_constant(13, 0); // no wrap
+        const unsigned tg = (unsigned)(4 * (D / 64) * 32);
+        enc.dispatch({tg, (unsigned)Hq, (unsigned)((n + 31) / 32)},
+                     {tg, 1, 1});
+      }
+      st.commit().wait();
+    };
+    auto run_flash = [&](SharedBuffer& ob) {
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder enc = st.begin_compute();
+        enc.set_function(fn_flash);
+        enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+        enc.set_buffer(3, ob);
+        enc.set_constant(4, scale); enc.set_constant(5, n);
+        enc.set_constant(6, D); enc.set_constant(7, Hq);
+        enc.set_constant(8, Hkv); enc.set_constant(9, n);
+        enc.set_constant(10, 0); enc.set_constant(11, cap);
+        enc.set_constant(12, window); enc.set_constant(13, 0);
+        enc.dispatch({256, (unsigned)Hq, (unsigned)((n + 7) / 8)},
+                     {256, 1, 1});
+      }
+      st.commit().wait();
+    };
+
+    auto rel_vs_oracle = [&](SharedBuffer& ob) {
+      const auto* op = static_cast<const std::uint16_t*>(ob.contents());
+      double num = 0.0, den = 0.0;
+      const int hs[] = {0, 15};
+      for (int h : hs) {
+        for (int qi = 0; qi < n; qi += (n / 6 > 0 ? n / 6 : 1)) {
+          const int first = std::max(0, qi - window + 1);
+          std::vector<float> sc((size_t)qi + 1, 0.0f);
+          float mx = -1e30f;
+          for (int ki = first; ki <= qi; ++ki) {
+            float s = 0.0f;
+            for (int dd = 0; dd < D; ++dd) {
+              s += h_to_f32(q[((size_t)h * n + qi) * D + dd]) *
+                   h_to_f32(k[(size_t)ki * D + dd]);   // Hkv=1 -> kvh=0
+            }
+            sc[ki] = s * scale; mx = std::max(mx, sc[ki]);
+          }
+          float l = 0.0f;
+          for (int ki = first; ki <= qi; ++ki) {
+            sc[ki] = std::exp(sc[ki] - mx); l += sc[ki];
+          }
+          for (int dd = 0; dd < D; dd += 37) {
+            float o = 0.0f;
+            for (int ki = first; ki <= qi; ++ki) {
+              o += sc[ki] * h_to_f32(vv[(size_t)ki * D + dd]);
+            }
+            o /= l;
+            const float got = h_to_f32(op[((size_t)h * n + qi) * D + dd]);
+            num += (got - o) * (got - o); den += o * o;
+          }
+        }
+      }
+      return den > 0 ? std::sqrt(num / den) : std::sqrt(num);
+    };
+
+    auto bench = [&](auto launch, SharedBuffer& ob) {
+      for (int w = 0; w < 3; ++w) { launch(ob); }
+      const auto t0 = std::chrono::steady_clock::now();
+      for (int i = 0; i < cf.it; ++i) { launch(ob); }
+      const auto t1 = std::chrono::steady_clock::now();
+      return secs_(t0, t1) / cf.it * 1e3;
+    };
+
+    auto run_mma2 = [&](SharedBuffer& ob) {
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder enc = st.begin_compute();
+        enc.set_function(fn_mma2);
+        enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+        enc.set_buffer(3, ob);
+        enc.set_constant(4, scale); enc.set_constant(5, n);
+        enc.set_constant(6, D); enc.set_constant(7, Hq);
+        enc.set_constant(8, Hkv); enc.set_constant(9, n);
+        enc.set_constant(10, 0); enc.set_constant(11, cap);
+        enc.set_constant(12, window); enc.set_constant(13, 0);
+        enc.dispatch({128, (unsigned)Hq, (unsigned)((n + 15) / 16)},
+                     {128, 1, 1});
+      }
+      st.commit().wait();
+    };
+
+    run_staged(obA);
+    const double relA = rel_vs_oracle(obA);
+    const double msA = bench(run_staged, obA);
+    run_flash(obC);
+    const double relC = rel_vs_oracle(obC);
+    const double msC = bench(run_flash, obC);
+    double relD = 0.0, msD = 0.0;
+    if (fn_mma2.valid()) {
+      run_mma2(obD);
+      relD = rel_vs_oracle(obD);
+      msD = bench(run_mma2, obD);
+    }
+    std::printf("[sdpa_sliding] %-6s n=%4d w=%d | staged rel=%.2e %.3f ms | "
+                "flash rel=%.2e %.3f ms | mma2 rel=%.2e %.3f ms (%.2fx C) | "
+                "%.2fx\n",
+                cf.tag, n, window, relA, msA, relC, msC, relD, msD,
+                msD > 0 ? msC / msD : 0.0,
+                msC > 0 ? msA / msC : 0.0);
+    EXPECT_TRUE(relA < 5e-2);
+    EXPECT_TRUE(relC < 5e-2);
+    if (fn_mma2.valid()) { EXPECT_TRUE(relD < 5e-2); }
+  }
+}
+
+// Qwen3.5 full-attention PREFILL: sdpa_paged_flash_f16 over a PAGED K/V pool
+// [n_pages, Hkv, page_tokens, D] at head_dim 256, GQA, causal. Multi-page +
+// a partial last page exercise the page loop AND the C-block over-read into
+// the zeroed page tail (masked by key<bk). Validates rel-L2 vs a CPU oracle
+// and benches flash vs the scalar query-tiled kernel (sdpa_paged_qtile).
+TEST(sdpa_mma, qwen_paged_flash_d256) {
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  ComputeLibrary lib = mc->load_library("sdpa");
+  ComputeFunction fn = lib.function("sdpa_paged_flash_f16");
+  ComputeFunction fq = lib.function("sdpa_paged_qtile_f16");
+  if (!fn.valid()) { std::printf("[qwen_flash] no kernel -- skipped\n"); return; }
+
+  const int D = 256, Hq = 16, Hkv = 4, page_tokens = 192;
+  struct Cfg { int n; const char* tag; };
+  // n=300 -> 2 pages (192 + 108); 108 spans a full 64-block + a 44 partial.
+  // n=700 -> 4 pages (192*3 + 124). Both have a partial final page.
+  const Cfg cfgs[] = {{300, "n300"}, {700, "n700"}};
+
+  for (const auto& cf : cfgs) {
+    const int n = cf.n;
+    const int n_pages = (n + page_tokens - 1) / page_tokens;
+    std::mt19937 rng(53 + n);
+    std::uniform_real_distribution<float> d(-1.0f, 1.0f);
+    // Flat K/V by GLOBAL position [n, Hkv, D] for the oracle; the pool is the
+    // same data scattered into [n_pages, Hkv, page_tokens, D] (zeroed tail).
+    std::vector<std::uint16_t> q((size_t)Hq * n * D);
+    std::vector<std::uint16_t> kfull((size_t)n * Hkv * D),
+        vfull((size_t)n * Hkv * D);
+    for (auto& e : q) { e = f32_to_h(d(rng) * 0.2f); }
+    for (auto& e : kfull) { e = f32_to_h(d(rng) * 0.2f); }
+    for (auto& e : vfull) { e = f32_to_h(d(rng) * 0.2f); }
+    const float scale = 1.0f / std::sqrt((float)D);
+
+    const size_t pool_elts = (size_t)n_pages * Hkv * page_tokens * D;
+    std::vector<std::uint16_t> kpool(pool_elts, 0), vpool(pool_elts, 0);
+    std::vector<std::int32_t> pt;            // {pid, nvalid, gstart} per page
+    for (int p = 0; p < n_pages; ++p) {
+      const int gstart = p * page_tokens;
+      const int nvalid = std::min(page_tokens, n - gstart);
+      pt.push_back(p); pt.push_back(nvalid); pt.push_back(gstart);
+      for (int s = 0; s < nvalid; ++s) {
+        const int g = gstart + s;
+        for (int kv = 0; kv < Hkv; ++kv) {
+          const size_t dst = ((size_t)(p * Hkv + kv) * page_tokens + s) * D;
+          const size_t src = ((size_t)g * Hkv + kv) * D;
+          for (int dd = 0; dd < D; ++dd) {
+            kpool[dst + dd] = kfull[src + dd];
+            vpool[dst + dd] = vfull[src + dd];
+          }
+        }
+      }
+    }
+
+    SharedBuffer qb = mc->make_shared_buffer(q.size() * 2);
+    SharedBuffer kb = mc->make_shared_buffer(kpool.size() * 2);
+    SharedBuffer vb = mc->make_shared_buffer(vpool.size() * 2);
+    SharedBuffer ob = mc->make_shared_buffer((size_t)Hq * n * D * 2);
+    SharedBuffer ptb = mc->make_shared_buffer(pt.size() * 4);
+    std::memcpy(qb.contents(), q.data(), q.size() * 2);
+    std::memcpy(kb.contents(), kpool.data(), kpool.size() * 2);
+    std::memcpy(vb.contents(), vpool.data(), vpool.size() * 2);
+    std::memcpy(ptb.contents(), pt.data(), pt.size() * 4);
+
+    auto run = [&](ComputeFunction& f, bool flash) {
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder enc = st.begin_compute();
+        enc.set_function(f);
+        enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+        enc.set_buffer(3, ob);
+        enc.set_constant(4, scale); enc.set_constant(5, D);
+        enc.set_constant(6, Hq); enc.set_constant(7, Hkv);
+        enc.set_constant(8, n); enc.set_constant(9, 0);       // q_offset
+        enc.set_constant(10, page_tokens); enc.set_constant(11, n_pages);
+        enc.set_buffer(12, ptb);
+        if (flash) {
+          enc.dispatch({256, (unsigned)Hq, (unsigned)((n + 7) / 8)},
+                       {256, 1, 1});
+        } else {
+          enc.dispatch({512, (unsigned)Hq, (unsigned)((n + 15) / 16)},
+                       {512, 1, 1});
+        }
+      }
+      st.commit().wait();
+    };
+
+    run(fn, true);
+    const auto* op = static_cast<const std::uint16_t*>(ob.contents());
+    double num = 0.0, den = 0.0;
+    const int hs[] = {0, 7, 15};
+    for (int h : hs) {
+      const int kvh = h / (Hq / Hkv);
+      for (int qi = 0; qi < n; qi += (n / 8 > 0 ? n / 8 : 1)) {
+        std::vector<float> sc((size_t)qi + 1);
+        float mx = -1e30f;
+        for (int ki = 0; ki <= qi; ++ki) {
+          float s = 0.0f;
+          for (int dd = 0; dd < D; ++dd) {
+            s += h_to_f32(q[((size_t)h * n + qi) * D + dd]) *
+                 h_to_f32(kfull[((size_t)ki * Hkv + kvh) * D + dd]);
+          }
+          sc[ki] = s * scale; mx = std::max(mx, sc[ki]);
+        }
+        float l = 0.0f; for (float& s : sc) { s = std::exp(s - mx); l += s; }
+        for (int dd = 0; dd < D; dd += 31) {
+          float o = 0.0f;
+          for (int ki = 0; ki <= qi; ++ki) {
+            o += sc[ki] * h_to_f32(vfull[((size_t)ki * Hkv + kvh) * D + dd]);
+          }
+          o /= l;
+          const float got = h_to_f32(op[((size_t)h * n + qi) * D + dd]);
+          num += (got - o) * (got - o); den += o * o;
+        }
+      }
+    }
+    const double rel = den > 0 ? std::sqrt(num / den) : std::sqrt(num);
+
+    auto bench = [&](ComputeFunction& f, bool flash) {
+      for (int w = 0; w < 3; ++w) { run(f, flash); }
+      const auto t0 = std::chrono::steady_clock::now();
+      const int it = 20;
+      for (int i = 0; i < it; ++i) { run(f, flash); }
+      const auto t1 = std::chrono::steady_clock::now();
+      return secs_(t0, t1) / it * 1e3;
+    };
+    const double ms_f = bench(fn, true);
+    const double ms_q = fq.valid() ? bench(fq, false) : 0.0;
+    std::printf("[qwen_flash] %-5s n=%4d pages=%d | rel-L2=%.3e | flash %.3f ms"
+                " | qtile %.3f ms | %.2fx\n",
+                cf.tag, n, n_pages, rel, ms_f, ms_q,
+                ms_q > 0 ? ms_q / ms_f : 0.0);
+    EXPECT_TRUE(rel < 5e-2);
+  }
+}
+
+// Qwen3.5 full-attention PREFILL (16 q / 4 kv heads, head_dim 256, f16,
+// causal, fresh) -- our production kernels against MLX #3842's head-dim SPLIT
+// NAX attention and the plain NAX kernel at the same width. Our side is what
+// PrefillGqaAttnSet can pick (flash, steel, M5 mma), and the set itself is
+// tuned as the model tunes it so its per-n choice is printed. One KV page
+// (page_tokens = n rounded up to 64) makes the paged kernels and the NAX
+// kernels read the same bytes; every arm is checked against flash, which
+// qwen_paged_flash_d256 validates against a CPU oracle.
+// VPIPE_QWEN_ATTN_BENCH=1 (full: + 16384).
+TEST(sdpa_mma, qwen_prefill_d256_vs_nax_split) {
+  const char* gate = std::getenv("VPIPE_QWEN_ATTN_BENCH");
+  if (gate == nullptr) { return; }
+  const bool full = std::string(gate) == "full";
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  ComputeLibrary lib_sdpa = mc->load_library("sdpa");
+  ComputeLibrary lib_attn = mc->load_library("attn_steel");
+  ComputeLibrary lib_mma = mc->load_library("sdpa_mma");
+  ComputeLibrary lib_nax = mc->load_library("attn_steel_nax");
+  const bool m5 = mc->supports_matrix_cores();
+
+  const int D = 256, Hq = 16, Hkv = 4;
+  genai::PrefillGqaAttnSet set;
+  set.load(lib_sdpa, &lib_attn, &lib_mma, m5);
+  genai::TuningReport rep;
+  set.prepare(mc, {D, Hq, Hkv}, rep);
+
+  enum Arm { kFlash, kSteel, kMma, kNax, kSplit, kArms };
+  const char* name[kArms] = {"flash", "steel", "mma", "nax", "nax-split"};
+  std::vector<int> ns = full ? std::vector<int>{1024, 2048, 4096, 8192, 16384}
+                             : std::vector<int>{1024, 2048, 4096, 8192};
+  for (int n : ns) {
+    const int pt = (n + 63) / 64 * 64;
+    std::mt19937 rng(71 + n);
+    std::uniform_real_distribution<float> d(-1.0f, 1.0f);
+    SharedBuffer qb = mc->make_shared_buffer((size_t)Hq * n * D * 2);
+    SharedBuffer kb = mc->make_shared_buffer((size_t)Hkv * pt * D * 2);
+    SharedBuffer vb = mc->make_shared_buffer((size_t)Hkv * pt * D * 2);
+    SharedBuffer ptb = mc->make_shared_buffer(3 * 4);
+    std::vector<SharedBuffer> ob;
+    for (int a = 0; a < kArms; ++a) {
+      ob.push_back(mc->make_shared_buffer((size_t)Hq * n * D * 2));
+    }
+    if (qb.empty() || kb.empty() || vb.empty()) { continue; }
+    {
+      auto* q = static_cast<std::uint16_t*>(qb.contents());
+      for (size_t i = 0; i < (size_t)Hq * n * D; ++i) {
+        q[i] = f32_to_h(d(rng) * 0.2f);
+      }
+      auto* k = static_cast<std::uint16_t*>(kb.contents());
+      auto* v = static_cast<std::uint16_t*>(vb.contents());
+      std::memset(k, 0, (size_t)Hkv * pt * D * 2);
+      std::memset(v, 0, (size_t)Hkv * pt * D * 2);
+      for (int h = 0; h < Hkv; ++h) {
+        for (int t = 0; t < n; ++t) {
+          for (int e = 0; e < D; ++e) {
+            const size_t i = ((size_t)h * pt + t) * D + e;
+            k[i] = f32_to_h(d(rng) * 0.2f);
+            v[i] = f32_to_h(d(rng) * 0.2f);
+          }
+        }
+      }
+      const int tab[3] = {0, n, 0};
+      std::memcpy(ptb.contents(), tab, sizeof(tab));
+    }
+    const float scale = 1.0f / std::sqrt((float)D);
+
+    // The NAX parameter block (steel attn AttnParams).
+    struct P {
+      int B, H, D, qL, kL, gqa_factor;
+      float scale;
+      int NQ, NK, NQ_aligned, NK_aligned, qL_rem, kL_rem, qL_off;
+      std::int64_t Q_strides[3], K_strides[3], V_strides[3], O_strides[3];
+    };
+    SharedBuffer pb = mc->make_shared_buffer(sizeof(P));
+    {
+      auto* p = static_cast<P*>(pb.contents());
+      const int BQ = 64, BK = 32;
+      p->B = 1; p->H = Hq; p->D = D; p->qL = n; p->kL = n;
+      p->gqa_factor = Hq / Hkv; p->scale = scale;
+      p->NQ = (n + BQ - 1) / BQ; p->NK = (n + BK - 1) / BK;
+      p->NQ_aligned = n / BQ; p->NK_aligned = n / BK;
+      p->qL_rem = n - p->NQ_aligned * BQ;
+      p->kL_rem = n - p->NK_aligned * BK;
+      p->qL_off = 0;
+      p->Q_strides[0] = (std::int64_t)Hq * n * D;
+      p->Q_strides[1] = (std::int64_t)n * D;
+      p->Q_strides[2] = D;
+      p->K_strides[0] = (std::int64_t)Hkv * pt * D;
+      p->K_strides[1] = (std::int64_t)pt * D;
+      p->K_strides[2] = D;
+      for (int i = 0; i < 3; ++i) {
+        p->V_strides[i] = p->K_strides[i];
+        p->O_strides[i] = p->Q_strides[i];
+      }
+    }
+    FunctionConstants fc;
+    fc.set_bool(200, (n % 64) == 0).set_bool(201, (n % 32) == 0)
+        .set_bool(300, false).set_bool(301, true).set_bool(302, false);
+    ComputeFunction fn[kArms] = {
+        lib_sdpa.function("sdpa_paged_flash_f16"),
+        lib_attn.valid() ? lib_attn.function("attn_steel_paged_bd256")
+                         : ComputeFunction(),
+        (m5 && lib_mma.valid()) ? lib_mma.function("sdpa_mma_f16")
+                                : ComputeFunction(),
+        (m5 && lib_nax.valid()) ? lib_nax.function("attn_steel_nax_h_bd256", fc)
+                                : ComputeFunction(),
+        (m5 && lib_nax.valid())
+            ? lib_nax.function("attn_steel_nax_dsplit_h_bd256", fc)
+            : ComputeFunction()};
+    if (!fn[kFlash].valid()) { continue; }
+
+    auto encode = [&](ComputeEncoder& enc, int a) {
+      enc.set_function(fn[a]);
+      enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+      enc.set_buffer(3, ob[(size_t)a]);
+      const unsigned nu = (unsigned)n, H = (unsigned)Hq;
+      if (a == kNax || a == kSplit) {
+        enc.set_buffer(4, pb);
+        const unsigned wn = a == kSplit ? 2u : 1u;
+        enc.dispatch({32 * ((nu + 63) / 64), 4 * H, wn}, {32, 4, wn});
+        return;
+      }
+      enc.set_constant(4, scale); enc.set_constant(5, D);
+      enc.set_constant(6, Hq); enc.set_constant(7, Hkv);
+      enc.set_constant(8, n); enc.set_constant(9, 0);
+      enc.set_constant(10, pt); enc.set_constant(11, 1);
+      enc.set_buffer(12, ptb);
+      switch (a) {
+        case kSteel:   // head-dim split: (32, 4, 2)
+          enc.dispatch({32 * ((nu + 31) / 32), 4 * H, 2}, {32, 4, 2});
+          break;
+        case kMma:
+          enc.dispatch({128, H, (nu + 15) / 16}, {128, 1, 1});
+          break;
+        default:
+          enc.dispatch({256, H, (nu + 7) / 8}, {256, 1, 1});
+          break;
+      }
+    };
+    auto once = [&](int a) {
+      const auto t0 = std::chrono::steady_clock::now();
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder enc = st.begin_compute(); encode(enc, a); }
+      st.commit().wait();
+      return secs_(t0, std::chrono::steady_clock::now()) * 1e3;
+    };
+    for (int a = 0; a < kArms; ++a) {
+      if (fn[a].valid()) { once(a); once(a); }
+    }
+    // Agreement against flash.
+    double rel[kArms] = {0.0};
+    const auto* ref = static_cast<const std::uint16_t*>(ob[kFlash].contents());
+    for (int a = 1; a < kArms; ++a) {
+      if (!fn[a].valid()) { continue; }
+      const auto* o = static_cast<const std::uint16_t*>(ob[(size_t)a].contents());
+      double num = 0.0, den = 0.0;
+      for (size_t i = 0; i < (size_t)Hq * n * D; i += 7) {
+        const double x = h_to_f32(ref[i]), y = h_to_f32(o[i]);
+        num += (x - y) * (x - y); den += x * x;
+      }
+      rel[a] = den > 0.0 ? std::sqrt(num / den) : std::sqrt(num);
+      EXPECT_TRUE(rel[a] < 5e-2);
+    }
+    std::vector<double> ms[kArms];
+    for (int r = 0; r < 5; ++r) {
+      for (int a = 0; a < kArms; ++a) {
+        if (fn[a].valid()) { ms[a].push_back(once(a)); }
+      }
+    }
+    std::printf("[qwen_d256] n=%5d  set picks %-5s |", n, set.kernel_name(n));
+    double best_ours = 1e30;
+    for (int a = 0; a < kArms; ++a) {
+      if (ms[a].empty()) { continue; }
+      std::sort(ms[a].begin(), ms[a].end());
+      const double med = ms[a][ms[a].size() / 2];
+      if (a <= kMma) { best_ours = std::min(best_ours, med); }
+      std::printf(" %s %.1fms", name[a], med);
+      if (a > 0) { std::printf(" (%.0e)", rel[a]); }
+      std::printf(" |");
+    }
+    if (!ms[kSplit].empty()) {
+      const double sp = ms[kSplit][ms[kSplit].size() / 2];
+      std::printf(" split vs best ours %.2fx", best_ours / sp);
+    }
+    std::printf("\n");
+  }
+}
+
+// PrefillGqaAttnSet's NAX members against its flash member over a real PAGED
+// pool: 192-token pages with a partial last page, lengths off the 64 grid, and
+// MID-CONTEXT prefill (q_offset > 0, so the gather copies the prefix too and
+// the kernel's causal offset is live). The benchmark above uses one page and a
+// fresh prompt; this is the contract the model actually drives. On a GPU
+// without the NAX members they are simply refused.
+// Both head dims the set serves: Qwen3.5's (256, 16q/4kv) and Ministral-3's
+// (128, 32q/8kv), whose members are the bd128 entry points (no qtile, no
+// head-dim-split NAX). 192-token pages are 64-aligned, which the D=128
+// flash member needs. And both element types: a bf16 model (YuE2's AR
+// stack) reaches the bf16 NAX entries through the same set.
+TEST(sdpa_mma, qwen_prefill_set_nax_matches_flash) {
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  ComputeLibrary lib_sdpa = mc->load_library("sdpa");
+  ComputeLibrary lib_attn = mc->load_library("attn_steel");
+  ComputeLibrary lib_mma = mc->load_library("sdpa_mma");
+  ComputeLibrary lib_nax = mc->load_library("attn_steel_nax");
+  // A bf16 model hands the set the bf16 sdpa / sdpa_mma libraries and no
+  // steel (half-only), as MetalQwenModel does.
+  ComputeLibrary lib_sdpa_b = mc->load_library("sdpa_bf16");
+  ComputeLibrary lib_mma_b = mc->load_library("sdpa_mma_bf16");
+  const bool m5 = mc->supports_matrix_cores();
+  auto enc16 = [](float v, bool bf16) -> std::uint16_t {
+    if (!bf16) { return f32_to_h(v); }
+    std::uint32_t u; std::memcpy(&u, &v, 4);
+    return (std::uint16_t)((u + 0x7fffu + ((u >> 16) & 1u)) >> 16);
+  };
+  auto dec16 = [](std::uint16_t b, bool bf16) -> float {
+    if (!bf16) { return h_to_f32(b); }
+    const std::uint32_t u = (std::uint32_t)b << 16;
+    float f; std::memcpy(&f, &u, 4); return f;
+  };
+  struct Layout { int D, Hq, Hkv; };
+  for (const bool bf16 : {false, true}) {
+  for (const Layout lay : {Layout{256, 16, 4}, Layout{128, 32, 8}}) {
+  const int D = lay.D, Hq = lay.Hq, Hkv = lay.Hkv, page_tokens = 192;
+
+  ::setenv("VPIPE_QWEN_PREFILL_AUTOTUNE", "0", 1);
+  genai::PrefillGqaAttnSet set;
+  set.load(bf16 ? lib_sdpa_b : lib_sdpa, bf16 ? nullptr : &lib_attn,
+           bf16 ? &lib_mma_b : &lib_mma, m5, &lib_nax, bf16, D);
+  genai::TuningReport rep;
+  set.prepare(mc, {D, Hq, Hkv}, rep);
+  ::unsetenv("VPIPE_QWEN_PREFILL_AUTOTUNE");
+  ASSERT_TRUE(set.ready());
+  if (!set.ready()) { return; }
+
+  // A BRANCHED layout is what ContextManager::branch() leaves: the parent's
+  // partial tail page frozen, so the next page starts mid-sequence and
+  // position / page_tokens is no longer the page. Inner pages here hold 100
+  // and 37 keys. The flash reference is itself held to a CPU oracle there.
+  struct Case { int n, q_offset; bool branched; };
+  const Case cases[] = {{300, 0, false}, {700, 0, false}, {1500, 0, false},
+                        {2085, 0, false}, {1000, 900, false},
+                        {37, 2000, false}, {1024, 1024, false},
+                        {2085, 0, true}, {1000, 900, true},
+                        {300, 600, true}};
+  for (const Case& cs : cases) {
+    const int n = cs.n, qoff = cs.q_offset, kL = qoff + n;
+    std::vector<int> nvs;                        // keys per page, in order
+    for (int g = 0; g < kL;) {
+      int nv = std::min(page_tokens, kL - g);
+      const int p = (int)nvs.size();
+      if (cs.branched && p == 1) { nv = std::min(nv, 100); }
+      if (cs.branched && p == 3) { nv = std::min(nv, 37); }
+      nvs.push_back(nv);
+      g += nv;
+    }
+    const int n_pages = (int)nvs.size();
+    std::vector<float> kg((size_t)Hkv * kL * D), vg((size_t)Hkv * kL * D);
+    std::mt19937 rng(91 + n + 7 * qoff);
+    std::uniform_real_distribution<float> d(-1.0f, 1.0f);
+    SharedBuffer qb = mc->make_shared_buffer((size_t)Hq * n * D * 2);
+    // Pages allocated out of order (page ids reversed), so the gather has to
+    // follow the table rather than assume pid == page index.
+    const size_t pool = (size_t)n_pages * Hkv * page_tokens * D * 2;
+    SharedBuffer kb = mc->make_shared_buffer(pool);
+    SharedBuffer vb = mc->make_shared_buffer(pool);
+    SharedBuffer ptb = mc->make_shared_buffer((size_t)n_pages * 3 * 4);
+    if (qb.empty() || kb.empty() || vb.empty() || ptb.empty()) { continue; }
+    {
+      auto* q = static_cast<std::uint16_t*>(qb.contents());
+      for (size_t i = 0; i < (size_t)Hq * n * D; ++i) {
+        q[i] = enc16(d(rng) * 0.2f, bf16);
+      }
+      std::memset(kb.contents(), 0, pool);
+      std::memset(vb.contents(), 0, pool);
+      auto* k = static_cast<std::uint16_t*>(kb.contents());
+      auto* v = static_cast<std::uint16_t*>(vb.contents());
+      auto* pt = static_cast<std::int32_t*>(ptb.contents());
+      int gstart = 0;
+      for (int p = 0; p < n_pages; ++p) {
+        const int pid = n_pages - 1 - p;
+        const int nvalid = nvs[(size_t)p];
+        pt[p * 3] = pid; pt[p * 3 + 1] = nvalid; pt[p * 3 + 2] = gstart;
+        for (int h = 0; h < Hkv; ++h) {
+          for (int sl = 0; sl < nvalid; ++sl) {
+            for (int e = 0; e < D; ++e) {
+              const size_t i = (((size_t)pid * Hkv + h) * page_tokens + sl) * D
+                               + e;
+              k[i] = enc16(d(rng) * 0.2f, bf16);
+              v[i] = enc16(d(rng) * 0.2f, bf16);
+              const size_t gi = ((size_t)h * kL + gstart + sl) * D + e;
+              kg[gi] = dec16(k[i], bf16);
+              vg[gi] = dec16(v[i], bf16);
+            }
+          }
+        }
+        gstart += nvalid;
+      }
+    }
+    genai::PrefillGqaAttnSet::Attn a;
+    a.qt = &qb; a.kpool = &kb; a.vpool = &vb; a.page_table = &ptb;
+    a.n = n; a.q_offset = qoff; a.page_tokens = page_tokens;
+    a.n_pages = n_pages; a.scale = 1.0f / std::sqrt((float)D);
+
+    auto run = [&](const char* member, SharedBuffer& out) {
+      a.out = &out;
+      bool ok = false;
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder enc = st.begin_compute();
+        ok = set.dispatch_member(enc, a, member); }
+      st.commit().wait();
+      return ok;
+    };
+    SharedBuffer ref = mc->make_shared_buffer((size_t)Hq * n * D * 2);
+    ASSERT_TRUE(run("flash", ref));
+    const auto* r = static_cast<const std::uint16_t*>(ref.contents());
+    if (cs.branched) {
+      // Flash against a CPU oracle on sampled rows, so the members below
+      // are measured against a reference that walks these pages right.
+      const auto* qh = static_cast<const std::uint16_t*>(qb.contents());
+      const float sc = 1.0f / std::sqrt((float)D);
+      double num = 0.0, den = 0.0;
+      for (const int h : {0, Hq - 1}) {
+        const int kvh = h / (Hq / Hkv);
+        for (const int row : {0, n / 2, n - 1}) {
+          const int qpos = qoff + row;
+          std::vector<double> w((size_t)qpos + 1);
+          double mx = -1e300;
+          for (int g = 0; g <= qpos; ++g) {
+            double dot = 0.0;
+            for (int e = 0; e < D; ++e) {
+              dot += (double)dec16(qh[((size_t)h * n + row) * D + e], bf16) *
+                     kg[((size_t)kvh * kL + g) * D + e];
+            }
+            w[(size_t)g] = dot * sc;
+            mx = std::max(mx, w[(size_t)g]);
+          }
+          double l = 0.0;
+          for (double& x : w) { x = std::exp(x - mx); l += x; }
+          for (int e = 0; e < D; ++e) {
+            double o = 0.0;
+            for (int g = 0; g <= qpos; ++g) {
+              o += w[(size_t)g] * vg[((size_t)kvh * kL + g) * D + e];
+            }
+            o /= l;
+            const double got = dec16(r[((size_t)h * n + row) * D + e], bf16);
+            num += (got - o) * (got - o); den += o * o;
+          }
+        }
+      }
+      const double rel = den > 0.0 ? std::sqrt(num / den) : std::sqrt(num);
+      std::printf("[qwen_set] %s D=%d n=%4d q_offset=%4d branched flash vs "
+                  "oracle rel-L2 %.2e\n", bf16 ? "bf16" : "f16 ", D, n, qoff,
+                  rel);
+      EXPECT_TRUE(rel < 1e-2);
+    }
+    for (const char* member : {"steel", "nax", "nax-split", "mma"}) {
+      SharedBuffer out = mc->make_shared_buffer((size_t)Hq * n * D * 2);
+      const bool ran = run(member, out);
+      const std::string mb(member);
+      const bool expect = mb == "steel" ? (!bf16 && lib_attn.valid())
+                        : mb == "nax-split" ? (m5 && D == 256)
+                        : m5;
+      if (!expect) {
+        if (mb != "steel") { EXPECT_FALSE(ran); }
+        continue;
+      }
+      ASSERT_TRUE(ran);
+      if (!ran) { continue; }
+      const auto* o = static_cast<const std::uint16_t*>(out.contents());
+      double num = 0.0, den = 0.0;
+      for (size_t i = 0; i < (size_t)Hq * n * D; ++i) {
+        const double x = dec16(r[i], bf16), y = dec16(o[i], bf16);
+        num += (x - y) * (x - y); den += x * x;
+      }
+      const double rel = den > 0.0 ? std::sqrt(num / den) : std::sqrt(num);
+      std::printf("[qwen_set] %s D=%d n=%4d q_offset=%4d pages=%2d%s %-9s "
+                  "vs flash rel-L2 %.2e\n", bf16 ? "bf16" : "f16 ", D, n,
+                  qoff, n_pages, cs.branched ? " branched" : "", member, rel);
+      // f16 lands 2-5e-4 from flash and bf16 1.2-2.2e-3 (its rounding
+      // floor) on the M5.
+      EXPECT_TRUE(rel < 5e-3);
+    }
+  }
+  }  // layouts
+}  // dtypes
+}
+
+// Per-dispatch overhead probe: the Gemma-4 decode gap vs omlx is a context-
+// INDEPENDENT fixed offset (~4ms), concentrated in the small non-GEMV ops
+// (norm/ple/sliding) whose per-token cost is launch + inter-dispatch drain,
+// not compute. This times a tiny rms_norm (H=2560, the decode shape, 1
+// threadgroup) dispatched R times in ONE command buffer: DEPENDENT (all write
+// the same out -> WAW hazard serialises them, exactly like the decode op
+// chain) vs INDEPENDENT (round-robin over many out buffers -> Metal can
+// overlap -> isolates pure launch cost). The dependent number is the real
+// per-op floor; (dependent - independent) is the drain. Gated on
+// VPIPE_DISP_OVH.
+TEST(sdpa_mma, dispatch_overhead) {
+  if (std::getenv("VPIPE_DISP_OVH") == nullptr) { return; }
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  ComputeLibrary lib = mc->load_library("rms_norm");
+  ComputeFunction rms = lib.function("rms_norm_f16");
+  if (!rms.valid()) { return; }
+  const int H = 2560;
+  const int NB = 128;          // independent output buffers
+  SharedBuffer xb = mc->make_shared_buffer((size_t)H * 2);
+  SharedBuffer wb = mc->make_shared_buffer((size_t)H * 2);
+  std::memset(xb.contents(), 0, (size_t)H * 2);
+  std::memset(wb.contents(), 0, (size_t)H * 2);
+  std::vector<SharedBuffer> outs;
+  for (int i = 0; i < NB; ++i) {
+    outs.push_back(mc->make_shared_buffer((size_t)H * 2));
+  }
+  const float eps = 1e-6f;
+  const int R = 1000;
+  auto bench = [&](bool dependent) {
+    auto run = [&]() {
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder e = st.begin_compute();
+        for (int r = 0; r < R; ++r) {
+          e.set_function(rms);
+          e.set_buffer(0, xb); e.set_buffer(1, wb);
+          e.set_buffer(2, dependent ? outs[0] : outs[r % NB]);
+          e.set_constant(3, H); e.set_constant(4, eps);
+          e.dispatch({256, 1, 1}, {256, 1, 1});
+        }
+      }
+      st.commit().wait();
+    };
+    run(); run();
+    double best = 1e18;
+    for (int rep = 0; rep < 3; ++rep) {
+      const auto t0 = std::chrono::steady_clock::now();
+      run();
+      best = std::min(best, secs_(t0, std::chrono::steady_clock::now()));
+    }
+    return best / R * 1e6;   // us/dispatch
+  };
+  const double dep = bench(true);
+  const double indep = bench(false);
+  std::printf("[disp-ovh] rms H=%d: dependent %.2f us/dispatch | "
+              "independent %.2f us/dispatch | drain %.2f us\n",
+              H, dep, indep, dep - indep);
+}
+
+// Microscopic decode-attention probe for the Gemma-4 GLOBAL layers (head_dim
+// 512, full-context, the decode bottleneck). Synthetic single-query decode at
+// growing context -- NO model load, so kernel variants A/B in seconds. Times
+// kernel+merge with reps batched in one command buffer (hazard-serialised,
+// like the real per-token decode) and checks rel-L2 vs a CPU oracle. Compares
+// the staged gtile against the direct-read (no staging, fast::exp) kernel and
+// sweeps the split count, for both the global (D512) and sliding (D256/win512)
+// layer regimes.
+// Gated on VPIPE_SDPA_MICRO (a profiling probe, off in normal suites).
+TEST(sdpa_mma, gqa_decode_micro) {
+  if (std::getenv("VPIPE_SDPA_MICRO") == nullptr) { return; }
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  ComputeLibrary lib = mc->load_library("sdpa");
+  ComputeFunction f_mb    = lib.function("sdpa_causal_mb_f16");
+  ComputeFunction f_tile  = lib.function("sdpa_causal_gqa_tile_f16");
+  ComputeFunction f_dir   = lib.function("sdpa_causal_gqa_direct_f16");
+  ComputeFunction f_vec   = lib.function("sdpa_causal_gqa_vec_f16");
+  ComputeFunction f_allg  = lib.function("sdpa_causal_gqa_f16");
+  ComputeFunction f_pgqa  = lib.function("sdpa_paged_gqa_mb256_f16");
+  ComputeFunction f_pvec  = lib.function("sdpa_paged_gqa_vec_f16");
+  ComputeFunction f_kbl   = lib.function("sdpa_paged_gqa_kbl_f16");
+  ComputeFunction f_vec1  = lib.function("sdpa_paged_gqa_vec1_f16");
+  ComputeFunction f_vec2  = lib.function("sdpa_paged_gqa_vec2_f16");
+  ComputeFunction f_merge2 = lib.function("sdpa_gqa_merge2_f16");
+  ComputeFunction f_mma   = lib.function("sdpa_causal_mma_qhead_f16");
+  ComputeFunction f_merge = lib.function("sdpa_gqa_merge_f16");
+  if (!f_mb.valid() || !f_tile.valid() || !f_merge.valid()) {
+    std::printf("[gqa-micro] sdpa lib missing functions -- skipped.\n");
+    return;
+  }
+
+  const int Smax = 256;
+  const int reps = 40;
+
+  // Three regimes: e4b GLOBAL (head_dim 512, full causal, Hkv=2/G=4), e4b
+  // SLIDING (head_dim 256, window 512), and the 12B gemma4_unified GLOBAL
+  // (head_dim 512, Hkv=1/G=16 -- the lone-KV-head over-read case).
+  struct Cfg { int D; int win; int Hq; int Hkv; const char* rt; };
+  // VPIPE_SDPA_MICRO=g8 -> only the Qwen3.5-MoE decode shape (D=256, Hkv=2,
+  // G=8) over LONG context, to study kbl flash-decode scaling vs depth.
+  const bool g8_only = std::string(std::getenv("VPIPE_SDPA_MICRO")) == "g8";
+  // =g2 -> the gemma-4-31B GLOBAL decode shape (D=256, Hq=32/Hkv=16 -> G=2)
+  // over depth. That model's decode deficit localizes entirely to its global
+  // attention (category profiler: +9.5 ms of a +9.2 ms 1k->8k total) at
+  // ~2.3-3x the KV bandwidth floor, and G=2 is the least-amortized geometry
+  // the gtile family runs -- one KV head feeding only two q heads.
+  const bool g2_only = std::string(std::getenv("VPIPE_SDPA_MICRO")) == "g2";
+  const Cfg cfgs_all[] = {{512, 0, 8, 2, "global   "},
+                          {256, 512, 8, 2, "slide    "},
+                          {256, 0, 16, 4, "qwen(G4) "},
+                          {512, 0, 16, 1, "g12b(G16)"}};
+  const Cfg cfgs_g8[] = {{256, 0, 16, 2, "qwen(G8) "}};
+  // BOTH gemma-4-31B decode geometries, verified with VPIPE_GEMMA_ATTN_DUMP:
+  // gemma-4 uses PER-LAYER-TYPE head_dim, so the globals are D=512/G=8 (paged,
+  // sdpa_pgqa) and the sliding layers D=256/G=2 (contiguous, gtile). config.json
+  // head_dim=256 is the SLIDING value -- do not assume it is uniform.
+  const Cfg cfgs_g2[] = {{512, 0, 32, 4, "g31bGL(G8)"},
+                         {256, 0, 32, 16, "g31bSL(G2)"}};
+  const Cfg* cfgs = g8_only ? cfgs_g8 : (g2_only ? cfgs_g2 : cfgs_all);
+  const int ncfg = g8_only ? 1 : (g2_only ? 2 : 4);
+  for (int ci = 0; ci < ncfg; ++ci) {
+  const Cfg& cfg = cfgs[ci];
+  const int D = cfg.D;
+  const int win = cfg.win;
+  const int Hq = cfg.Hq, Hkv = cfg.Hkv, G = Hq / Hkv;
+  const float scale = 1.0f / std::sqrt((float)D);
+  const std::vector<int> Ts = g8_only
+      ? std::vector<int>{2048, 8192, 16384, 32768}
+      : (g2_only ? std::vector<int>{1024, 2048, 4096, 8192}
+                 : std::vector<int>{1024, 2048, 4096});
+  for (int T : Ts) {
+    std::mt19937 rng(7 + T);
+    std::uniform_real_distribution<float> d(-1.0f, 1.0f);
+    std::vector<std::uint16_t> q((size_t)Hq * D), k((size_t)Hkv * T * D),
+        vv((size_t)Hkv * T * D);
+    for (auto& e : q) e = f32_to_h(d(rng) * 0.2f);
+    for (auto& e : k) e = f32_to_h(d(rng) * 0.2f);
+    for (auto& e : vv) e = f32_to_h(d(rng) * 0.2f);
+
+    SharedBuffer qb = mc->make_shared_buffer(q.size() * 2);
+    SharedBuffer kb = mc->make_shared_buffer(k.size() * 2);
+    SharedBuffer vb = mc->make_shared_buffer(vv.size() * 2);
+    SharedBuffer ob = mc->make_shared_buffer((size_t)Hq * D * 2);
+    SharedBuffer oacc = mc->make_shared_buffer((size_t)Hq * Smax * D * 4);
+    SharedBuffer mbuf = mc->make_shared_buffer((size_t)Hq * Smax * 4);
+    SharedBuffer lbuf = mc->make_shared_buffer((size_t)Hq * Smax * 4);
+    std::memcpy(qb.contents(), q.data(), q.size() * 2);
+    std::memcpy(kb.contents(), k.data(), k.size() * 2);
+    std::memcpy(vb.contents(), vv.data(), vv.size() * 2);
+
+    // Single-page paged view: pool [1, Hkv, page_tokens=T, D] == contiguous
+    // [Hkv, T, D] == kb/vb byte-for-byte; page_table {pid=0, nvalid=T, gs=0}.
+    std::vector<std::int32_t> pt = {0, T, 0};
+    SharedBuffer ptb = mc->make_shared_buffer(pt.size() * 4);
+    std::memcpy(ptb.contents(), pt.data(), pt.size() * 4);
+
+    // CPU oracle for two heads: decode q at T-1 attends [first, T-1], where
+    // first = T-win for a sliding layer (win>0) else 0 (full causal).
+    auto oracle = [&](int h, std::vector<float>& out) {
+      const int kvh = h / G;
+      const int q_pos = T - 1;
+      const int first = (win > 0) ? std::max(0, q_pos - win + 1) : 0;
+      std::vector<float> sc(T, 0.0f);
+      float mx = -1e30f;
+      for (int ki = first; ki <= q_pos; ++ki) {
+        float s = 0.0f;
+        for (int dd = 0; dd < D; ++dd) {
+          s += h_to_f32(q[(size_t)h * D + dd]) *
+               h_to_f32(k[((size_t)kvh * T + ki) * D + dd]);
+        }
+        sc[ki] = s * scale; mx = std::max(mx, sc[ki]);
+      }
+      float l = 0.0f;
+      for (int ki = first; ki <= q_pos; ++ki) {
+        sc[ki] = std::exp(sc[ki] - mx); l += sc[ki];
+      }
+      out.assign(D, 0.0f);
+      for (int dd = 0; dd < D; ++dd) {
+        float o = 0.0f;
+        for (int ki = first; ki <= q_pos; ++ki) {
+          o += sc[ki] * h_to_f32(vv[((size_t)kvh * T + ki) * D + dd]);
+        }
+        out[dd] = o / l;
+      }
+    };
+    std::vector<float> ora0, ora7; oracle(0, ora0); oracle(Hq - 1, ora7);
+    auto rel_of = [&]() {
+      const auto* op = static_cast<const std::uint16_t*>(ob.contents());
+      double num = 0, den = 0;
+      for (int dd = 0; dd < D; ++dd) {
+        const float g0 = h_to_f32(op[dd]) - ora0[dd];
+        const float g7 = h_to_f32(op[(size_t)(Hq - 1) * D + dd]) - ora7[dd];
+        num += g0 * g0 + g7 * g7;
+        den += ora0[dd] * ora0[dd] + ora7[dd] * ora7[dd];
+      }
+      return den > 0 ? std::sqrt(num / den) : std::sqrt(num);
+    };
+
+    auto enc_gqa = [&](ComputeEncoder& enc, ComputeFunction& fn, int S) {
+      enc.set_function(fn);
+      enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+      enc.set_buffer(3, oacc); enc.set_buffer(4, mbuf); enc.set_buffer(5, lbuf);
+      enc.set_constant(6, scale); enc.set_constant(7, T);
+      enc.set_constant(8, D); enc.set_constant(9, Hq);
+      enc.set_constant(10, Hkv);
+      enc.set_constant(11, T - 1); enc.set_constant(12, T);
+      enc.set_constant(13, win); enc.set_constant(14, 0);
+      enc.set_constant(15, S);
+      enc.dispatch({32, (unsigned)Hq, (unsigned)S},
+                   {32, (unsigned)G, 1});
+      enc.set_function(f_merge);
+      enc.set_buffer(0, oacc); enc.set_buffer(1, mbuf); enc.set_buffer(2, lbuf);
+      enc.set_buffer(3, ob);
+      enc.set_constant(4, D); enc.set_constant(5, S); enc.set_constant(6, Hq);
+      enc.dispatch({(unsigned)(Hq * D), 1, 1}, {256, 1, 1});
+    };
+    // All-G single-simdgroup flash-decode (sdpa_causal_gqa_f16 -- the
+    // contiguous analogue of Qwen's PRODUCTION sdpa_paged_gqa_mb256_f16):
+    // each (kv, split) simdgroup reads its KV slice ONCE, applies every key
+    // to all G heads. grid (32, Hkv, S), tg (32,1,1).
+    auto enc_allg = [&](ComputeEncoder& enc, int S) {
+      enc.set_function(f_allg);
+      enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+      enc.set_buffer(3, oacc); enc.set_buffer(4, mbuf); enc.set_buffer(5, lbuf);
+      enc.set_constant(6, scale); enc.set_constant(7, T);
+      enc.set_constant(8, D); enc.set_constant(9, Hq);
+      enc.set_constant(10, Hkv);
+      enc.set_constant(11, T - 1); enc.set_constant(12, T);
+      enc.set_constant(13, win); enc.set_constant(14, 0);
+      enc.set_constant(15, S);
+      enc.dispatch({32, (unsigned)Hkv, (unsigned)S}, {32, 1, 1});
+      enc.set_function(f_merge);
+      enc.set_buffer(0, oacc); enc.set_buffer(1, mbuf); enc.set_buffer(2, lbuf);
+      enc.set_buffer(3, ob);
+      enc.set_constant(4, D); enc.set_constant(5, S); enc.set_constant(6, Hq);
+      enc.dispatch({(unsigned)(Hq * D), 1, 1}, {256, 1, 1});
+    };
+    // PAGED kernels (single-page view): the production Qwen decode path.
+    // Buffer contract: 0:q 1:kpool 2:vpool 3:o_acc 4:m 5:l 6:scale 7:D 8:Hq
+    // 9:Hkv 10:q_offset 11:page_tokens 12:n_pages 13:page_table 14:split.
+    auto enc_paged = [&](ComputeEncoder& enc, ComputeFunction& fn, int S,
+                         bool per_head) {
+      enc.set_function(fn);
+      enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+      enc.set_buffer(3, oacc); enc.set_buffer(4, mbuf); enc.set_buffer(5, lbuf);
+      enc.set_constant(6, scale); enc.set_constant(7, D);
+      enc.set_constant(8, Hq); enc.set_constant(9, Hkv);
+      enc.set_constant(10, T - 1); enc.set_constant(11, T);
+      const int np = 1; enc.set_constant(12, np);
+      enc.set_buffer(13, ptb); enc.set_constant(14, S);
+      if (per_head) {
+        enc.dispatch({32, (unsigned)Hq, (unsigned)S}, {32, (unsigned)G, 1});
+      } else {
+        enc.dispatch({32, (unsigned)Hkv, (unsigned)S}, {32, 1, 1});
+      }
+      enc.set_function(f_merge);
+      enc.set_buffer(0, oacc); enc.set_buffer(1, mbuf); enc.set_buffer(2, lbuf);
+      enc.set_buffer(3, ob);
+      enc.set_constant(4, D); enc.set_constant(5, S); enc.set_constant(6, Hq);
+      enc.dispatch({(unsigned)(Hq * D), 1, 1}, {256, 1, 1});
+    };
+    // MMA flash-decode: 8 q-heads per tile (needs 8|G), grid (256, Hq/8, S).
+    auto enc_mma = [&](ComputeEncoder& enc, int S) {
+      enc.set_function(f_mma);
+      enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+      enc.set_buffer(3, oacc); enc.set_buffer(4, mbuf); enc.set_buffer(5, lbuf);
+      enc.set_constant(6, scale); enc.set_constant(7, T);
+      enc.set_constant(8, D); enc.set_constant(9, Hq);
+      enc.set_constant(10, Hkv);
+      enc.set_constant(11, T - 1); enc.set_constant(12, T);
+      enc.set_constant(13, win); enc.set_constant(14, 0);
+      enc.set_constant(15, S);
+      enc.dispatch({256, (unsigned)(Hq / 8), (unsigned)S}, {256, 1, 1});
+      enc.set_function(f_merge);
+      enc.set_buffer(0, oacc); enc.set_buffer(1, mbuf); enc.set_buffer(2, lbuf);
+      enc.set_buffer(3, ob);
+      enc.set_constant(4, D); enc.set_constant(5, S); enc.set_constant(6, Hq);
+      enc.dispatch({(unsigned)(Hq * D), 1, 1}, {256, 1, 1});
+    };
+    auto enc_mb = [&](ComputeEncoder& enc) {
+      enc.set_function(f_mb);
+      enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+      enc.set_buffer(3, ob);
+      enc.set_constant(4, scale); enc.set_constant(5, T);
+      enc.set_constant(6, D); enc.set_constant(7, Hq);
+      enc.set_constant(8, Hkv); enc.set_constant(9, 1);
+      enc.set_constant(10, T - 1); enc.set_constant(11, T);
+      enc.set_constant(12, win); enc.set_constant(13, 0);
+      const unsigned BN = 4096 / D;
+      enc.dispatch({BN * 32, (unsigned)Hq, 1}, {BN * 32, 1, 1});
+    };
+    auto bench = [&](auto enc_one) {
+      auto once = [&]() {
+        CommandStream st = mc->make_command_stream();
+        { ComputeEncoder enc = st.begin_compute();
+          for (int r = 0; r < reps; ++r) { enc_one(enc); } }
+        st.commit().wait();
+      };
+      for (int w = 0; w < 2; ++w) { once(); }
+      const auto t0 = std::chrono::steady_clock::now();
+      const int it = 5;
+      for (int i = 0; i < it; ++i) { once(); }
+      const auto t1 = std::chrono::steady_clock::now();
+      return secs_(t0, t1) / it / reps * 1e3;   // ms/dispatch
+    };
+
+    // mb baseline
+    { auto once = [&]() {
+        CommandStream st = mc->make_command_stream();
+        { ComputeEncoder enc = st.begin_compute(); enc_mb(enc); }
+        st.commit().wait();
+      }; once(); }
+    const double ms_mb = bench([&](ComputeEncoder& e) { enc_mb(e); });
+    double rel_mb = rel_of();
+    std::printf("[gqa-micro] %s T=%4d  mb       rel=%.2e  %.4f ms\n",
+                cfg.rt, T, rel_mb, ms_mb);
+
+    struct Var { ComputeFunction* fn; const char* tag; };
+    Var vars[] = {{&f_tile, "gtile "}, {&f_dir, "direct"}, {&f_vec, "vec   "}};
+    for (auto& var : vars) {
+      if (!var.fn->valid()) { continue; }
+      for (int S : {32, 64, 96, 128, 256}) {
+        { CommandStream st = mc->make_command_stream();
+          { ComputeEncoder enc = st.begin_compute(); enc_gqa(enc, *var.fn, S); }
+          st.commit().wait(); }
+        const double rel = rel_of();
+        const double ms = bench([&](ComputeEncoder& e) {
+          enc_gqa(e, *var.fn, S);
+        });
+        std::printf("[gqa-micro] %s T=%4d  %s S=%2d  rel=%.2e  %.4f ms  "
+                    "(%.2fx mb)\n", cfg.rt, T, var.tag, S, rel, ms, ms_mb / ms);
+        EXPECT_TRUE(rel < 5e-2);
+      }
+    }
+    // All-G single-simdgroup (Qwen's production design): read KV once for all
+    // G heads. head_dim <= 256 only (per <= 8). S=32 is the production split.
+    if (f_allg.valid() && D <= 256) {
+      for (int S : {16, 32, 64, 128}) {
+        { CommandStream st = mc->make_command_stream();
+          { ComputeEncoder enc = st.begin_compute(); enc_allg(enc, S); }
+          st.commit().wait(); }
+        const double rel = rel_of();
+        const double ms = bench([&](ComputeEncoder& e) { enc_allg(e, S); });
+        std::printf("[gqa-micro] %s T=%4d  allg   S=%2d  rel=%.2e  %.4f ms  "
+                    "(%.2fx mb)\n", cfg.rt, T, S, rel, ms, ms_mb / ms);
+        EXPECT_TRUE(rel < 5e-2);
+      }
+    }
+    // PAGED decode (Qwen's production path): pgqa = all-G single-simdgroup
+    // (current sdpa_paged_gqa_mb256_f16), pvec = per-head UK+vec4 (candidate).
+    // Full-causal only (paged kernels have no window). D % 128 == 0 for pvec.
+    if (win == 0 && D <= 256 && f_pgqa.valid()) {
+      for (int S : {32, 64}) {
+        { CommandStream st = mc->make_command_stream();
+          { ComputeEncoder enc = st.begin_compute();
+            enc_paged(enc, f_pgqa, S, false); }
+          st.commit().wait(); }
+        const double rel = rel_of();
+        const double ms = bench([&](ComputeEncoder& e) {
+          enc_paged(e, f_pgqa, S, false); });
+        std::printf("[gqa-micro] %s T=%4d  pgqa   S=%2d  rel=%.2e  %.4f ms  "
+                    "(%.2fx mb)\n", cfg.rt, T, S, rel, ms, ms_mb / ms);
+        EXPECT_TRUE(rel < 5e-2);
+      }
+    }
+    if (win == 0 && D <= 256 && (D % 128 == 0) && f_pvec.valid()) {
+      for (int S : {32, 64}) {
+        { CommandStream st = mc->make_command_stream();
+          { ComputeEncoder enc = st.begin_compute();
+            enc_paged(enc, f_pvec, S, true); }
+          st.commit().wait(); }
+        const double rel = rel_of();
+        const double ms = bench([&](ComputeEncoder& e) {
+          enc_paged(e, f_pvec, S, true); });
+        std::printf("[gqa-micro] %s T=%4d  pvec   S=%2d  rel=%.2e  %.4f ms  "
+                    "(%.2fx mb)\n", cfg.rt, T, S, rel, ms, ms_mb / ms);
+        EXPECT_TRUE(rel < 5e-2);
+      }
+    }
+    // kbl: the PRODUCTION Qwen3.5 D=256 decode kernel (key-across-lanes block,
+    // per-head). The target of this study -- sweep S to see how its cost scales
+    // with depth (T) and which split keeps it flat.
+    if (win == 0 && D == 256 && f_kbl.valid()) {
+      for (int S : {16, 32, 64, 128, (T + 255) / 256}) {
+        if (S < 1 || S > Smax) { continue; }
+        { CommandStream st = mc->make_command_stream();
+          { ComputeEncoder enc = st.begin_compute();
+            enc_paged(enc, f_kbl, S, true); }
+          st.commit().wait(); }
+        const double rel = rel_of();
+        const double ms = bench([&](ComputeEncoder& e) {
+          enc_paged(e, f_kbl, S, true); });
+        std::printf("[gqa-micro] %s T=%5d  kbl    S=%3d  rel=%.2e  %.4f ms  "
+                    "(%.2fx mb)\n", cfg.rt, T, S, rel, ms, ms_mb / ms);
+        EXPECT_TRUE(rel < 5e-2);
+      }
+    }
+    // vec1: MLX sdpa_vector ported to paged KV (constexpr PER unroll, 2-pass
+    // split). One TG per (qhead, split), 32-simd key stripe, intra-TG merge ->
+    // partial; sdpa_gqa_merge combines splits. Sweep S. D=256 only.
+    if (win == 0 && D == 256 && f_vec1.valid()) {
+      auto enc_vec1 = [&](ComputeEncoder& enc, int S) {
+        enc.set_function(f_vec1);
+        enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+        enc.set_buffer(3, oacc); enc.set_buffer(4, mbuf); enc.set_buffer(5, lbuf);
+        enc.set_constant(6, scale); enc.set_constant(7, D);
+        enc.set_constant(8, Hq); enc.set_constant(9, Hkv);
+        enc.set_constant(10, T - 1); enc.set_constant(11, T);
+        const int np1 = 1; enc.set_constant(12, np1); enc.set_buffer(13, ptb);
+        enc.set_constant(14, S);
+        enc.dispatch({1024, (unsigned)Hq, (unsigned)S}, {1024, 1, 1});
+        enc.set_function(f_merge);
+        enc.set_buffer(0, oacc); enc.set_buffer(1, mbuf); enc.set_buffer(2, lbuf);
+        enc.set_buffer(3, ob);
+        enc.set_constant(4, D); enc.set_constant(5, S); enc.set_constant(6, Hq);
+        enc.dispatch({(unsigned)(Hq * D), 1, 1}, {256, 1, 1});
+      };
+      for (int S : {1, 2, 4, 8, 16}) {
+        if (S > Smax) { continue; }
+        { CommandStream st = mc->make_command_stream();
+          { ComputeEncoder enc = st.begin_compute(); enc_vec1(enc, S); }
+          st.commit().wait(); }
+        const double rel = rel_of();
+        const double ms = bench([&](ComputeEncoder& e) { enc_vec1(e, S); });
+        std::printf("[gqa-micro] %s T=%5d  vec1   S=%3d  rel=%.2e  %.4f ms  "
+                    "(%.2fx mb)\n", cfg.rt, T, S, rel, ms, ms_mb / ms);
+        EXPECT_TRUE(rel < 5e-2);
+      }
+    }
+    // vec2: FAITHFUL MLX 2-pass (vec2 pass-1 = kbl-shaped grid, NO intra-TG
+    // merge; merge2 = MLX's coalesced sdpa_vector_2pass_2). Sweep blocks (must
+    // be %32). The cooperative-merge attempt at the residual MLX gap.
+    if (win == 0 && D == 256 && f_vec2.valid() && f_merge2.valid()) {
+      const int G = Hq / Hkv;
+      auto enc_vec2 = [&](ComputeEncoder& enc, int S) {
+        enc.set_function(f_vec2);
+        enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+        enc.set_buffer(3, oacc); enc.set_buffer(4, mbuf); enc.set_buffer(5, lbuf);
+        enc.set_constant(6, scale); enc.set_constant(7, D);
+        enc.set_constant(8, Hq); enc.set_constant(9, Hkv);
+        enc.set_constant(10, T - 1); enc.set_constant(11, T);
+        const int np1 = 1; enc.set_constant(12, np1); enc.set_buffer(13, ptb);
+        enc.set_constant(14, S);
+        enc.dispatch({32, (unsigned)Hq, (unsigned)S}, {32, (unsigned)G, 1});
+        enc.set_function(f_merge2);
+        enc.set_buffer(0, oacc); enc.set_buffer(1, lbuf); enc.set_buffer(2, mbuf);
+        enc.set_buffer(3, ob);
+        enc.set_constant(4, D); enc.set_constant(5, S);
+        enc.dispatch({1024, (unsigned)Hq, 1}, {1024, 1, 1});
+      };
+      for (int S : {32, 64, 128, 256}) {
+        if (S > Smax) { continue; }
+        { CommandStream st = mc->make_command_stream();
+          { ComputeEncoder enc = st.begin_compute(); enc_vec2(enc, S); }
+          st.commit().wait(); }
+        const double rel = rel_of();
+        const double ms = bench([&](ComputeEncoder& e) { enc_vec2(e, S); });
+        std::printf("[gqa-micro] %s T=%5d  vec2   S=%3d  rel=%.2e  %.4f ms  "
+                    "(%.2fx mb)\n", cfg.rt, T, S, rel, ms, ms_mb / ms);
+        EXPECT_TRUE(rel < 5e-2);
+      }
+    }
+    // MMA q-head flash-decode (8 heads/tile, needs 8|G): the depth-flat
+    // candidate. split = ceil(T/FL_C(64)) keeps each split ~1 key block.
+    if (f_mma.valid() && (G % 8 == 0) && (D % 8 == 0)) {
+      for (int S : {(T + 63) / 64, 64, 128}) {
+        if (S < 1 || S > Smax) { continue; }
+        { CommandStream st = mc->make_command_stream();
+          { ComputeEncoder enc = st.begin_compute(); enc_mma(enc, S); }
+          st.commit().wait(); }
+        const double rel = rel_of();
+        const double ms = bench([&](ComputeEncoder& e) { enc_mma(e, S); });
+        std::printf("[gqa-micro] %s T=%4d  mma    S=%2d  rel=%.2e  %.4f ms  "
+                    "(%.2fx mb)\n", cfg.rt, T, S, rel, ms, ms_mb / ms);
+        EXPECT_TRUE(rel < 5e-2);
+      }
+    }
+  }
+  }
+}
+
+// KV-stride DRAM bank-conflict probe. Reads a [Hkv, T, Dstride] K array with the
+// exact sdpa_paged_gqa_vec access pattern, sweeping the per-key STORAGE stride:
+// Dstride=D (512, power-of-2) vs padded (528/544/640). Same useful bytes read
+// (D=512 per key, ALL G q-heads re-read their kv-head -> Hq*T*D); only the
+// alignment of consecutive key transactions changes. If padding LOWERS the time,
+// the 512-element stride was aliasing DRAM banks. Gated VPIPE_KV_STRIDE_BENCH.
+TEST(sdpa_mma, kv_stride_bank_probe) {
+  if (std::getenv("VPIPE_KV_STRIDE_BENCH") == nullptr) { return; }
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  ComputeFunction f = mc->load_library("sdpa").function("kv_read_probe_f16");
+  ASSERT_TRUE(f.valid());
+  const int D = 512, Hq = 8, Hkv = 2, T = 16384, split = 128;
+  const int G = Hq / Hkv;
+  std::mt19937 rng(1234);
+  const int strides[] = {512, 528, 544, 576, 640};   // 512=pow2; rest padded
+  std::printf("[kv_stride] T=%d D=%d Hq=%d Hkv=%d split=%d | useful=%.1f MB/call"
+              " (x G=%d re-reads)\n", T, D, Hq, Hkv, split,
+              (double)Hq * T * D * 2 / 1e6, G);
+  const char* mode_name[] = {"READ-ONLY (raw stream)",
+                             "FAITHFUL FLASH (read+online-softmax serial chain)",
+                             "M=G MATERIALIZED read (parallel, no serial carry)"};
+  for (int sm = 0; sm <= 2; ++sm) {
+    std::printf("[kv_stride] --- mode: %s ---\n", mode_name[sm]);
+    double t_pow2 = 0.0;
+    for (int Ds : strides) {
+      SharedBuffer kb = mc->make_shared_buffer((std::size_t)Hkv * T * Ds * 2);
+      SharedBuffer ob = mc->make_shared_buffer((std::size_t)Hq * split * 4);
+      auto* kp = static_cast<std::uint16_t*>(kb.contents());
+      for (std::size_t i = 0; i < (std::size_t)Hkv * T * Ds; ++i) {
+        kp[i] = (std::uint16_t)(rng() & 0xffff);
+      }
+      const int ITERS = 80;
+      auto run = [&](int count) {
+        CommandStream st = mc->make_command_stream();
+        { ComputeEncoder enc = st.begin_compute();
+          for (int c = 0; c < count; ++c) {
+            enc.set_function(f);
+            enc.set_buffer(0, kb); enc.set_buffer(1, ob);
+            enc.set_constant(2, D); enc.set_constant(3, Ds);
+            enc.set_constant(4, T); enc.set_constant(5, Hq);
+            enc.set_constant(6, Hkv); enc.set_constant(7, split);
+            enc.set_constant(8, sm);
+            if (sm == 2) {  // M=G: one simdgroup per (kv-head, split)
+              enc.dispatch({32, (unsigned)Hkv, (unsigned)split}, {32, 1, 1});
+            } else {        // flash: G simdgroups per (kv-head, split)
+              enc.dispatch({32, (unsigned)Hq, (unsigned)split},
+                           {32, (unsigned)G, 1});
+            }
+          }
+        }
+        st.commit().wait();
+      };
+      run(5);
+      const auto t0 = std::chrono::steady_clock::now();
+      run(ITERS);
+      const auto t1 = std::chrono::steady_clock::now();
+      const double ms = secs_(t0, t1) * 1e3 / ITERS;
+      const double gbs = (double)Hq * T * D * 2 * ITERS / secs_(t0, t1) / 1e9;
+      if (Ds == 512) { t_pow2 = ms; }
+      std::printf("[kv_stride] Dstride=%3d (%s) | %.4f ms/call | %6.1f GB/s "
+                  "| %+5.1f%% vs pow2\n", Ds, Ds == 512 ? "pow2 " : "padded",
+                  ms, gbs, t_pow2 > 0 ? 100.0 * (t_pow2 - ms) / t_pow2 : 0.0);
+      EXPECT_TRUE(gbs > 0.0);
+    }
+  }
+}
+
+// Key-across-lanes block decode (sdpa_paged_gqa_kbl{,128}) vs a CPU softmax
+// oracle, head_dim 256 AND 128, across G in {2,4,6} and sequence lengths that
+// span partial / multi-block ranges. No model needed -- this is the
+// token-exactness proxy for the head_dim-128 kbl variant (no head_dim-128 LM
+// is in the test set). Single-page paged pool [1, Hkv, n, D]; one decode query
+// at pos n-1; split=32 + sdpa_gqa_merge_f16, same as the model decode path.
+TEST(sdpa_kbl, decode_matches_oracle) {
+  Session sess;
+  auto* mc = get_mc_(sess);
+  if (mc == nullptr) { return; }
+  ComputeLibrary lib = mc->load_library("sdpa");
+  ComputeFunction f256 = lib.function("sdpa_paged_gqa_kbl_f16");
+  ComputeFunction f128 = lib.function("sdpa_paged_gqa_kbl128_f16");
+  ComputeFunction fmerge = lib.function("sdpa_gqa_merge_f16");
+  if (!f256.valid() || !f128.valid() || !fmerge.valid()) {
+    std::printf("[sdpa_kbl] kernels missing -- skipped.\n");
+    return;
+  }
+  struct Cfg { int D, Hq, Hkv, n; };
+  const Cfg cfgs[] = {
+      {128, 16, 4, 37},   {128, 16, 4, 100},  {128, 16, 4, 600},
+      {128, 16, 4, 1500}, {128, 24, 4, 600},  {128, 8, 2, 257},
+      {256, 16, 4, 100},  {256, 16, 4, 600},  {256, 16, 4, 1500},
+      {256, 24, 4, 600},
+  };
+  const int split = 32;
+  double worst = 0.0;
+  for (const auto& c : cfgs) {
+    const int D = c.D, Hq = c.Hq, Hkv = c.Hkv, n = c.n, G = Hq / Hkv;
+    std::mt19937 rng(7 + n + D);
+    std::uniform_real_distribution<float> d(-1.0f, 1.0f);
+    std::vector<std::uint16_t> q((size_t)Hq * D), k((size_t)Hkv * n * D),
+        vv((size_t)Hkv * n * D);
+    for (auto& e : q) { e = f32_to_h(d(rng) * 0.5f); }
+    for (auto& e : k) { e = f32_to_h(d(rng) * 0.5f); }
+    for (auto& e : vv) { e = f32_to_h(d(rng) * 0.5f); }
+    const float scale = 1.0f / std::sqrt((float)D);
+
+    SharedBuffer qb = mc->make_shared_buffer(q.size() * 2);
+    SharedBuffer kb = mc->make_shared_buffer(k.size() * 2);
+    SharedBuffer vb = mc->make_shared_buffer(vv.size() * 2);
+    std::memcpy(qb.contents(), q.data(), q.size() * 2);
+    std::memcpy(kb.contents(), k.data(), k.size() * 2);
+    std::memcpy(vb.contents(), vv.data(), vv.size() * 2);
+    std::vector<std::int32_t> pt = {0, n, 0};
+    SharedBuffer ptb = mc->make_shared_buffer(pt.size() * 4);
+    std::memcpy(ptb.contents(), pt.data(), pt.size() * 4);
+    SharedBuffer oacc = mc->make_shared_buffer((size_t)Hq * split * D * 4);
+    SharedBuffer mbb = mc->make_shared_buffer((size_t)Hq * split * 4);
+    SharedBuffer lbb = mc->make_shared_buffer((size_t)Hq * split * 4);
+    SharedBuffer outb = mc->make_shared_buffer((size_t)Hq * D * 2);
+    const int q_off = n - 1, page_tokens = n, n_pages = 1;
+    {
+      CommandStream st = mc->make_command_stream();
+      { ComputeEncoder enc = st.begin_compute();
+        enc.set_function(D == 256 ? f256 : f128);
+        enc.set_buffer(0, qb); enc.set_buffer(1, kb); enc.set_buffer(2, vb);
+        enc.set_buffer(3, oacc); enc.set_buffer(4, mbb); enc.set_buffer(5, lbb);
+        enc.set_constant(6, scale); enc.set_constant(7, D);
+        enc.set_constant(8, Hq); enc.set_constant(9, Hkv);
+        enc.set_constant(10, q_off); enc.set_constant(11, page_tokens);
+        enc.set_constant(12, n_pages); enc.set_buffer(13, ptb);
+        enc.set_constant(14, split);
+        enc.dispatch({32, (unsigned)Hq, (unsigned)split},
+                     {32, (unsigned)G, 1});
+        enc.set_function(fmerge);
+        enc.set_buffer(0, oacc); enc.set_buffer(1, mbb); enc.set_buffer(2, lbb);
+        enc.set_buffer(3, outb); enc.set_constant(4, D);
+        enc.set_constant(5, split); enc.set_constant(6, Hq);
+        enc.dispatch({(unsigned)(Hq * D), 1, 1}, {256, 1, 1});
+      }
+      st.commit().wait();
+    }
+    const auto* op = static_cast<const std::uint16_t*>(outb.contents());
+    double num = 0.0, den = 0.0;
+    for (int h = 0; h < Hq; ++h) {
+      const int kvh = h / G;
+      std::vector<float> sc(n);
+      float mx = -1e30f;
+      for (int kk = 0; kk < n; ++kk) {
+        float sdot = 0.0f;
+        for (int dd = 0; dd < D; ++dd) {
+          sdot += h_to_f32(q[(size_t)h * D + dd]) *
+                  h_to_f32(k[((size_t)kvh * n + kk) * D + dd]);
+        }
+        sc[kk] = sdot * scale;
+        mx = std::max(mx, sc[kk]);
+      }
+      float sum = 0.0f;
+      for (int kk = 0; kk < n; ++kk) { sc[kk] = std::exp(sc[kk] - mx); sum += sc[kk]; }
+      for (int dd = 0; dd < D; ++dd) {
+        float o = 0.0f;
+        for (int kk = 0; kk < n; ++kk) {
+          o += sc[kk] * h_to_f32(vv[((size_t)kvh * n + kk) * D + dd]);
+        }
+        o /= sum;
+        const float got = h_to_f32(op[(size_t)h * D + dd]);
+        num += (double)(got - o) * (got - o);
+        den += (double)o * o;
+      }
+    }
+    const double rl2 = den > 0.0 ? std::sqrt(num / den) : 0.0;
+    worst = std::max(worst, rl2);
+    std::printf("[sdpa_kbl] D=%3d Hq=%2d Hkv=%d G=%d n=%4d  relL2=%.3e\n",
+                D, Hq, Hkv, G, n, rl2);
+    EXPECT_TRUE(rl2 < 2e-2);
+  }
+  std::printf("[sdpa_kbl] worst relL2 = %.3e (tol 2e-2)\n", worst);
+}

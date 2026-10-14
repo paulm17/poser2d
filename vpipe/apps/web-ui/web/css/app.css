@@ -1,0 +1,2421 @@
+/* vpipe web-ui -- minimalist desktop theme. */
+
+:root {
+  --bg:        #14161a;
+  --bg-1:      #1b1e24;
+  --bg-2:      #21252c;
+  --bg-3:      #2a2f38;
+  --line:      #333a44;
+  --fg:        #d8dde5;
+  --fg-dim:    #8b94a3;
+  --accent:    #5cc8ff;
+  --accent-2:  #7ee0a0;
+  --warn:      #ffd166;
+  --danger:    #ff6b6b;
+  --radius:    6px;
+  --nav-w:     76px;
+  /* CJK SANS, named explicitly. No monospace family covers Chinese, so
+     without this the browser falls past the whole stack below and picks
+     the system default for the script -- which on macOS and iOS is
+     Songti, a SERIF: the UI would read in a book face next to Latin
+     text in a terminal one. A font-family list is resolved PER
+     CHARACTER, so naming these after the mono families costs Latin
+     text nothing; it only catches the glyphs the mono families do not
+     have. Ordered macOS/iOS, Windows, then the Noto/Source Han names
+     Linux and Android ship. */
+  --cjk-sans: "PingFang SC", "PingFang TC", "Hiragino Sans GB",
+              "Microsoft YaHei", "Microsoft JhengHei",
+              "Noto Sans CJK SC", "Noto Sans CJK TC",
+              "Source Han Sans SC", "Heiti SC", "Heiti TC",
+              "WenQuanYi Micro Hei", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+          var(--cjk-sans), monospace;
+}
+
+/* Traditional Chinese: prefer the TC cuts. PingFang SC and TC cover
+   almost the same code points but draw a number of characters
+   differently, and the first family holding a glyph wins -- so on a
+   zh-tw UI the TC cut has to come first or SC forms show through.
+   `lang` is kept in sync with the UI locale by i18n.js's setLocale. */
+:root[lang^="zh-tw" i] {
+  --cjk-sans: "PingFang TC", "PingFang SC", "Microsoft JhengHei",
+              "Microsoft YaHei", "Noto Sans CJK TC", "Noto Sans CJK SC",
+              "Source Han Sans TC", "Heiti TC", "Heiti SC",
+              "WenQuanYi Micro Hei", sans-serif;
+}
+
+/* Light theme palette. Applied when the user picks "light", or picks
+   "auto" and the OS prefers light. Dark (:root above) is the default. */
+:root[data-theme="light"] {
+  --bg:        #f4f6f9;
+  --bg-1:      #ffffff;
+  --bg-2:      #e9edf2;
+  --bg-3:      #dde3ea;
+  --line:      #cfd6df;
+  --fg:        #1b2330;
+  --fg-dim:    #5c6675;
+  --accent:    #0a66c2;
+  --accent-2:  #1a7f4b;
+  --warn:      #9a6700;
+  --danger:    #cf222e;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-theme="auto"] {
+    --bg:        #f4f6f9;
+    --bg-1:      #ffffff;
+    --bg-2:      #e9edf2;
+    --bg-3:      #dde3ea;
+    --line:      #cfd6df;
+    --fg:        #1b2330;
+    --fg-dim:    #5c6675;
+    --accent:    #0a66c2;
+    --accent-2:  #1a7f4b;
+    --warn:      #9a6700;
+    --danger:    #cf222e;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.5 var(--mono);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Selection ----
+   The dashboard is chrome, not a document: buttons, rows, headers, port
+   labels and graph nodes that are dragged, tapped and double-clicked.
+   Selecting them produces a blue smear over the controls and copies
+   nothing anyone wanted, and on a phone the long-press that starts a
+   selection fires INSTEAD of the scroll or the tap it was meant to be.
+   So selection is off by default and turned back on for the places that
+   exist to be READ.
+
+   Both shells share this rule -- app.css is loaded by the phone shell
+   too -- so there is one boundary rather than one per layout, and
+   app.js's Ctrl/Cmd+A guard draws exactly the same one.
+
+   To make a NEW region copyable, mark it .allow-context-menu (the same
+   marker that keeps the native right-click menu) rather than relaxing
+   this. `user-select` inherits, so the whole subtree comes with it. */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  /* iOS: also suppress the long-press "Copy / Look Up" callout, which
+     is the touch equivalent of a selection and has the same problem. */
+  -webkit-touch-callout: none;
+}
+input, textarea, select, [contenteditable="true"],
+.allow-context-menu {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+/* ---- Top bar ---- */
+
+#topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  /* Sized by its own text rather than a fixed height. The row carries
+     nothing but the product name, and every pixel it takes is one the
+     dashboard underneath does not get -- so it gets the brand line plus
+     enough padding to keep the rule off the descenders, and no more. */
+  padding: 3px 18px 4px;
+  line-height: 1.2;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+}
+/* The phone-return button (present only when a phone was forced into the
+   desktop layout) would otherwise be what decides the bar's height. */
+#topbar .btn { padding: 0 7px; font-size: 11px; line-height: 1.5; }
+#topbar .brand {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 2px;
+  color: var(--accent);
+}
+#topbar .brand-sub {
+  font-size: 13px;
+  letter-spacing: .5px;
+  color: var(--fg-dim);
+}
+
+/* Row holding the nav strip + the active view. */
+#body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* ---- Bottom status bar ---- */
+
+#statusbar {
+  flex: 0 0 auto;
+  height: 42px;
+  display: flex;
+  align-items: stretch;
+  padding: 0 12px;
+  background: var(--bg-1);
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--fg-dim);
+  user-select: none;
+  /* Anchor for the progress panel, which floats ABOVE the 42px row
+     rather than growing it -- the bar's height is fixed so the views
+     above never reflow when work starts. */
+  position: relative;
+}
+.sb-body {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;   /* cluster the monitors at the right */
+  gap: 18px;
+  width: 100%;
+}
+/* Static machine label on the left; the spacer pushes the live
+   monitors to the right edge. */
+.sb-machine {
+  display: flex; align-items: center; gap: 6px;
+  min-width: 0; color: var(--fg); white-space: nowrap;
+}
+.sb-machine .sb-mval {
+  font-weight: 600; overflow: hidden; text-overflow: ellipsis;
+}
+.sb-grow { flex: 1 1 auto; min-width: 8px; }
+.sb-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.sb-label {
+  color: var(--fg-dim);
+  font-weight: 600;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+/* "Meter" widget: a 100-second sparkline with the current value
+   overlaid on the right edge. The translucent fill underneath
+   doubles as the proportional bar. */
+.sb-meter {
+  position: relative;
+  width: 140px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 6px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.sb-meter svg.sb-spark {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+}
+/* How a sparkline is PAINTED is a property of the sparkline, not of the
+   bar it happens to sit in -- the phone's System view hosts the same
+   svg in a much larger box (see phone.css). Only the sizing above is
+   scoped to .sb-meter. */
+svg.sb-spark .fill { fill: var(--accent); opacity: .18; }
+svg.sb-spark .line {
+  fill: none; stroke: var(--accent); stroke-width: 1.25;
+  stroke-linejoin: round; stroke-linecap: round; opacity: .85;
+}
+.sb-val {
+  position: relative;     /* render above the sparkline */
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.sb-val.dim { color: var(--fg-dim); }
+.sb-error {
+  display: flex; align-items: center; gap: 6px;
+}
+
+/* ---- Progress: the fifth cell, and the panel it expands into ---- */
+
+/* The cell's own bar: an accent fill growing left to right behind the
+   value text. Sits under .sb-val (which is position:relative) so the
+   label stays readable at every fill level. */
+.sb-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 0;
+  background: var(--accent);
+  opacity: .28;
+  transition: width .25s linear;
+}
+/* Indeterminate: full width, marching stripes, no width transition (the
+   width is not what is moving). */
+.sb-fill.indet {
+  opacity: .18;
+  background: repeating-linear-gradient(
+      90deg, var(--accent) 0 10px, transparent 10px 20px);
+  animation: sb-prog-march 1s linear infinite;
+  transition: none;
+}
+
+/* Only the progress cell is interactive; the four system monitors are
+   read-only, so the affordance is scoped rather than on .sb-cell. */
+.sb-cell.sb-clickable { cursor: pointer; }
+.sb-cell.sb-clickable:hover .sb-meter { border-color: var(--accent); }
+
+.sb-prog-panel {
+  position: absolute;
+  right: 12px;
+  bottom: 42px;                 /* sit on top of the bar, not inside it */
+  width: 340px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 10px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, .28);
+  z-index: 20;
+}
+.sb-prog-panel[hidden] { display: none; }
+.sb-prog-list { display: flex; flex-direction: column; gap: 10px; }
+.sb-prog-empty { color: var(--fg-dim); font-size: 11px; }
+.sb-prog-item { display: flex; flex-direction: column; gap: 4px; }
+.sb-prog-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px;
+}
+.sb-prog-name {
+  color: var(--fg); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sb-prog-pct {
+  color: var(--fg-dim); font-variant-numeric: tabular-nums;
+}
+.sb-prog-track {
+  height: 6px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.sb-prog-fill {
+  height: 100%;
+  background: var(--accent);
+  opacity: .75;
+  transition: width .2s linear;
+}
+/* Indeterminate: a full-width stripe animation, so "no total known yet"
+   still reads as motion instead of a stalled 0%. */
+.sb-prog-fill.indet {
+  opacity: .35;
+  background: repeating-linear-gradient(
+      90deg, var(--accent) 0 10px, transparent 10px 20px);
+  animation: sb-prog-march 1s linear infinite;
+  transition: none;
+}
+@keyframes sb-prog-march {
+  from { background-position: 0 0; }
+  to   { background-position: 20px 0; }
+}
+.sb-prog-sub {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px;
+}
+/* The middle slot, and the only one that may shrink: the two clocks
+   stay pinned to the edges of the row and a long detail ellipsizes
+   between them rather than pushing either off. */
+.sb-prog-detail {
+  color: var(--fg-dim);
+  font-size: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sb-prog-elapsed,
+.sb-prog-eta {
+  color: var(--fg-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* ---- Navigation strip ---- */
+
+#nav {
+  width: var(--nav-w);
+  flex: 0 0 var(--nav-w);
+  background: var(--bg-1);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 10px 0;
+  gap: 4px;
+}
+#nav .spacer { flex: 1 1 auto; }
+
+.nav-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 9px 4px;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 9.5px;
+  letter-spacing: .2px;
+  border-left: 2px solid transparent;
+}
+.nav-btn:hover { color: var(--fg); background: var(--bg-2); }
+.nav-btn.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--bg-2);
+}
+.nav-btn .label { text-align: center; }
+
+/* ---- Linearized graph gutter (lane-graph.js) ----
+   The `git log --graph` rendering of a stage graph, drawn per row into
+   its own SVG. Shared by the phone pipeline view and by the desktop
+   editor's narrow fallback, so it is defined here rather than in
+   phone.css -- both shells load this file. */
+.lane-art { display: block; }
+.lane-art .lane {
+  fill: none; stroke: var(--line); stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.lane-art .lane-dot {
+  fill: var(--accent); stroke: var(--bg); stroke-width: 1.5;
+}
+.lane-art .lane-dot.bad { fill: var(--danger); }
+
+/* ---- Narrow pipeline editor: the canvas replaced by the lane list ---- */
+
+/* ---- Connection editor (connect-editor.js) ----
+   The lane graph's node opens this in BOTH shells, so it lives in
+   app.css rather than phone.css -- the phone shell adds phone.css on top
+   of this one, and a rule only it loaded would leave the desktop's
+   narrow fallback unstyled. */
+.modal.conn-modal { width: 420px; }
+.conn-body { display: flex; flex-direction: column; gap: 8px; }
+.conn-step {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11.5px; color: var(--fg-dim);
+}
+.conn-back {
+  flex: 0 0 auto; padding: 2px 8px; font: inherit; font-size: 11.5px;
+  background: var(--bg); color: var(--accent);
+  border: 1px solid var(--line); border-radius: 4px; cursor: pointer;
+}
+.conn-back:hover { border-color: var(--accent); }
+/* Capped and scrolled: a graph with many stages produces a long source
+   list, and the modal must not grow past the window on a phone. */
+.conn-list {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 52vh; overflow-y: auto;
+}
+.conn-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  width: 100%; padding: 7px 9px; text-align: left;
+  background: var(--bg); color: var(--fg); font: inherit;
+  border: 1px solid var(--line); border-radius: 4px; cursor: pointer;
+}
+.conn-item:hover:not(:disabled) { border-color: var(--accent); }
+.conn-item:disabled { cursor: default; opacity: .55; }
+/* An offer the runtime would refuse. Shown rather than hidden: "the
+   stage you want is missing from the list" is a worse answer than "it is
+   here, and this is why it will not fit". */
+.conn-item.bad { cursor: not-allowed; opacity: .6; }
+.conn-item.bad .conn-item-sub { color: var(--warn); }
+.conn-item.danger .conn-item-main { color: var(--danger); }
+.conn-item-main {
+  font-size: 12.5px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 100%;
+}
+.conn-item-sub {
+  font-size: 10.5px; color: var(--fg-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 100%;
+}
+.conn-note { font-size: 11px; color: var(--warn); }
+.conn-empty { font-size: 11.5px; color: var(--fg-dim); padding: 6px 2px; }
+
+.lane-list {
+  position: absolute; inset: 0; overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+/* Only the STANDALONE editor floats run/pause/stop over the canvas
+   (the manager puts them on the selector rows instead), so only there
+   does the list need to start below them. */
+.pm.no-sel .lane-list { padding-top: 34px; }
+/* Fixed height is load-bearing, not cosmetic: the lane art is one SVG
+   per row, and the lanes line up from row to row only while every row
+   is exactly this tall (hence the ellipsised single-line text). */
+.lane-row {
+  display: flex; align-items: stretch; height: 46px; flex: 0 0 46px;
+  width: 100%;
+  border-bottom: 1px solid var(--bg-2);
+  background: transparent; color: var(--fg); font: inherit;
+  text-align: left;
+}
+.lane-row:hover { background: var(--bg-1); }
+.lane-row.selected { background: var(--bg-2); }
+.lane-row.selected .lane-id { color: var(--accent); }
+.lane-row.bad .lane-id { color: var(--danger); }
+/* The GUTTER is its own control: the node in the lane art opens the
+   connection editor, where the row text opens the stage. Two buttons
+   side by side rather than one button with a nested one, which is not
+   valid HTML and loses the inner control to the outer one. */
+.lane-gutter {
+  flex: 0 0 auto; display: block; padding: 0; border: none;
+  background: transparent; color: inherit; font: inherit; cursor: pointer;
+}
+.lane-gutter:hover { background: var(--bg-2); }
+.lane-gutter:hover .lane-dot { stroke: var(--accent); stroke-width: 3; }
+/* The rest of the row: everything that is not the gutter, as one
+   control. Carries the padding the row used to. */
+.lane-body {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch;
+  padding: 0 8px 0 0; border: none; background: transparent;
+  color: inherit; font: inherit; cursor: pointer; text-align: left;
+}
+.lane-text {
+  flex: 1 1 auto; min-width: 0; padding-left: 4px;
+  display: flex; flex-direction: column; justify-content: center; gap: 1px;
+}
+.lane-id {
+  font-size: 12.5px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lane-type {
+  font-size: 10px; color: var(--fg-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lane-warn {
+  flex: 0 0 auto; align-self: center;
+  width: 16px; height: 16px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--danger); color: var(--bg-1);
+  font-size: 11px; font-weight: 700;
+}
+.lane-note {
+  padding: 12px 10px 20px; color: var(--fg-dim); font-size: 10.5px;
+  line-height: 1.5;
+}
+.lane-caret {
+  flex: 0 0 auto; align-self: center; padding-left: 6px;
+  color: var(--fg-dim); font-size: 11px;
+  transition: transform .12s ease;
+}
+.lane-row.open { background: var(--bg-1); }
+.lane-row.open .lane-caret { transform: rotate(90deg); }
+
+/* The configuration, inline under the row it belongs to. At this width
+   there is no second pane to put it in -- the editor is one column, the
+   same arrangement the phone shell uses. A flex ITEM of the list, so it
+   pushes the rows below it down instead of covering them. */
+.lane-detail-block {
+  position: relative;              /* anchors the lane continuations */
+  flex: 0 0 auto;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+}
+/* A lane that runs PAST this stage must not appear to stop at whichever
+   row happens to be open, so each still-live lane gets a rule the full
+   height of the block. Positioned rather than drawn: the height depends
+   on the form inside and is not known when the art is built. */
+.lane-cont {
+  position: absolute; top: 0; bottom: 0; width: 1.6px;
+  margin-left: -0.8px; background: var(--line);
+}
+.lane-detail { padding: 6px 4px 10px; }
+/* Apply / Remove ride at the TOP of the block, which is the inline
+   equivalent of the pane header pinning them above the scroll. */
+.lane-detail-actions { display: flex; gap: 6px; padding: 0 6px 2px; }
+.lane-detail-actions:empty { display: none; }
+.lane-detail-body .cfg { padding: 6px; }
+
+/* ---- 10x10 boolean-grid icons ---- */
+
+.icon {
+  display: grid;
+  grid-template-columns: repeat(16, 1fr);
+  grid-template-rows: repeat(16, 1fr);
+  gap: 0;
+  width: 26px;
+  height: 26px;
+}
+.icon.lg { width: 32px; height: 32px; }
+.icon.sm { width: 16px; height: 16px; }
+.icon i { background: transparent; }
+.icon i.on {
+  background: currentColor;
+  box-shadow: 0 0 1px currentColor;
+}
+
+/* ---- Main view ---- */
+
+#view { flex: 1 1 auto; min-width: 0; display: flex; }
+
+.placeholder {
+  margin: auto;
+  color: var(--fg-dim);
+  text-align: center;
+}
+.placeholder h2 { color: var(--fg); font-weight: 600; }
+
+/* ---- Pipeline Manager: the list, the canvas and the config pane ---- */
+
+/* Selector (fixed-ish) + the reusable editor (stage canvas : config,
+   adjustable split). The standalone editor (.no-sel) drops the selector. */
+.pm {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+.pm > .pane { flex: 0 0 19%; min-width: 150px; }   /* the selector list */
+.pm.no-sel > .pane { flex: 0 0 auto; }
+/* The selector : editor divider takes .pe-divider's whole appearance
+   (width, col-resize cursor, accent on hover) because it is the same
+   affordance; only the drag guard is its own. The 19% above is just
+   the STARTING width -- a drag writes flex-basis inline (see
+   applySelSplit) and the min-width keeps a hard drag left from erasing
+   the list. Without the guard the pointer paints the pipeline names
+   blue on the way past. */
+.pm > .pm-divider { user-select: none; -webkit-user-select: none; }
+.pe-editor { flex: 1 1 auto; display: flex; min-width: 0; }
+.pe-editor > .pane { min-width: 0; flex-shrink: 1; border-right: none; }
+.pe-divider {
+  flex: 0 0 5px; cursor: col-resize; background: var(--line);
+  align-self: stretch;
+}
+.pe-divider:hover { background: var(--accent); }
+/* Below the canvas/list crossover the editor collapses to ONE column:
+   two side-by-side panes at this width leave neither worth having, so
+   the configuration moves inline under its lane row (see .lane-detail)
+   and its pane and divider go away. The surviving pane's flex-grow is
+   reset to 1 in JS -- being the only item does not give it the full
+   width when its grow factor is a fraction below 1. */
+.pe-editor.pe-narrow > .pe-config,
+.pe-editor.pe-narrow > .pe-divider { display: none; }
+/* THE CONFIGURATION DOCKS BELOW THE CANVAS by default. A pipeline runs
+   left to right, so width is the axis the graph is always short of and
+   height is the one it has to spare -- a pane beside it spends the
+   scarce axis on a column of fields that never needed it. The editor
+   becomes a column, and the divider resizes heights (the drag reads
+   clientY; see applyDock). */
+.pe-editor.dock-bottom { flex-direction: column; }
+.pe-editor.dock-bottom > .pe-divider { cursor: row-resize; }
+.pe-editor.dock-bottom > .pe-config {
+  border-top: 1px solid var(--line);
+}
+/* THE FORM READS DOWN, THEN ACROSS. Multi-column, not grid: a form is a
+   LIST, and a reader goes down it -- so the fields fill column one top
+   to bottom before column two starts, which is also the order the
+   schema declares them in. A row-major grid put field 2 to the right of
+   field 1 and made the eye scan sideways to follow a sequence.
+   The browser decides WHERE each column breaks (it balances the flow),
+   which is the half of this that should not be arithmetic. JS decides
+   only HOW MANY columns -- see layoutCfgColumns -- because the two rules
+   that matter cannot be said in CSS: never more columns than there are
+   fields, and split only when the stack is taller than the panel.
+   `column-rule` then draws the separator for free, centred in the gap so
+   it has equal air either side, and running the full height of the
+   columns rather than stopping at the last field of a short one.
+   Unscoped by dock on purpose -- docked right, or inline under a lane
+   row, the same measurement simply arrives at one column. */
+.cfg-fields {
+  column-count: var(--cols, 1);
+  column-gap: 28px;
+  column-rule: 1px solid var(--accent);
+}
+/* A field is never split across a column break. */
+.cfg-fields > .field {
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+}
+/* Field documentation, toggled from the pane header. On the EDITOR so it
+   reaches the inline form too. */
+.pe-editor.no-docs .field .doc { display: none; }
+/* The three layout toggles, grouped at the right of the configuration
+   header (after Apply/Remove, which take the auto margin). */
+.pe-cfg-tools {
+  display: flex; align-items: center; gap: 2px;
+  flex: 0 0 auto; margin-left: 8px;
+}
+.pe-tool {
+  width: 22px; height: 20px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid transparent; border-radius: 4px;
+  color: var(--fg-dim); font-size: 12px; line-height: 1; cursor: pointer;
+}
+.pe-tool:hover { color: var(--fg); background: var(--bg-3); }
+.pe-tool[aria-pressed="true"] {
+  color: var(--accent); background: var(--bg-3); border-color: var(--line);
+}
+/* Run / pause / stop overlay pinned to the stage canvas top-left. */
+.pe-canvas-ctl {
+  position: absolute; top: 8px; left: 8px; z-index: 6;
+  display: flex; gap: 4px; padding: 3px;
+  background: var(--bg-1); border: 1px solid var(--line);
+  border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+.pe-canvas-ctl .icon-action { width: 24px; height: 24px; }
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+}
+.pane:last-child { border-right: none; }
+.pane-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* Fixed height (not min-height) with no vertical padding so every
+     pane header is identical regardless of whether it carries buttons
+     -- otherwise the Stages header (Insert/Remove) is taller than the
+     title-only Pipelines/Configuration headers.
+     28px, down from 40: the row carries one line of 11px caps, and the
+     12px it gives back is 12px of graph, listing or form on EVERY pane
+     of every view. The buttons it hosts are `mini`, which fit inside
+     this comfortably. */
+  height: 28px;
+  flex: 0 0 28px;
+  padding: 0 10px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--fg-dim);
+}
+.pane-head .title { font-weight: 600; color: var(--fg); }
+.pane-head .grow { flex: 1 1 auto; }
+/* Right-aligned meta in a pane header (e.g. the Stages total count):
+   dim + natural case (the pane head otherwise uppercases its text). */
+.stages-count {
+  color: var(--fg-dim); text-transform: none; letter-spacing: normal;
+  font-weight: 400;
+}
+.pane-body { flex: 1 1 auto; overflow: auto; }
+
+/* ---- Buttons ---- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.btn:hover:not(:disabled) { background: var(--bg-3); border-color: #475061; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn.primary { border-color: var(--accent); color: var(--accent); }
+.btn.danger  { border-color: var(--danger); color: var(--danger); }
+.btn.icon-btn { padding: 4px; }
+.btn.ghost { background: transparent; border-color: transparent; }
+.btn.ghost:hover:not(:disabled) { background: var(--bg-3); }
+
+/* Keyboard-shortcut hint badge shown inside buttons. */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--fg-dim);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: 0 1px 0 rgba(0,0,0,.25);
+  pointer-events: none;
+}
+.btn.primary .kbd { color: var(--accent); border-color: var(--accent); }
+.btn.danger .kbd  { color: var(--danger); border-color: var(--danger); }
+
+.icon-action {
+  width: 22px; height: 22px; color: var(--fg-dim);
+  cursor: pointer; padding: 2px; border-radius: 4px;
+  border: 1px solid transparent; background: transparent;
+}
+.icon-action:hover:not(:disabled) { color: var(--fg); background: var(--bg-3); }
+.icon-action:disabled { opacity: .3; cursor: not-allowed; }
+.icon-action.play:hover  { color: var(--accent-2); }
+.icon-action.stop:hover  { color: var(--danger); }
+
+/* ---- Pipeline list ---- */
+
+.toolbar { display: flex; gap: 6px; padding: 8px 10px; flex-wrap: wrap;
+           border-bottom: 1px solid var(--line); }
+
+.pl-list { list-style: none; margin: 0; padding: 6px; }
+.pl-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px; border-radius: var(--radius);
+  border: 1px solid transparent; cursor: pointer; margin-bottom: 4px;
+}
+.pl-item:hover { background: var(--bg-1); }
+.pl-item.selected { background: var(--bg-2); border-color: var(--line); }
+.pl-item .pl-name { flex: 1 1 auto; min-width: 0; overflow: hidden;
+                    text-overflow: ellipsis; white-space: nowrap; }
+.pl-item .pl-state {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: .5px;
+  padding: 1px 5px; border-radius: 8px; border: 1px solid var(--line);
+  color: var(--fg-dim);
+}
+.pl-state.running { color: var(--accent-2); border-color: var(--accent-2); }
+.pl-state.paused  { color: var(--warn); border-color: var(--warn); }
+/* In-flight lifecycle op ("Stopping…", "Starting…", "Pausing…").
+   The slow pulse signals "the click registered, the runtime is
+   draining" -- important on big pipelines whose stop can take
+   several seconds. */
+.pl-state.busy {
+  color: var(--accent); border-color: var(--accent);
+  animation: pl-state-busy-pulse 1.2s ease-in-out infinite;
+}
+@keyframes pl-state-busy-pulse {
+  0%, 100% { opacity: 1.0; }
+  50%      { opacity: 0.55; }
+}
+.pl-actions { display: flex; gap: 2px; }
+/* Disabled icon-actions need a visibly-disabled treatment so the
+   user can tell that a re-click won't do anything during the
+   lifecycle wait. */
+.icon-action:disabled { opacity: 0.35; cursor: default; }
+
+/* ---- Graph ---- */
+
+.graph-wrap { position: relative; width: 100%; height: 100%;
+              overflow: hidden; background:
+              radial-gradient(circle at 1px 1px,
+                var(--bg-2) 1px, transparent 0) 0 0 / 22px 22px; }
+.graph-empty { position:absolute; inset:0; display:flex;
+               align-items:center; justify-content:center;
+               color: var(--fg-dim); pointer-events: none; }
+/* Rebind menu shown in the standalone editor when the bound pipeline was
+   unloaded (see pipeline-manager.js renderRebindPane). */
+.graph-rebind { position:absolute; inset:0; display:flex;
+                flex-direction:column; align-items:center;
+                justify-content:center; gap:10px; padding:16px;
+                text-align:center; }
+.graph-rebind-title { font-weight:600; color: var(--fg); }
+.graph-rebind-hint { color: var(--fg-dim); font-size:12px; }
+.graph-rebind-list { display:flex; flex-direction:column; gap:6px;
+                     min-width:180px; max-width:320px; width:60%;
+                     max-height:55%; overflow:auto; }
+.graph-rebind-item { display:flex; align-items:center; gap:8px;
+                     padding:7px 10px; border-radius:6px;
+                     border:1px solid var(--bd); background: var(--bg-2);
+                     color: var(--fg); cursor:pointer; text-align:left;
+                     font-size:12px; }
+.graph-rebind-item:hover { background: var(--bg-3);
+                           border-color: #475061; }
+.graph-view { position: absolute; inset: 0; }
+/* Focusable so the − / + / 0 keys reach it (see graph.js); the canvas
+   takes focus on pointerdown, and a ring around the whole pane would be
+   noise rather than a cue. */
+.graph-view:focus, .graph-view:focus-visible { outline: none; }
+svg.graph { display: block; width: 100%; height: 100%;
+            cursor: grab; touch-action: none;
+            /* Dragging boxes/panning must never start a text selection of
+               the node labels. */
+            user-select: none; -webkit-user-select: none; }
+.graph-view.panning svg.graph { cursor: grabbing; }
+/* The canvas's own hit target (see graph.js). `transparent` is PAINTED,
+   so it is hit-tested; `none` is not, and the empty canvas would go
+   back to being a hole that swallows wheel and drag events. */
+.graph-bg { fill: transparent; }
+
+.graph-controls { position: absolute; left: 10px; bottom: 10px;
+                  display: flex; gap: 4px; z-index: 2; }
+.graph-ctl {
+  min-width: 28px; height: 26px; padding: 0 7px;
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 5px; color: var(--fg); cursor: pointer;
+  font: inherit; font-size: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+.graph-ctl:hover { background: var(--bg-3); border-color: #475061; }
+/* The wheel-mode toggle carries an icon where its neighbours carry text
+   ("1:1", "Fit"), so it centres its child and drops the text padding.
+   Pressed == scroll-to-zoom, i.e. the non-default mode. */
+.graph-ctl.wheel-ctl {
+  padding: 0; display: inline-flex; align-items: center;
+  justify-content: center; color: var(--fg-dim);
+}
+.graph-ctl.wheel-ctl:hover { color: var(--fg); }
+.graph-ctl.wheel-ctl[aria-pressed="true"] {
+  color: var(--accent); border-color: var(--accent);
+}
+.gnode rect.box {
+  fill: var(--bg-2); stroke: var(--line); stroke-width: 1.2;
+  rx: 6; filter: drop-shadow(0 2px 3px rgba(0,0,0,.4));
+}
+.gnode.selected rect.box { stroke: var(--accent); stroke-width: 2; }
+.gnode.needs-config rect.box { stroke: var(--warn); stroke-dasharray: 5 3; }
+.gnode.needs-config.selected rect.box { stroke: var(--accent); }
+.gnode text.title { fill: var(--fg); font: 600 12px var(--mono); }
+.gnode text.subtitle { fill: var(--fg-dim); font: 10px var(--mono); }
+.gnode .port { fill: var(--bg-3); stroke: var(--fg-dim); stroke-width: 1; }
+.gnode .port.untyped { stroke-dasharray: 2 2; }
+/* A declared-but-unwired input slot (shown per the stage spec): hollow
+   dot + dimmed name so it reads as "available". */
+.gnode .port.empty { fill: var(--bg-1); opacity: .85; }
+.gnode .port-grp.in.empty text.portlabel { opacity: .6; }
+.gnode text.portlabel { fill: var(--fg-dim); font: 9px var(--mono); }
+/* Boxes are draggable to reposition them (see graph.js onNodeMove). */
+.gnode { cursor: grab; touch-action: none; }
+.gnode.dragging { cursor: grabbing; }
+.gnode.dragging rect.box {
+  stroke: var(--accent);
+  filter: drop-shadow(0 5px 10px rgba(0,0,0,.55));
+}
+.gedge { fill: none; stroke: var(--fg-dim); stroke-width: 1.5;
+         opacity: .8; }
+.gedge.untyped { stroke-dasharray: 4 3; opacity: .5; }
+
+/* ---- Composer: toolbox + drag-create + click-to-connect ---- */
+
+/* The Stages pane is split [toolbox | canvas]. */
+.graph-split { flex: 1 1 auto; display: flex; min-height: 0; min-width: 0; }
+.graph-split .graph-wrap { flex: 1 1 auto; min-width: 0; }
+/* position:relative anchors the show/hide tab (a child) to the toolbox's
+   real right edge. min-width:0 keeps the flex item at its 152px basis --
+   without it the search input's intrinsic width balloons the toolbox and
+   the tab would land inside it. */
+.toolbox {
+  position: relative;
+  flex: 0 0 152px; display: flex; flex-direction: column;
+  border-right: 1px solid var(--line); background: var(--bg-1);
+  min-height: 0; min-width: 0;
+}
+/* Collapsed: shrink to zero width and hide the content, but keep the
+   toggle tab (a child) visible at the canvas's left edge to re-extend. */
+.toolbox.collapsed { flex-basis: 0; width: 0; border-right: none; }
+
+/* NARROW pane: the docked toolbox is hidden entirely and the pane
+   header's + opens the picker instead. Distinct from .collapsed, which
+   is the user folding the panel away by hand and leaves the ◀/▶ tab on
+   screen to unfold it -- here there is nothing to unfold back TO, since
+   the canvas the chips drag onto is not being shown. */
+.graph-split.tb-hidden > .toolbox { display: none; }
+
+/* The + that replaces it. Hidden until a narrow render turns it on. */
+.graph-add-stage { display: none; }
+.graph-add-stage.show {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; margin-left: 6px; padding: 0;
+  border: 1px solid var(--line); border-radius: 4px;
+  background: var(--bg-2); color: var(--fg-dim);
+  font: 600 14px/1 var(--mono); cursor: pointer;
+}
+.graph-add-stage.show:hover { background: var(--bg-3); color: var(--fg); }
+
+/* The documentation toggle, repeated in this header for the one-column
+   layout -- where the configuration pane, and the toggles in its own
+   header, are hidden. Same show-on-demand pattern as the + above, and
+   the same look as its twin in the pane header (.pe-tool). */
+.graph-head-tool { display: none; }
+.graph-head-tool.show {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; margin-left: 6px; padding: 0;
+  border: 1px solid transparent; border-radius: 4px;
+  background: transparent; color: var(--fg-dim);
+  font: 12px/1 var(--mono); cursor: pointer;
+}
+.graph-head-tool.show:hover { background: var(--bg-3); color: var(--fg); }
+.graph-head-tool.show[aria-pressed="true"] {
+  color: var(--accent); background: var(--bg-3); border-color: var(--line);
+}
+
+/* The picker. Fixed-position and z-index 60 to match .ctx-menu, which is
+   the same kind of thing: a transient overlay anchored to a control in a
+   pane that may itself scroll. The opener clamps it to the viewport. */
+.stage-picker {
+  position: fixed; z-index: 60; width: 260px; max-height: 60vh;
+  display: flex; flex-direction: column;
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 7px; box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+}
+.stage-picker .sp-filter {
+  flex: 0 0 auto; margin: 6px; padding: 4px 6px;
+  background: var(--bg-2); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 5px; font: 11px var(--mono);
+}
+.stage-picker .sp-body {
+  flex: 1 1 auto; overflow: auto; padding: 0 6px 8px;
+}
+/* A picked chip is a button, not a drag handle: no grip, and the whole
+   row reacts to the pointer. */
+.stage-picker .tb-chip.pickable { cursor: pointer; }
+.stage-picker .tb-chip.pickable:hover { background: var(--bg-3); }
+.stage-picker .tb-chip.pickable .tb-grip { display: none; }
+.toolbox.collapsed > .toolbox-head,
+.toolbox.collapsed > .toolbox-filter,
+.toolbox.collapsed > .toolbox-body { display: none; }
+/* Extruding show/hide tab glued to the toolbox's right edge: vertically
+   centered, rounded on its outer (right) side -- a Chrome tab rotated
+   90 degrees. right:-15px keeps it on the real edge whatever the toolbox
+   width; it lands at the canvas's left edge when collapsed. */
+.tb-toggle {
+  position: absolute; top: 50%; right: -15px; transform: translateY(-50%);
+  z-index: 5; width: 15px; height: 48px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-2); color: var(--fg-dim);
+  border: 1px solid var(--line); border-left: none;
+  border-radius: 0 9px 9px 0; cursor: pointer;
+  font: 10px var(--mono); line-height: 1;
+  box-shadow: 2px 0 4px rgba(0,0,0,.25);
+}
+.tb-toggle:hover { background: var(--bg-3); color: var(--fg); }
+.toolbox-head {
+  padding: 6px 8px; border-bottom: 1px solid var(--line);
+}
+.toolbox-head .title { font: 600 11px var(--mono); color: var(--fg-dim); }
+.toolbox-filter {
+  margin: 6px; padding: 4px 6px; background: var(--bg-2); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 5px; font: 11px var(--mono);
+}
+.toolbox-body { flex: 1 1 auto; overflow: auto; padding: 0 6px 8px; }
+.tb-chip {
+  display: flex; align-items: center; gap: 6px; padding: 5px 7px;
+  margin-bottom: 4px; background: var(--bg-2);
+  border: 1px solid var(--line); border-radius: 6px; cursor: grab;
+  font: 11px var(--mono); color: var(--fg); user-select: none;
+}
+.tb-chip:hover { background: var(--bg-3); border-color: var(--accent); }
+.tb-chip.dragging { opacity: .5; }
+.tb-chip .tb-grip {
+  flex: 0 0 6px; align-self: stretch; border-radius: 2px; color: var(--fg-dim);
+  background-image: radial-gradient(currentColor 1px, transparent 1px);
+  background-size: 3px 4px; opacity: .5;
+}
+.tb-chip .tb-name {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tb-chip .tb-io {
+  flex: 0 0 auto; color: var(--fg-dim); font-size: 10px; opacity: .75;
+}
+/* Category section header in the toolbox; sticks while scrolling. */
+.tb-cat {
+  font: 600 10px var(--mono); color: var(--fg-dim);
+  text-transform: uppercase; letter-spacing: .04em;
+  padding: 9px 4px 3px; position: sticky; top: 0; background: var(--bg-1);
+}
+/* A plugin's section: same header, tinted so "this came from a .dylib"
+   reads at a glance rather than only from the label. */
+.tb-cat.tb-plugin { color: var(--accent); }
+/* "disabled, still resident" -- a warning tint rather than an error one:
+   nothing is broken, the plugin is simply not being offered. */
+.plugin-off { color: var(--warn, #c93); font-size: 11px; font-weight: 500; }
+/* Used by the plugin panel for paths and plugin ids. There was no
+   general-purpose .mono before this; the settings rows all styled their
+   own. */
+.mono { font-family: var(--mono); }
+.tb-empty { color: var(--fg-dim); font: 11px var(--mono); padding: 8px 4px; }
+.graph-wrap.drop-target {
+  outline: 2px dashed var(--accent); outline-offset: -4px;
+}
+
+/* Interactive ports (only present when editable). The invisible
+   porthit gives a generous click target over the small visible dot. */
+.porthit { fill: transparent; }
+svg.graph.editable .porthit { cursor: pointer; }
+svg.graph.editable .port-grp .port { transition: fill .1s, stroke .1s; }
+svg.graph.editable .port-grp:hover .port {
+  fill: var(--accent); stroke: var(--accent);
+}
+/* Armed output port (a connection is in progress from it). */
+.port-grp.out.armed .port {
+  fill: var(--accent); stroke: var(--accent);
+  filter: drop-shadow(0 0 3px var(--accent));
+}
+/* While arming, nudge the eligible targets (inputs + add-input). */
+svg.graph.arming .port-grp.in .port,
+svg.graph.arming .port-grp.add-in .port-add { stroke: var(--accent-2); }
+/* ...except inputs whose declared beat type can't accept the armed
+   output: dim them and flag the cursor (the click is also refused). */
+svg.graph.arming .port-grp.in.incompatible { opacity: .35; }
+svg.graph.arming .port-grp.in.incompatible .port { stroke: var(--danger); }
+svg.graph.arming .port-grp.in.incompatible .porthit { cursor: not-allowed; }
+
+/* The dashed "+ add input" stub. */
+.port-add {
+  fill: var(--bg-3); stroke: var(--fg-dim); stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+.port-add-glyph { fill: var(--fg-dim); font: 10px var(--mono); }
+.portlabel.add { fill: var(--fg-dim); font-style: italic; }
+svg.graph.editable .port-grp.add-in:hover .port-add { stroke: var(--accent-2); }
+svg.graph.editable .port-grp.add-in:hover .port-add-glyph,
+svg.graph.editable .port-grp.add-in:hover .portlabel.add {
+  fill: var(--accent-2);
+}
+
+/* Per-input × detach badge: hidden until the input is hovered. */
+.port-x { opacity: 0; cursor: pointer; transition: opacity .1s; }
+svg.graph.editable .port-grp.in.connected:hover .port-x { opacity: 1; }
+.port-x-bg { fill: var(--danger); }
+.port-x-glyph { fill: #fff; font: 700 9px var(--mono); }
+
+/* Edge select (click the fat invisible hit-path) + delete. */
+.gedge-hit { fill: none; stroke: transparent; stroke-width: 12;
+             cursor: pointer; }
+.gedge.selected { stroke: var(--accent); opacity: 1; stroke-width: 2.5; }
+
+/* The connect rubber-band that tracks the cursor while arming. */
+.pending-edge {
+  fill: none; stroke: var(--accent); stroke-width: 2;
+  stroke-dasharray: 5 4; opacity: .9; pointer-events: none;
+}
+
+/* ---- Buffer-utilization overlay ---- */
+/* Edge tint by consumer backlog / capacity. util-idle keeps the
+   default look (no flooding of colour when everything is empty). */
+.gedge.util-ok   { stroke: var(--accent-2); opacity: .9; }
+.gedge.util-high { stroke: var(--warn);     opacity: 1; stroke-width: 2; }
+.gedge.util-full { stroke: var(--danger);   opacity: 1; stroke-width: 2.5; }
+.gedge.util-drop { stroke: var(--danger);   opacity: 1; stroke-width: 2.5;
+                   stroke-dasharray: 3 2; }
+/* Edge-midpoint "backlog/capacity" labels. A stroke halo (paint-order:
+   stroke) keeps them legible where they cross an edge or box. */
+.edge-util {
+  font: 600 9px var(--mono); fill: var(--fg-dim);
+  paint-order: stroke; stroke: var(--bg); stroke-width: 3px;
+  stroke-linejoin: round; pointer-events: none;
+}
+.edge-util.util-idle { fill: var(--fg-dim); opacity: .65; }
+.edge-util.util-ok   { fill: var(--accent-2); }
+.edge-util.util-high { fill: var(--warn); }
+.edge-util.util-full { fill: var(--danger); }
+.edge-util.util-drop { fill: var(--danger); }
+/* Buffer-fill overlay control, docked into the graph view-control
+   cluster (bottom-left) and styled to match the .graph-ctl buttons. */
+.buf-group {
+  display: inline-flex; gap: 4px; margin-left: 10px; align-items: stretch;
+}
+.graph-ctl.buf-ctl.active {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+.graph-ctl.buf-interval { width: 48px; text-align: right; }
+.graph-ctl.buf-interval:disabled { opacity: .5; cursor: default; }
+
+/* ---- Config panel ---- */
+
+.cfg { padding: 10px; }
+.cfg .empty { color: var(--fg-dim); padding: 12px; }
+.cfg .stage-id { font-weight: 600; color: var(--fg); font-size: 14px; }
+.cfg .stage-type { color: var(--accent); font-size: 11px; }
+.cfg .stage-cat {
+  margin-left: 6px; padding: 0 5px; border-radius: 3px;
+  background: var(--bg-3); color: var(--fg-dim); font-size: 9px;
+  text-transform: uppercase; letter-spacing: .03em;
+}
+.cfg .stage-desc {
+  color: var(--fg-dim); font-size: 11px; line-height: 1.45;
+  margin: 4px 0 10px;
+}
+.cfg .ro-note { color: var(--warn); font-size: 11px; margin: 4px 0 10px; }
+/* A running stage's commands (save, preview, ...): a row of buttons, the
+   last reply under it. */
+.cfg .cmd-row {
+  display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 4px;
+}
+/* One point below the shell's 13px: a configuration form is dense by
+   nature and the fields read better tightened, in every dock. */
+.field { margin-bottom: 12px; font-size: 12px; }
+.field label { display: block; margin-bottom: 3px; }
+.field .key { color: var(--fg); }
+.field .req { color: var(--danger); margin-left: 3px; }
+.field .ty  { color: var(--fg-dim); font-size: 9px; margin-left: 6px; }
+.field .doc { color: var(--fg-dim); font-size: 9.5px; margin-top: 2px; }
+.field input[type=text], .field input[type=number], .field textarea {
+  width: 100%; padding: 5px 7px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; color: var(--fg);
+  font: inherit; font-size: 11px;
+}
+/* Config numeric fields: no up/down spinner buttons (and the wheel is
+   blocked in JS), so the value only changes by typing. */
+.field input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+.field input[type=number]::-webkit-outer-spin-button,
+.field input[type=number]::-webkit-inner-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
+.field textarea { min-height: 54px; resize: vertical; }
+/* A closed-set field (schema `choices`) renders as a dropdown; it should
+   read as the same control as the text boxes above it. */
+.field select {
+  width: 100%; padding: 4px 6px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; color: var(--fg);
+  font: inherit; font-size: 11px;
+}
+.field select:focus { outline: none; border-color: var(--accent); }
+.field select:disabled { opacity: .55; }
+/* Unset, i.e. sitting on the blank option: dimmed like an unset text
+   box, so the two states are told apart at a glance. */
+.field select.field-unset { border-style: dashed; color: var(--fg-dim); }
+.field input:focus, .field textarea:focus {
+  outline: none; border-color: var(--accent);
+}
+.field input:disabled, .field textarea:disabled { opacity: .55; }
+/* The input + "clear/unset" mini-button live side-by-side on numeric/
+   string fields so the user can wipe a value (omit from POST) without
+   having to remember to clear the input. The button shrinks to fit. */
+.field-input-row { display: flex; gap: 4px; align-items: stretch; }
+.field-input-row > input,
+.field-input-row > textarea { flex: 1 1 auto; min-width: 0; }
+.btn.mini {
+  flex: 0 0 auto; padding: 0 8px; font-size: 11px; line-height: 1;
+  white-space: nowrap;
+}
+.btn.ghost.mini.active {
+  background: var(--bg-3); color: var(--warn);
+  border-color: var(--bg-3);
+}
+/* A free-text field that is UNSET (the key is omitted) vs one that is set to
+   an empty string: both boxes are visually empty, so dim the unset one and
+   let its placeholder advertise the stage default. The set-but-empty box
+   keeps normal styling and reads "(empty value)". */
+.field-input-row > .field-unset { border-style: dashed; }
+/* A JSON box that did not parse when it lost focus, so its value was NOT
+   applied. Auto-apply is otherwise invisible -- the value simply goes --
+   so the one case where it declines has to be visible on the box, or the
+   user is left thinking the field took. The :focus twin is deliberate:
+   the focus rule above would otherwise paint the accent over the warning
+   the moment the user clicks back in to fix it. */
+.field-input-row > .field-invalid,
+.field-input-row > .field-invalid:focus { border-color: var(--danger); }
+/* A BOOL FIELD IS ONE LINE. A checkbox and its unset button are two
+   small controls, and giving them a label row of their own spends a
+   whole row of the panel on almost no ink -- which is most visible in
+   the columns, where a stage of flags becomes a column of near-empty
+   rows. Name left, controls hard right, documentation (when it is
+   shown) across both. The type hint is dropped in JS: "bool" beside a
+   checkbox says nothing the checkbox has not. */
+.field.field-bool {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+}
+.field.field-bool > label { margin-bottom: 0; }
+.field.field-bool > .field-input-row { justify-content: flex-end; }
+.field.field-bool > .doc { grid-column: 1 / -1; }
+/* Config pane header actions (Apply / Remove): pinned right in the pane
+   header so they stay visible above the scrolling form. Reset the header's
+   uppercase / letter-spacing so the button labels read normally. */
+/* Shrinkable, and the layout toggles beside it are not: in a panel too
+   narrow for both, the row gives up button labels before it gives up the
+   controls that change the layout -- those are how the operator gets the
+   width back. */
+.pane-head-actions { display: flex; align-items: center; gap: 6px;
+            flex: 0 1 auto; min-width: 0; overflow: hidden;
+            margin-left: auto;
+            text-transform: none; letter-spacing: normal; }
+
+/* ---- Modal ---- */
+
+.modal-back {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+  /* Centred in the VISIBLE viewport, not the layout one: a soft keyboard
+     shrinks the former and not the latter, so a dialog with a text field
+     in it -- rename, save-as, a path -- would otherwise be centred
+     behind the keyboard. --vvh is published only by the phone shell, so
+     the fallback keeps the desktop exactly as it was. */
+  bottom: auto; height: var(--vvh, 100%);
+}
+/* Right-click context menu (openMenu). Floats at the cursor. */
+.ctx-menu {
+  position: fixed; z-index: 60; min-width: 134px; padding: 4px;
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 7px; box-shadow: 0 8px 24px rgba(0,0,0,.5);
+  display: flex; flex-direction: column; gap: 1px;
+}
+.ctx-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; text-align: left; padding: 6px 10px;
+  background: none; border: 0; color: var(--fg); font: inherit;
+  font-size: 12.5px; border-radius: 4px; cursor: pointer;
+}
+.ctx-item-text { flex: 1 1 auto; }
+/* Marks an item that does something else while Shift is held. Always
+   visible: the point is to advertise the modifier, not to confirm it. */
+.ctx-item-mod {
+  flex: 0 0 auto; color: var(--fg-dim); font-size: 11px;
+}
+.ctx-item:hover { background: var(--bg-3); }
+.ctx-item.danger { color: var(--warn); }
+.ctx-sep { height: 1px; margin: 3px 4px; background: var(--line); }
+.modal {
+  background: var(--bg-1); border: 1px solid var(--line);
+  border-radius: 8px; width: 460px; max-width: 92vw;
+  max-height: 88vh; overflow: auto;
+  box-shadow: 0 12px 40px rgba(0,0,0,.5);
+}
+.modal h3 { margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line);
+            font-size: 13px; }
+.modal .body { padding: 14px 16px; }
+.modal .foot { display: flex; justify-content: flex-end; gap: 8px;
+               padding: 12px 16px; border-top: 1px solid var(--line); }
+.modal label.fl { display:block; margin: 10px 0 3px; color: var(--fg-dim); }
+.modal .fl-hint { color: var(--fg-dim); font-size: 10.5px;
+                  margin-top: 4px; }
+.modal input[type=text], .modal select, .modal textarea {
+  width: 100%; padding: 6px 8px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; color: var(--fg);
+  font: inherit; font-size: 12px;
+}
+.modal textarea { min-height: 80px; resize: vertical; }
+
+/* ---- Error modal (a refused load / launch, with its reason) ---- */
+.modal.error-modal { width: 560px; }
+.err-summary { margin-bottom: 10px; }
+.err-detail {
+  margin: 0; padding: 8px 10px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11.5px; line-height: 1.45; color: var(--fg);
+  /* The reason is meant to be read and copied, so it wraps rather than
+     scrolling sideways -- a file path or a parse position is exactly
+     the part that would have been off the right edge. */
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 46vh; overflow-y: auto; user-select: text;
+}
+
+/* ---- File open/save dialog ---- */
+.modal.fs-modal { width: 720px; }
+.fs-dialog { display: flex; flex-direction: column; gap: 8px; }
+.fs-bar { display: flex; gap: 6px; align-items: center; }
+.fs-bar .fs-path { flex: 1 1 auto; }
+.fs-bar .btn.mini { flex: 0 0 auto; }
+.fs-list {
+  height: 320px; overflow: hidden; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px;
+  display: flex; flex-direction: column;   /* hosts the .fs-vlist component */
+}
+/* List + optional side preview. With the panel off this row holds only
+   the list, so the dialog keeps exactly the width it always had. */
+.fs-mid { display: flex; gap: 8px; align-items: stretch; min-width: 0; }
+.fs-mid > .fs-list { flex: 1 1 auto; min-width: 0; }
+/* Shrinkable (0 1, not 0 0): on a narrow viewport the modal's max-width
+   wins and the panel gives up width rather than pushing its contents off
+   the screen. A min-width here -- or on .fs-dialog -- would override that
+   cap and overflow the window, which is exactly what it did first. */
+.fs-preview {
+  flex: 0 1 300px; min-width: 0; height: 320px; overflow: auto;
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.fs-preview[hidden] { display: none; }
+/* Widening is done on the MODAL, whose max-width: 92vw then still
+   applies. Toggled from applyPreview() rather than with :has(), so the
+   rule and the state that drives it stay in one place. */
+.modal.fs-wide { width: 820px; }
+.fs-bar .btn.active { color: var(--accent); border-color: var(--accent); }
+.fs-row {
+  display: flex; align-items: center; gap: 8px; padding: 4px 9px;
+  cursor: pointer; user-select: none; line-height: 1.4;
+}
+.fs-row:hover { background: var(--bg-2); }
+.fs-row.sel { background: var(--accent); color: #fff; }
+.fs-row .icon { flex: 0 0 auto; opacity: .85; }
+.fs-row.dir .fs-nm { font-weight: 600; }
+.fs-nm {
+  flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fs-sz { flex: 0 0 auto; color: var(--fg-dim); font-size: 11px; }
+.fs-row.sel .fs-sz { color: rgba(255,255,255,.8); }
+/* Granted pass-through mounts (--white-list-path): pinned, accented,
+   with the real host path shown dimmed on the right. */
+.fs-row.mount { border-left: 2px solid var(--accent-2); }
+.fs-row.mount .fs-nm { font-weight: 600; }
+.fs-mount-path {
+  flex: 0 1 auto; max-width: 46%; color: var(--fg-dim); font-size: 10.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* Plain LTR: the leading "/" must stay put. Long paths are shortened in
+     JS with a middle ellipsis (see truncateMiddle), not a direction:rtl
+     left-ellipsis -- that reordered the leading neutral "/" to the wrong
+     end so "/Volumes/media/temp" rendered as "Volumes/media/temp". */
+}
+.fs-row.sel .fs-mount-path { color: rgba(255,255,255,.8); }
+/* Directory-listing progress: an hourglass that flips while the backend
+   enumerates the folder. */
+.fs-busy { display: inline-flex; align-items: center; margin-left: 2px; }
+.fs-busy[hidden] { display: none; }
+.fs-busy .icon { animation: fs-hourglass 1.1s ease-in-out infinite;
+                 transform-origin: 50% 50%; }
+@keyframes fs-hourglass {
+  0%, 55% { transform: rotate(0deg); }
+  100%    { transform: rotate(180deg); }
+}
+.fs-empty { padding: 20px; text-align: center; color: var(--fg-dim); }
+.fs-foot-row { display: flex; gap: 8px; align-items: center; }
+.fs-foot-row .fs-name { flex: 1 1 auto; }
+.fs-name-lbl { flex: 0 0 auto; color: var(--fg-dim); }
+.fs-foot-row .fs-filter { flex: 0 0 auto; width: auto; max-width: 46%; }
+.fs-status {
+  display: flex; gap: 8px; align-items: center; font-size: 11px;
+  color: var(--fg-dim);
+}
+.fs-badge {
+  padding: 1px 6px; border-radius: 8px; border: 1px solid var(--line);
+  text-transform: uppercase; letter-spacing: .4px; font-size: 9.5px;
+  color: var(--warn);
+}
+.fs-badge.native { color: var(--accent-2); }
+/* "New folder" toolbar button: icon + short label. */
+.fs-bar .btn.fs-mkdir { display: inline-flex; align-items: center; }
+.fs-bar .btn.fs-mkdir .fs-mk-lbl { margin-left: 5px; }
+/* Stacked New-folder prompt / Overwrite? confirm bodies. */
+.fs-prompt { display: flex; flex-direction: column; gap: 6px; }
+.fs-confirm { line-height: 1.5; }
+/* A "Browse…" affordance sitting beside a path config input. Hug the
+   top so it doesn't stretch to a tall textarea (array path fields). */
+.field-input-row .btn.browse { flex: 0 0 auto; align-self: flex-start; }
+
+/* ---- File Browser view (tree / list / preview, 2 : 3 : 3 by default,
+       redistributable by the two drag handles between them) ---- */
+
+.fb {
+  display: flex; flex-direction: column;
+  width: 100%; height: 100%; min-width: 0;
+}
+.fb-toolbar {
+  display: flex; align-items: center; gap: 6px;
+  height: 44px; flex: 0 0 44px; padding: 0 10px;
+  background: var(--bg-1); border-bottom: 1px solid var(--line);
+}
+.fb-toolbar .btn.mini { flex: 0 0 auto; }
+.fb-path {
+  flex: 1 1 auto; min-width: 0; padding: 5px 8px;
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: 4px; color: var(--fg); font: inherit; font-size: 12px;
+}
+.fb-path:focus { outline: none; border-color: var(--accent); }
+.fb-toolbar .fs-badge { flex: 0 0 auto; }
+.fb-tb-gap { flex: 1 1 6px; }
+
+/* The `fr` tracks are written inline by the view (restored from
+   localStorage, updated during a drag); this rule is the fallback for
+   the first paint and the width of the two fixed handle tracks. */
+.fb-body {
+  --fb-split-w: 6px;
+  flex: 1 1 auto; min-height: 0; display: grid;
+  grid-template-columns: 2fr var(--fb-split-w) 3fr var(--fb-split-w) 3fr;
+}
+.fb-body > .pane { min-width: 0; min-height: 0; }
+/* Column divider. The pane's own right border is the rule; the handle
+   is the grab area beside it, so dragging does not double the line. */
+.fb-split {
+  position: relative; cursor: ew-resize;
+  background: var(--bg-1); touch-action: none; user-select: none;
+}
+.fb-split::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 2px; height: 28px; transform: translate(-50%, -50%);
+  background: var(--line); border-radius: 1px;
+}
+.fb-split:hover, .fb-split.dragging { background: var(--bg-2); }
+.fb-split:hover::after, .fb-split.dragging::after { background: var(--accent); }
+
+/* tree pane (lazy, expand-on-demand) */
+.fb-tree { padding: 4px 0; user-select: none; }
+.fb-tnode {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px 3px 6px; cursor: pointer; line-height: 1.4;
+  white-space: nowrap;
+}
+.fb-tnode:hover { background: var(--bg-2); }
+.fb-tnode.cur { background: var(--bg-3); }
+.fb-tnode.cur .fb-tnm { color: var(--accent); font-weight: 600; }
+.fb-tnode .icon { flex: 0 0 auto; opacity: .85; }
+.fb-tnm { overflow: hidden; text-overflow: ellipsis; }
+.fb-twisty {
+  flex: 0 0 12px; width: 12px; text-align: center;
+  color: var(--fg-dim); font-size: 10px; cursor: pointer;
+}
+.fb-twisty.leaf { visibility: hidden; }
+.fb-tchildren[hidden] { display: none; }
+
+/* list pane host -- the shared createFsList component (.fs-vlist) fills it */
+.fb-list { padding: 0; overflow: hidden;
+           display: flex; flex-direction: column; }
+
+/* ---- Shared virtualized directory list (createFsList) ----
+   A pinned mounts block + a scroll region whose sizer is `total *
+   row-height` tall, with only the visible window of absolutely-positioned
+   rows in the DOM. Used by the file-browser view AND the open/save dialog.
+   Reuses .fs-row / .fs-nm / .fs-sz. */
+.fs-vlist {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+}
+.fs-mounts { flex: 0 0 auto; padding: 2px 0; }
+.fs-mounts[hidden] { display: none; }
+.fs-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 2px 0; }
+.fs-scroll[hidden] { display: none; }
+.fs-sizer { position: relative; width: 100%; }
+/* Fixed-height rows positioned by index (top set inline). The height must
+   match FS_ROW_H in fs-list.js. */
+.fs-vrow {
+  position: absolute; left: 0; right: 0; height: 26px;
+  box-sizing: border-box;
+}
+.fs-vrow-ph { color: var(--fg-dim); cursor: default; }
+.fs-vlist .fs-empty { flex: 1 1 auto; }
+/* The list takes focus so the arrow keys reach it; the highlighted row
+   is the visible cursor, so the container needs no ring of its own. */
+.fs-vlist:focus { outline: none; }
+/* Cursor WITHOUT selection -- only reachable where directories are not
+   selectable (the open/save dialog), so Right still has something to
+   step into. Where they are, .sel already marks the same row. */
+.fs-row.cur:not(.sel) {
+  outline: 1px solid var(--accent); outline-offset: -1px;
+}
+
+/* preview pane */
+.fb-preview { padding: 0; overflow: hidden;
+              display: flex; flex-direction: column; }
+/* The shared preview component's own root, sitting between the pane and
+   the layout inside it. It has to pass the pane's height DOWN, which as
+   a plain block it did not: an auto-height containing block leaves the
+   inner's `height: 100%` resolving to auto, so every preview grew to its
+   CONTENT's full height and the pane's `overflow: hidden` cut it off --
+   a long image or a long text file losing its bottom with no scrollbar
+   to say so. (In the dialog the host sits in a fixed-height scroller
+   instead, where the flex properties are inert and nothing changes.) */
+.fb-preview-host {
+  flex: 1 1 auto; min-height: 0; min-width: 0;
+  display: flex; flex-direction: column;
+}
+.fb-preview-empty {
+  margin: auto; padding: 24px; text-align: center; color: var(--fg-dim);
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+/* Fills the host by FLEX; the height: 100% is what the dialog's
+   fixed-height scroller still uses, where flex properties are inert. */
+.fb-preview-inner {
+  flex: 1 1 auto;
+  display: flex; flex-direction: column; min-height: 0; height: 100%;
+  padding: 10px; gap: 8px;
+}
+/* name · size on the left, Download always on the right -- being able
+   to SEE a file is a poor reason to be unable to fetch it, so the button
+   is not reserved for the types that have no preview. */
+.fb-file-meta {
+  flex: 0 0 auto; color: var(--fg-dim); font-size: 11px;
+  display: flex; align-items: center; gap: 8px;
+}
+.fb-file-meta .fb-file-name { flex: 1 1 auto; min-width: 0;
+  word-break: break-all; }
+.fb-file-meta .fb-dl { flex: 0 0 auto; text-decoration: none; }
+/* Pixel dimensions, under the media (both are only knowable after the
+   element loads, so this is filled by a load/loadedmetadata handler). */
+.fb-dims {
+  flex: 0 0 auto; text-align: center;
+  color: var(--fg-dim); font-size: 10.5px; font-family: var(--mono);
+}
+.fb-dims:empty { display: none; }
+/* Last modified, under the content at the bottom of the pane. Kept OUT
+   of the meta row on purpose: a third item there competes with the name
+   for width and shoves the Download button around, and this is the
+   least urgent field in the panel.
+   `margin-top: auto` is what pins it to the bottom in the panels whose
+   content does not stretch (audio, and a short unpreviewable notice);
+   where the content is flex:1 it collapses to nothing. */
+.fb-file-modified {
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  text-align: right;
+  color: var(--fg-dim); font-size: 10.5px;
+}
+/* .vpipeline summary: one row per stage, id then [type]. */
+.fb-pl-list {
+  flex: 1 1 auto; min-height: 0; overflow: auto;
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: 4px; padding: 6px 8px;
+}
+.fb-pl-count {
+  color: var(--fg-dim); font-size: 10.5px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--line); margin-bottom: 4px;
+}
+.fb-pl-row {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 2px 0; font-size: 12px; line-height: 1.45;
+}
+.fb-pl-id { color: var(--fg); font-weight: 600; flex: 0 1 auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Shrinks and ellipsises rather than pushing itself out of a narrow
+   panel -- a stage type is long and the dialog's panel is 300px. */
+.fb-pl-type { color: var(--accent); font-family: var(--mono);
+  font-size: 11px; margin-left: auto; flex: 0 1 auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-media-wrap {
+  flex: 1 1 auto; min-height: 0; display: flex;
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: 4px; overflow: auto;
+}
+.fb-media-wrap.audio { flex: 0 0 auto; padding: 16px; overflow: hidden;
+  align-items: center; justify-content: center; }
+/* Centred by AUTO MARGINS rather than by the container's align-items /
+   justify-content: a centred flex item is clipped at its START edge
+   once it overflows, so the top of a tall image would be unreachable
+   however far the pane is scrolled. Auto margins collapse to 0 on the
+   overflowing axis instead. */
+.fb-img, .fb-video { margin: auto; }
+/* Fit to WIDTH and keep the aspect ratio (never upscaling past the
+   file's own pixels). A long image then overflows downwards and the
+   wrap scrolls it, instead of being letterboxed to an unreadable strip
+   -- or, with the overflow hidden, cut off with nothing to say so. */
+.fb-img { max-width: 100%; height: auto; }
+/* The video keeps both caps: a player scrolled half out of view takes
+   its transport controls with it, which is worse than letterboxing. */
+.fb-video { max-width: 100%; max-height: 100%; object-fit: contain; }
+.fb-audio { width: 100%; }
+.fb-text {
+  flex: 1 1 auto; min-height: 0; margin: 0; overflow: auto;
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: 4px; padding: 8px 10px;
+  font: 12px/1.5 var(--mono); color: var(--fg);
+  white-space: pre; tab-size: 4;
+}
+.fb-note { flex: 0 0 auto; color: var(--warn); font-size: 11px; }
+.fb-no-preview { color: var(--fg-dim); }
+.fb-prompt input {
+  width: 100%; padding: 6px 8px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; color: var(--fg);
+  font: inherit; font-size: 13px;
+}
+.fb-prompt input:focus { outline: none; border-color: var(--accent); }
+
+/* ---- Startup permission checks dialog ---- */
+.sc-intro { margin: 0 0 10px; color: var(--fg-dim); }
+.startup-checks { display: flex; flex-direction: column; gap: 2px; }
+.sc-row {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 3px 0;
+}
+.sc-badge {
+  flex: 0 0 auto; font-size: 9.5px; text-transform: uppercase;
+  letter-spacing: .5px; padding: 1px 5px; border-radius: 8px;
+  border: 1px solid var(--line); color: var(--fg-dim);
+}
+.sc-row.ok   .sc-badge { color: var(--accent-2); border-color: var(--accent-2); }
+.sc-row.warn .sc-badge { color: var(--danger);   border-color: var(--danger); }
+.sc-name   { flex: 0 0 auto; font-weight: 600; }
+.sc-detail { color: var(--fg-dim); }
+.sc-hints {
+  margin: 0 0 6px 64px; color: var(--warn); font-size: 11.5px;
+  line-height: 1.45;
+}
+.iport-row { display: flex; gap: 6px; margin-bottom: 6px; align-items:center; }
+.iport-row select { flex: 1 1 auto; }
+.iport-row input { width: 70px; }
+
+/* ---- User I/O console ---- */
+
+.userio { display: flex; flex-direction: column; width: 100%; height: 100%;
+          min-width: 0; }
+.userio .console {
+  flex: 1 1 auto; overflow: auto; padding: 10px 12px;
+  background: var(--bg); font: 12px/1.55 var(--mono);
+  white-space: pre-wrap; word-break: break-word;
+}
+.userio .console .line { padding: 1px 0; }
+.userio .console .line.info  { color: var(--fg); }
+.userio .console .line.warn  { color: var(--warn); }
+.userio .console .line.error { color: var(--danger); }
+.userio .console .line.input { color: var(--accent); }
+.userio .console .line.stream { color: var(--accent-2); }
+/* Model reasoning ("thinking") segments, delimited by the unified
+   vpipe thinking markers. Shown dimmed/italic when the Thinking
+   toggle is on; collapsed to a bare 💭 when off. */
+.userio .console .line .thinking {
+  color: var(--fg-dim); font-style: italic;
+}
+.userio .console .line .thinking-hidden {
+  opacity: .6; cursor: default;
+}
+.userio .console .line.stream.streaming::after {
+  content: '▋'; margin-left: 1px; color: var(--accent-2);
+  animation: blink 1s step-start infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Inline media previews rendered from base64 attachment markers in the
+   transcript: images (<=256px on the long side, on their own line) and
+   audio (play/pause/stop over a hidden <audio>). */
+.userio .console .line .io-media {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 4px 0;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.userio .console .line .io-img {
+  display: block;
+  max-width: 256px;
+  max-height: 256px;
+  width: auto;
+  height: auto;
+  border-radius: calc(var(--radius) - 3px);
+}
+.userio .console .line .io-audio {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.userio .console .line .io-audio audio { display: none; }
+
+.userio .io-input {
+  display: flex; align-items: flex-end; gap: 8px; padding: 8px 12px 4px;
+  border-top: 1px solid var(--line); background: var(--bg-1);
+}
+.userio .io-input .io-prompt {
+  flex: 0 0 auto; max-width: 45%; color: var(--fg-dim);
+  white-space: pre; overflow: hidden; text-overflow: ellipsis;
+  padding-bottom: 7px;
+}
+.userio .io-input .io-prompt.active { color: var(--accent-2); }
+.userio .io-input .btn { flex: 0 0 auto; }
+.userio .io-text {
+  flex: 1 1 auto; min-width: 0; padding: 6px 8px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; color: var(--fg);
+  font: inherit; font-size: 12px; line-height: 1.5;
+  resize: none; overflow-y: auto; max-height: 160px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.userio .io-text:focus { outline: none; border-color: var(--accent); }
+.userio .io-text:disabled { opacity: .5; }
+/* Password (getpasswd) request: mask the typed characters. */
+.userio .io-text.masked {
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+.userio .io-hint {
+  padding: 0 12px 8px; background: var(--bg-1);
+  text-align: right; font-size: 10px; color: var(--fg-dim);
+}
+.userio .io-hint .kbd { vertical-align: middle; margin: 0 1px; height: 14px;
+  min-width: 14px; font-size: 9px; }
+
+/* "Markdown" render toggle in the pane header (User I/O actions). */
+.io-md-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--fg-dim); cursor: pointer;
+  text-transform: none; letter-spacing: 0; user-select: none;
+}
+.io-md-toggle input { margin: 0; cursor: pointer; }
+
+/* ---- Markdown-rendered console lines (User I/O "Markdown" toggle) ---- */
+/* A .line.md holds real block/inline elements instead of pre-wrapped
+   text, so it opts out of the console's white-space: pre-wrap. */
+.userio .console .line.md { white-space: normal; }
+.userio .console .line.md > :first-child { margin-top: 0; }
+.userio .console .line.md > :last-child { margin-bottom: 0; }
+.userio .console .line.md p { margin: 4px 0; }
+/* Headings / emphasis inherit the line's level color (info/warn/error/…)
+   and only restyle weight + size, so markdown keeps the console's cues. */
+.userio .console .line.md h1,
+.userio .console .line.md h2,
+.userio .console .line.md h3,
+.userio .console .line.md h4,
+.userio .console .line.md h5,
+.userio .console .line.md h6 {
+  margin: 8px 0 4px; line-height: 1.3; font-weight: 600;
+}
+.userio .console .line.md h1 { font-size: 1.5em; }
+.userio .console .line.md h2 { font-size: 1.3em; }
+.userio .console .line.md h3 { font-size: 1.15em; }
+.userio .console .line.md h4 { font-size: 1.05em; }
+.userio .console .line.md h5 { font-size: 1em; }
+.userio .console .line.md h6 { font-size: .9em; opacity: .8; }
+.userio .console .line.md strong { font-weight: 700; }
+.userio .console .line.md em { font-style: italic; }
+.userio .console .line.md u { text-decoration: underline; }
+.userio .console .line.md ul,
+.userio .console .line.md ol { margin: 4px 0; padding-left: 22px; }
+.userio .console .line.md li { margin: 2px 0; }
+.userio .console .line.md code {
+  font-family: var(--mono); font-size: .92em;
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 3px; padding: 0 4px;
+}
+.userio .console .line.md pre {
+  margin: 6px 0; padding: 8px 10px; overflow-x: auto;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 5px;
+}
+.userio .console .line.md pre code {
+  background: none; border: none; padding: 0; white-space: pre;
+}
+.userio .console .line.md table {
+  border-collapse: collapse; margin: 6px 0; font-size: .95em;
+}
+.userio .console .line.md th,
+.userio .console .line.md td {
+  border: 1px solid var(--line); padding: 3px 8px; text-align: left;
+}
+.userio .console .line.md th { background: var(--bg-2); font-weight: 600; }
+/* The growing-stream caret would float below the block content; hide it
+   in Markdown mode where partial syntax is re-rendered each tick anyway. */
+.userio .console .line.md.stream.streaming::after { content: none; }
+
+/* ---- Console text-size control (User I/O + Session Log headers) ----
+   Lives in the host pane's action row, so it sizes itself against that
+   row rather than against the console it scales. The readout doubles as
+   the reset button: there is nowhere else to put a third control that
+   is worth a third button. */
+.tz { display: flex; align-items: center; gap: 1px; flex: 0 0 auto; }
+.tz-btn, .tz-size {
+  height: 20px; padding: 0 4px;
+  border: 1px solid transparent; border-radius: 4px;
+  background: transparent; color: var(--fg-dim);
+  font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+  /* The pane header is an uppercase, letter-spaced caption row; these
+     are controls sitting in it, not part of the caption. The level
+     dropdown beside them opts out the same way. */
+  text-transform: none; letter-spacing: 0;
+}
+.tz-btn { min-width: 22px; }
+/* Tabular figures so stepping 9 -> 10 -> 11 does not shuffle the two
+   buttons sideways under the pointer. */
+.tz-size { min-width: 18px; font-variant-numeric: tabular-nums; }
+.tz-btn:hover, .tz-size:hover { color: var(--fg); background: var(--bg-3); }
+
+/* ---- Session Log console ---- */
+
+.logview { display: flex; flex-direction: column; width: 100%; height: 100%;
+           min-width: 0; }
+.logview .console {
+  flex: 1 1 auto; overflow: auto; padding: 10px 12px;
+  background: var(--bg); font: 12px/1.55 var(--mono);
+  white-space: pre-wrap; word-break: break-word;
+}
+.logview .console .line { padding: 1px 0; }
+.logview .console .line.error   { color: var(--danger); }
+.logview .console .line.warn    { color: var(--warn); }
+.logview .console .line.info    { color: var(--fg); }
+.logview .console .line.normal  { color: var(--fg); }
+.logview .console .line.verbose { color: var(--fg-dim); }
+.logview .console .line.debug   { color: var(--fg-dim); }
+.logview .console .line.always  { color: var(--accent-2); }
+
+/* Debug-level dropdown in the pane header. */
+.log-level-label { font-size: 10px; color: var(--fg-dim);
+  text-transform: uppercase; letter-spacing: .6px; }
+.log-level {
+  height: 22px; padding: 0 4px; background: var(--bg-3);
+  border: 1px solid var(--line); border-radius: 4px; color: var(--fg);
+  font: inherit; font-size: 11px; text-transform: none; letter-spacing: 0;
+  cursor: pointer;
+}
+.log-level:focus { outline: none; border-color: var(--accent); }
+
+/* ---- User I/O workspace (splittable panes) ---- */
+
+.io-workspace {
+  position: relative;          /* anchors the "⋯" dropdown menu */
+  display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0;
+}
+.io-workspace > .io-pane,
+.io-workspace > .io-split { flex: 1 1 auto; min-width: 0; min-height: 0; }
+
+.io-split { display: flex; min-width: 0; min-height: 0; }
+.io-split.dir-v { flex-direction: row; }     /* side by side */
+.io-split.dir-h { flex-direction: column; }  /* stacked */
+.io-split > .io-pane,
+.io-split > .io-split { flex: 1 1 0; min-width: 0; min-height: 0; }
+/* Seam between the two children of a split. */
+.io-split.dir-v > * + * { border-left: 1px solid var(--line); }
+.io-split.dir-h > * + * { border-top: 1px solid var(--line); }
+
+.io-pane {
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0; overflow: hidden;
+}
+.io-pane-head {
+  display: flex; align-items: center; gap: 6px;
+  height: 32px; flex: 0 0 32px; padding: 0 6px 0 10px;
+  background: var(--bg-1); border-bottom: 1px solid var(--line);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
+  color: var(--fg-dim);
+}
+.io-pane-head .title { font-weight: 600; color: var(--fg);
+  text-transform: none; letter-spacing: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.io-pane-head .grow { flex: 1 1 auto; }
+.io-pane-actions { display: flex; align-items: center; gap: 4px; }
+.io-pane-actions a { text-decoration: none; }
+/* Low-profile "⋯" menu trigger. */
+.io-pane-menu {
+  flex: 0 0 auto; width: 24px; height: 22px; padding: 0;
+  border: 1px solid transparent; border-radius: 4px;
+  background: transparent; color: var(--fg-dim); cursor: pointer;
+  font: inherit; font-size: 15px; line-height: 1;
+}
+.io-pane-menu:hover { color: var(--fg); background: var(--bg-3); }
+.io-pane-body {
+  position: relative; flex: 1 1 auto; min-width: 0; min-height: 0;
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.io-pane-body > .userio,
+.io-pane-body > .logview { flex: 1 1 auto; min-height: 0; }
+
+/* "⋯" dropdown. */
+.io-menu {
+  position: absolute; z-index: 30; min-width: 180px;
+  background: var(--bg-1); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.45);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.io-menu-item {
+  text-align: left; padding: 7px 9px; border: none; border-radius: 4px;
+  background: transparent; color: var(--fg); cursor: pointer;
+  font: inherit; font-size: 12px; white-space: nowrap;
+}
+.io-menu-item:hover { background: var(--bg-2); }
+.io-menu-item.danger { color: var(--danger); }
+
+/* Empty pane chooser. */
+.io-empty {
+  flex: 1 1 auto; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px;
+  color: var(--fg-dim); padding: 16px;
+}
+.io-empty-title { color: var(--fg); font-size: 13px; }
+.io-empty-choices { display: flex; flex-wrap: wrap; gap: 8px;
+  justify-content: center; }
+.io-empty-hint { font-size: 11px; }
+
+/* HLS video pane. */
+.hls-picker {
+  flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.hls-picker-title { color: var(--fg-dim); font-size: 11px;
+  text-transform: uppercase; letter-spacing: .6px; }
+.hls-list { display: flex; flex-direction: column; gap: 6px; }
+.hls-item {
+  display: flex; flex-direction: column; gap: 2px; text-align: left;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg-2); color: var(--fg); cursor: pointer; font: inherit;
+}
+.hls-item:hover { background: var(--bg-3); border-color: #475061; }
+.hls-item-name { font-weight: 600; font-size: 12px; }
+.hls-item-url { color: var(--fg-dim); font-size: 10.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hls-hint { color: var(--fg-dim); font-size: 11.5px; padding: 6px 2px; }
+.hls-video {
+  flex: 1 1 auto; min-height: 0; width: 100%;
+  background: #000; object-fit: contain;
+}
+.hls-status {
+  flex: 0 0 auto; padding: 6px 10px; color: var(--fg-dim);
+  font-size: 11px; background: var(--bg-1);
+  border-top: 1px solid var(--line);
+}
+.hls-status:empty { display: none; }
+
+/* ---- Database viewer ---- */
+
+.db {
+  display: grid;
+  grid-template-columns: 25% 75%;
+  width: 100%; height: 100%; min-width: 0;
+}
+.db > .pane { border-right: 1px solid var(--line); }
+.db-right {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+}
+
+.db-query {
+  flex: 0 0 auto; padding: 12px 14px; background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.db-form-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.db-form-row label { color: var(--fg-dim); font-size: 11px; }
+.db-query select, .db-query input[type=text] {
+  padding: 5px 7px; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 4px; color: var(--fg); font: inherit; font-size: 12px;
+}
+.db-query input[type=text] { flex: 1 1 140px; min-width: 0; }
+.db-query select:focus, .db-query input:focus {
+  outline: none; border-color: var(--accent);
+}
+.db-detected { color: var(--accent-2); font-size: 11px; }
+
+/* ---- Database value filter (streaming) ---- */
+.db-vfilter {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px;
+  background: var(--bg);
+}
+.db-vfilter-head {
+  display: flex; align-items: center; gap: 10px;
+}
+.db-vfilter-title {
+  color: var(--fg-dim); font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.db-vfilter-combine {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-left: auto; color: var(--fg-dim); font-size: 11px;
+}
+.db-vfilter-row { display: flex; align-items: center; gap: 6px; }
+.db-vfilter-row select { flex: 0 0 auto; }
+.db-vfilter-row input[type=text] { flex: 1 1 120px; min-width: 0; }
+/* and/or connective: narrow + accent-tinted so the boolean structure
+   reads at a glance down the indented rows. */
+.db-vfilter-op { color: var(--accent-2); font-weight: 600; }
+/* ← / → indent controls. */
+.db-vfilter-ind {
+  flex: 0 0 auto; border: 1px solid var(--line); background: var(--bg-1);
+  cursor: pointer; color: var(--fg-dim); font-size: 12px; line-height: 1;
+  padding: 3px 5px; border-radius: 4px;
+}
+.db-vfilter-ind:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
+.db-vfilter-ind:disabled { opacity: 0.3; cursor: default; }
+.db-vfilter-rm {
+  flex: 0 0 auto; border: none; background: none; cursor: pointer;
+  color: var(--fg-dim); opacity: 0.55; font-size: 15px; line-height: 1;
+  padding: 0 4px; border-radius: 4px;
+}
+.db-vfilter-rm:hover { opacity: 1; color: var(--danger); }
+.db-vfilter-actions { display: flex; }
+.db-vfilter-add { font-size: 11.5px; padding: 3px 8px; }
+.db-scanning {
+  color: var(--accent-2); font-size: 11px; font-style: italic;
+}
+
+/* ---- Model browser (compatibility-aware model picker) ---- */
+.model-browser-modal .modal { min-width: 520px; max-width: 640px; }
+.model-browser { display: flex; flex-direction: column; gap: 4px;
+  max-height: 60vh; overflow: auto; }
+.mb-group {
+  color: var(--fg-dim); font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.04em; margin: 8px 2px 2px;
+}
+.mb-list { display: flex; flex-direction: column; gap: 4px; }
+.mb-card {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--fg); cursor: pointer; text-align: left;
+}
+.mb-card:hover { border-color: var(--accent); background: var(--bg-1); }
+/* The filter bar. Sticky so it stays reachable once the list is long
+   enough to scroll -- which is the case it exists for. */
+.mb-filter { position: sticky; top: 0; z-index: 1; background: var(--bg);
+  padding-bottom: 8px; margin-bottom: 2px;
+  border-bottom: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 6px; }
+.mb-search { width: 100%; box-sizing: border-box; }
+.mb-chips { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.mb-chips-label { color: var(--fg-dim); font-size: 11px;
+  min-width: 34px; }
+.mb-chip {
+  font-size: 10px; padding: 1px 7px; border-radius: 999px;
+  background: var(--bg-2); color: var(--fg-dim); line-height: 1.6;
+  border: 1px solid transparent; cursor: pointer;
+}
+.mb-chip:hover { border-color: var(--line); color: var(--fg); }
+.mb-chip.active { background: var(--accent); color: var(--bg);
+  border-color: var(--accent); }
+.mb-count { color: var(--fg-dim); font-size: 11px; margin: 6px 0 2px; }
+.mb-card-main { flex: 1 1 auto; min-width: 0; }
+.mb-name { font: 600 12.5px var(--mono); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+/* The pack label under the key. Wraps rather than ellipsising: it is
+   what tells two partitions of one repo apart, so truncating it loses
+   the distinction the row exists to show. */
+.mb-variant { color: var(--fg); font-size: 11px; margin-top: 2px; }
+.mb-sub { color: var(--fg-dim); font-size: 11px; margin-top: 2px;
+  display: flex; gap: 8px; flex-wrap: wrap; }
+.mb-parent { color: var(--accent-2); }
+.mb-io { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+.mb-io-set { display: inline-flex; gap: 3px; }
+.mb-io-arrow { color: var(--fg-dim); font-size: 11px; }
+.mb-badge {
+  font-size: 10px; padding: 1px 5px; border-radius: 999px;
+  background: var(--bg-2); color: var(--fg-dim); line-height: 1.5;
+}
+.mb-text  { background: rgba(96, 165, 250, 0.22); color: var(--fg); }
+.mb-image { background: rgba(52, 211, 153, 0.22); color: var(--fg); }
+.mb-audio { background: rgba(251, 191, 36, 0.22); color: var(--fg); }
+.mb-video { background: rgba(232, 121, 249, 0.22); color: var(--fg); }
+.mb-none  { opacity: 0.5; }
+.mb-empty { padding: 20px; text-align: center; color: var(--fg-dim); }
+/* Value-pane match highlight + its toggle. The <mark> tints the matched
+   run without overriding the surrounding text colour so JSON stays
+   readable in both themes. */
+.db-hl {
+  background: rgba(250, 204, 21, 0.32); color: inherit;
+  border-radius: 2px; padding: 0 1px;
+}
+.db-hl-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--fg-dim); font-size: 10.5px; cursor: pointer;
+  flex: 0 0 auto;
+}
+.db-hl-toggle input { margin: 0; }
+.db-local-toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-left: auto; color: var(--fg-dim); font-size: 11px;
+  cursor: pointer;
+}
+.db-local-toggle input { margin: 0; }
+
+.db-data {
+  flex: 1 1 auto; min-height: 0;
+  display: grid; grid-template-columns: 40% 60%;
+}
+.db-keys {
+  display: flex; flex-direction: column; min-height: 0;
+  border-right: 1px solid var(--line);
+}
+/* Key and value pane heads share size + alignment so the seam
+   lines up cleanly. Override font/gap per pane below. */
+.db-keys-head, .db-value-head {
+  flex: 0 0 auto;
+  display: flex; align-items: center;
+  height: 32px; padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px; color: var(--fg-dim);
+  box-sizing: border-box;
+}
+.db-trunc { color: var(--warn); }
+.db-keylist {
+  flex: 1 1 auto; overflow: auto; list-style: none; margin: 0; padding: 4px;
+}
+.db-key {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; border-radius: 4px; cursor: pointer;
+  font: 12px var(--mono);
+}
+.db-key-label {
+  flex: 1 1 auto; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.db-key:hover { background: var(--bg-1); }
+.db-key.selected { background: var(--bg-2); color: var(--accent); }
+.db-key.empty { color: var(--fg-dim); cursor: default; }
+
+/* Drop/delete affordance shared by the database list rows (.pl-item)
+   and the key list rows (.db-key). Subtle by default so it doesn't
+   compete with the row content; turns danger-red on hover. Only
+   rendered while mutation is allowed (no pipeline running). */
+.db-del {
+  flex: 0 0 auto;
+  border: none; background: none; cursor: pointer; padding: 0 2px;
+  color: var(--fg-dim); opacity: 0.4;
+  font-size: 12px; line-height: 1; border-radius: 4px;
+}
+.pl-item:hover .db-del, .db-key:hover .db-del { opacity: 0.75; }
+.db-del:hover { opacity: 1; color: var(--danger); }
+.db-pager {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-top: 1px solid var(--line);
+}
+.db-pageno { color: var(--fg-dim); font-size: 11px; }
+
+.db-value { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+/* .db-value-head shares its size with .db-keys-head (rule above).
+   Pane-specific gap + key/meta styling stay here. */
+.db-value-head { gap: 10px; }
+.db-vkey { color: var(--fg); font: 600 12px var(--mono);
+           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-vmeta { color: var(--fg-dim); font-size: 10.5px; flex: 0 0 auto;
+            margin-left: auto; }
+/* Default to wrapping: long JSON strings (FlexData -> JSON) shouldn't
+   force a horizontal scroll. Indentation is preserved by pre-wrap,
+   and overflow-wrap: anywhere breaks tokens with no whitespace
+   (URLs, base64 blobs). The hex dump overrides to plain `pre` so its
+   fixed column layout stays intact. */
+.db-dump {
+  flex: 1 1 auto; overflow: auto; margin: 0; padding: 10px 12px;
+  background: var(--bg); color: var(--fg);
+  font: 12px/1.5 var(--mono);
+  white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2;
+}
+.db-dump.hex {
+  white-space: pre; overflow-wrap: normal;
+}
+.db-hint { padding: 14px; color: var(--fg-dim); }
+
+/* ---- Settings ---- */
+
+.settings { display: flex; flex-direction: column; width: 100%; height: 100%;
+            min-width: 0; }
+.settings-body { flex: 1 1 auto; overflow: auto; padding: 18px 20px;
+                 max-width: 640px; }
+.setting { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.setting-label { font-weight: 600; color: var(--fg); margin-bottom: 3px; }
+.setting-desc { color: var(--fg-dim); font-size: 11.5px; margin-bottom: 10px; }
+.setting-row { display: flex; align-items: center; gap: 8px; }
+.setting-row input[type=number] {
+  width: 120px; padding: 5px 7px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; color: var(--fg);
+  font: inherit; font-size: 12px;
+}
+.setting-row input:focus { outline: none; border-color: var(--accent); }
+.setting-unit { color: var(--fg-dim); font-size: 11px; }
+.setting-status {
+  display: block; margin-top: 8px;
+  color: var(--fg-dim); font-size: 11px;
+}
+
+.segmented { display: inline-flex; border: 1px solid var(--line);
+             border-radius: var(--radius); overflow: hidden; }
+.segmented .seg {
+  padding: 6px 16px; border: none; background: var(--bg-1);
+  color: var(--fg-dim); cursor: pointer; font: inherit; font-size: 12px;
+  border-right: 1px solid var(--line);
+}
+.segmented .seg:last-child { border-right: none; }
+.segmented .seg:hover { background: var(--bg-2); color: var(--fg); }
+.segmented .seg.active {
+  background: var(--accent); color: #fff;
+}
+
+/* ---- Profiler ---- */
+
+.profiler {
+  display: flex; flex-direction: column;
+  width: 100%; height: 100%; min-width: 0; min-height: 0;
+}
+.prof-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; background: var(--bg-1);
+  border-bottom: 1px solid var(--line); flex-wrap: wrap;
+}
+.prof-head .title { font-weight: 600; color: var(--fg); font-size: 13px; }
+.prof-head .grow { flex: 1 1 auto; }
+.prof-sep { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
+.prof-maxlabel {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--fg-dim); font-size: 11px;
+}
+.prof-max {
+  width: 84px; padding: 4px 6px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; color: var(--fg);
+  font: inherit; font-size: 12px;
+}
+.prof-max:focus { outline: none; border-color: var(--accent); }
+.prof-check {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--fg-dim); font-size: 11px; cursor: pointer;
+  user-select: none; white-space: nowrap;
+}
+.prof-check input { margin: 0; cursor: pointer; }
+.prof-status {
+  color: var(--fg-dim); font-size: 11px; font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.prof-status.live {
+  color: var(--accent);
+  animation: pl-state-busy-pulse 1.2s ease-in-out infinite;
+}
+
+.prof-timeline {
+  flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden;
+  background: var(--bg);
+}
+.prof-canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+.prof-canvas.grabbing { cursor: grabbing; }
+
+/* Draggable divider above the details panel. The panel is pinned to
+   the bottom, so a top-edge handle (not the corner `resize:vertical`
+   grabber, which would be off-screen) is the intuitive affordance. */
+.prof-resizer {
+  flex: 0 0 auto; height: 7px; cursor: row-resize;
+  background: var(--bg-1); border-top: 1px solid var(--line);
+  position: relative; touch-action: none; user-select: none;
+}
+.prof-resizer::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 40px; height: 2px; transform: translate(-50%, -50%);
+  background: var(--line); border-radius: 1px;
+}
+.prof-resizer:hover, .prof-resizer.dragging { background: var(--bg-2); }
+.prof-resizer:hover::after,
+.prof-resizer.dragging::after { background: var(--accent); }
+
+.prof-inspector {
+  /* Taller default: ~10 detail rows visible without a manual drag.
+     User-adjustable via the .prof-resizer handle above (sticky). */
+  flex: 0 0 auto; height: 280px; overflow: auto;
+  padding: 10px 14px; background: var(--bg-1);
+}
+.prof-insp-title {
+  display: flex; align-items: center; gap: 7px;
+  font-weight: 600; color: var(--fg); font-size: 12px; margin-bottom: 8px;
+}
+.prof-swatch {
+  display: inline-block; width: 12px; height: 12px; border-radius: 2px;
+  border: 1px solid rgba(0,0,0,.25);
+}
+.prof-grid { display: flex; flex-direction: column; gap: 4px; }
+.prof-row { display: flex; gap: 10px; font-size: 12px; }
+.prof-k {
+  flex: 0 0 84px; color: var(--fg-dim); text-align: right;
+  text-transform: uppercase; letter-spacing: .4px; font-size: 10px;
+  padding-top: 1px;
+}
+.prof-v {
+  flex: 1 1 auto; min-width: 0; color: var(--fg);
+  font-variant-numeric: tabular-nums; word-break: break-word;
+}
+.prof-hint { color: var(--fg-dim); font-size: 11px; margin-top: 10px; }
+
+/* ---- Toasts ---- */
+
+#toast-root { position: fixed; bottom: 16px; right: 16px; z-index: 100;
+              display: flex; flex-direction: column; gap: 8px; }
+.toast {
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--accent); border-radius: 5px;
+  padding: 9px 13px; max-width: 360px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.4); animation: slidein .15s ease;
+}
+.toast.err { border-left-color: var(--danger); }
+.toast.ok  { border-left-color: var(--accent-2); }
+@keyframes slidein { from { transform: translateX(20px); opacity: 0; } }
+
+/* ---- Composer view (dockable / floating panel dashboard) ---- */
+
+.cmp { display: flex; flex-direction: column;
+       width: 100%; height: 100%; min-width: 0; }
+.cmp-toolbar {
+  display: flex; align-items: center; gap: 6px;
+  height: 44px; flex: 0 0 44px; padding: 0 10px;
+  background: var(--bg-1); border-bottom: 1px solid var(--line);
+}
+.cmp-toolbar .btn.mini { flex: 0 0 auto; }
+.cmp-tb-sep { width: 1px; height: 20px; background: var(--line); margin: 0 2px; }
+.cmp-grow { flex: 1 1 auto; }
+.cmp-pl { color: var(--fg-dim); font-size: 11px; white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+
+.cmp-stage {
+  position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 23px,
+      rgba(255,255,255,.02) 23px 24px),
+    repeating-linear-gradient(90deg, transparent 0 23px,
+      rgba(255,255,255,.02) 23px 24px),
+    var(--bg);
+}
+.cmp-empty {
+  position: absolute; inset: 0; margin: auto; height: fit-content;
+  text-align: center; color: var(--fg-dim); padding: 24px;
+  display: flex; align-items: center; justify-content: center;
+}
+.cmp-empty[hidden] { display: none; }
+
+/* handle layer sits above panels; only the handles catch the pointer */
+.cmp-handles { position: absolute; inset: 0; pointer-events: none;
+               z-index: 40; }
+.cmp-edge, .cmp-div { position: absolute; pointer-events: auto; }
+.cmp-edge:hover, .cmp-div:hover { background: var(--accent); opacity: .5; }
+/* The cursor names the direction the bar MOVES, not the bar's own
+   orientation. Both families use the same 'v'/'h' letter for the same
+   thing -- a 'v' divider is the vertical rule between side-by-side panes,
+   so dragging it redistributes width and the cursor points left/right. */
+.cmp-edge-v, .cmp-div-v { cursor: ew-resize; }
+.cmp-edge-h, .cmp-div-h { cursor: ns-resize; }
+
+/* A pane created by splitting a docked panel: the type chooser, mirroring
+   the User I/O workspace's empty pane. */
+.cmp-empty-pane { display: flex; flex-direction: column; gap: 10px;
+            align-items: center; justify-content: center; height: 100%;
+            padding: 12px; }
+.cmp-empty-title { font-size: 12px; color: var(--fg-2); }
+.cmp-empty-choices { display: flex; flex-wrap: wrap; gap: 6px;
+            justify-content: center; max-width: 100%; }
+.cmp-empty-choices .btn { display: inline-flex; align-items: center;
+            gap: 4px; }
+
+.cmp-panel {
+  position: absolute; display: flex; flex-direction: column;
+  min-width: 0; min-height: 0; overflow: hidden;
+  background: var(--bg-1); border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.cmp-panel.cmp-float {
+  box-shadow: 0 6px 22px rgba(0,0,0,.45);
+}
+.cmp-panel.cmp-bg { border-radius: 0; box-shadow: none;
+                    border-color: var(--line); }
+.cmp-titlebar {
+  flex: 0 0 28px; display: flex; align-items: center; gap: 6px;
+  padding: 0 4px 0 8px; background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  font-size: 11px; color: var(--fg-dim); user-select: none;
+}
+.cmp-float .cmp-titlebar { cursor: move; }
+.cmp-titlebar .icon { flex: 0 0 auto; opacity: .8; }
+.cmp-title { color: var(--fg); font-weight: 600; white-space: nowrap;
+             overflow: hidden; text-overflow: ellipsis; }
+.cmp-actions { display: inline-flex; align-items: center; gap: 4px;
+               flex: 0 0 auto; }
+.cmp-tb-btn {
+  flex: 0 0 auto; width: 20px; height: 20px; padding: 0;
+  border: none; background: transparent; color: var(--fg-dim);
+  cursor: pointer; font-size: 15px; line-height: 1; border-radius: 4px;
+}
+.cmp-tb-btn:hover { background: var(--bg-3); color: var(--fg); }
+.cmp-body { flex: 1 1 auto; min-height: 0; position: relative;
+            overflow: hidden; background: var(--bg); }
+.cmp-err { padding: 12px; color: var(--danger); font-size: 12px; }
+.cmp-resize {
+  position: absolute; right: 0; bottom: 0; width: 16px; height: 16px;
+  cursor: nwse-resize; z-index: 2;
+  background: linear-gradient(135deg, transparent 50%, var(--line) 50%);
+}
+.cmp-dock .cmp-resize, .cmp-bg .cmp-resize { display: none; }

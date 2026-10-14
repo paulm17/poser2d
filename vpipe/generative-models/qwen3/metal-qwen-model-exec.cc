@@ -1,0 +1,574 @@
+#include "generative-models/qwen3/metal-qwen-model-exec.h"
+
+#include "generative-models/shared/dflash-drafter.h"
+#include "generative-models/weight-set.h"
+#include "common/flex-bag.h"
+
+#include <algorithm>
+#include <limits>
+
+
+namespace vpipe::genai {
+
+namespace {
+std::int32_t
+argmax_(const std::vector<float>& v)
+{
+  std::int32_t best = 0;
+  float bv = v.empty() ? 0.0f : v[0];
+  for (std::size_t i = 1; i < v.size(); ++i) {
+    if (v[i] > bv) { bv = v[i]; best = (std::int32_t)i; }
+  }
+  return best;
+}
+}  // namespace
+
+MetalQwenModelExec::MetalQwenModelExec(
+    const std::string&            model_dir,
+    metal_compute::MetalCompute*  mc,
+    const MetalQwenModel::Config& cfg,
+    const SessionContextIntf*     session)
+{
+  // Through the session's manager, so a second stage naming this same
+  // checkpoint gets the weights that are already resident instead of a
+  // second copy of them.
+  _model = MetalQwenModel::load(open_weight_set(model_dir, session), mc,
+                                cfg);
+  _mc = mc;
+  _session = session;
+}
+
+MetalQwenModelExec::CtxState*
+MetalQwenModelExec::state_for_(ContextId ctx)
+{
+  if (_model == nullptr) {
+    return nullptr;
+  }
+  std::lock_guard<std::mutex> lk(_ctx_mu);
+  auto it = _ctxmap.find(ctx.v);
+  if (it != _ctxmap.end()) {
+    return &it->second;
+  }
+  ContextId cid = _model->context_manager()->acquire_root();
+  if (!cid.valid()) {
+    return nullptr;
+  }
+  CtxState st;
+  st.metal_cid = cid;
+  return &_ctxmap.emplace(ctx.v, st).first->second;
+}
+
+int
+MetalQwenModelExec::context_seq_len(ContextId ctx) const
+{
+  if (!_model) {
+    return 0;
+  }
+  // Read-only: an unmapped context has no KV yet -- do NOT lazily
+  // materialize one just to report its length.
+  const ContextId cid = metal_cid_(ctx);
+  if (!cid.valid()) {
+    return 0;
+  }
+  return _model->context_manager()->seq_len_of(cid);
+}
+
+ContextId
+MetalQwenModelExec::metal_cid_(ContextId ctx) const
+{
+  std::lock_guard<std::mutex> lk(_ctx_mu);
+  auto it = _ctxmap.find(ctx.v);
+  return it != _ctxmap.end() ? it->second.metal_cid : ContextId{};
+}
+
+std::int32_t
+MetalQwenModelExec::prefill(ContextId ctx, std::span<const std::int32_t> tokens)
+{
+  if (tokens.empty()) {
+    return -1;
+  }
+  CtxState* st = state_for_(ctx);
+  if (st == nullptr) {
+    return -1;
+  }
+  std::vector<std::int32_t> ids(tokens.begin(), tokens.end());
+  _logits = _model->prefill(st->metal_cid, ids);
+  if (_logits.empty()) {
+    return -1;
+  }
+  return argmax_(_logits);
+}
+
+std::int32_t
+MetalQwenModelExec::decode_one(ContextId ctx, std::int32_t id)
+{
+  CtxState* st = state_for_(ctx);
+  if (st == nullptr) {
+    return -1;
+  }
+  _logits = _model->forward(st->metal_cid, id);
+  if (_logits.empty()) {
+    return -1;
+  }
+  return argmax_(_logits);
+}
+
+std::int32_t
+MetalQwenModelExec::prefill_embeddings(ContextId ctx,
+                                       const std::vector<float>& rows, int n)
+{
+  if (n <= 0 || rows.empty()) {
+    return -1;
+  }
+  CtxState* st = state_for_(ctx);
+  if (st == nullptr) {
+    return -1;
+  }
+  _logits = _model->prefill_embeddings(st->metal_cid, rows, n);
+  if (_logits.empty()) {
+    return -1;
+  }
+  return argmax_(_logits);
+}
+
+std::int32_t
+MetalQwenModelExec::prefill_embeddings_mrope(
+    ContextId ctx, const std::vector<float>& rows,
+    const std::vector<std::int32_t>& position_ids, int n)
+{
+  if (n <= 0 || rows.empty()) {
+    return -1;
+  }
+  CtxState* st = state_for_(ctx);
+  if (st == nullptr) {
+    return -1;
+  }
+  _logits = _model->prefill_multimodal(st->metal_cid, rows, position_ids);
+  if (_logits.empty()) {
+    return -1;
+  }
+  return argmax_(_logits);
+}
+
+std::int32_t
+MetalQwenModelExec::decode_one_at(ContextId ctx, std::int32_t id, int rope_pos)
+{
+  CtxState* st = state_for_(ctx);
+  if (st == nullptr) {
+    return -1;
+  }
+  _logits = _model->forward(st->metal_cid, id, rope_pos);
+  if (_logits.empty()) {
+    return -1;
+  }
+  return argmax_(_logits);
+}
+
+std::int32_t
+MetalQwenModelExec::decode_one_greedy(ContextId ctx, std::int32_t id)
+{
+  return decode_one_greedy_at(ctx, id, -1);
+}
+
+std::int32_t
+MetalQwenModelExec::decode_one_greedy_at(ContextId ctx, std::int32_t id,
+                                         int rope_pos)
+{
+  CtxState* st = state_for_(ctx);
+  if (st == nullptr) {
+    return -1;
+  }
+  // On-GPU embed + argmax: returns the token id without a host logit pull.
+  // INT32_MIN means the fast kernels are unavailable (no state touched) ->
+  // fall back to the logit-producing path.
+  const std::int32_t r = _model->decode_step_fast(st->metal_cid, id, rope_pos);
+  if (r != std::numeric_limits<std::int32_t>::min()) {
+    return r;
+  }
+  _logits = _model->forward(st->metal_cid, id, rope_pos);
+  if (_logits.empty()) {
+    return -1;
+  }
+  return argmax_(_logits);
+}
+
+bool
+MetalQwenModelExec::pdecode_begin(ContextId ctx, std::int32_t first_token,
+                                  std::span<const std::int32_t> prompt,
+                                  const GpuSamplerParams& sp, int max_tokens,
+                                  int rope_first)
+{
+  CtxState* st = state_for_(ctx);
+  if (st == nullptr) { return false; }
+  return _model->pdecode_begin(st->metal_cid, first_token, prompt, sp,
+                               max_tokens, rope_first);
+}
+
+bool
+MetalQwenModelExec::batched_decode_logits(
+    std::span<const ContextId>    cids,
+    std::span<const std::int32_t> in_tokens,
+    std::span<const std::int32_t> rope_pos,
+    std::vector<float>&           out_logits)
+{
+  if (_model == nullptr || cids.empty()) { return false; }
+  std::vector<ContextId> mcids(cids.size());
+  for (std::size_t i = 0; i < cids.size(); ++i) {
+    CtxState* st = state_for_(cids[i]);
+    if (st == nullptr) { return false; }
+    mcids[i] = st->metal_cid;
+  }
+  return _model->decode_batched_step(
+      std::span<const ContextId>(mcids.data(), mcids.size()),
+      in_tokens, rope_pos, out_logits);
+}
+
+bool
+MetalQwenModelExec::bdecode_begin(
+    std::span<const ContextId>    cids,
+    std::span<const std::int32_t> first_tokens,
+    const GpuSamplerParams& sp, int max_tokens,
+    std::span<const std::int32_t> rope_pos)
+{
+  if (_model == nullptr || cids.empty()) { return false; }
+  std::vector<ContextId> mcids(cids.size());
+  for (std::size_t i = 0; i < cids.size(); ++i) {
+    CtxState* st = state_for_(cids[i]);
+    if (st == nullptr) { return false; }
+    mcids[i] = st->metal_cid;
+  }
+  return _model->bdecode_begin(
+      std::span<const ContextId>(mcids.data(), mcids.size()),
+      first_tokens, sp, max_tokens, rope_pos);
+}
+
+bool
+MetalQwenModelExec::bdecode_commit() { return _model && _model->bdecode_commit(); }
+
+bool
+MetalQwenModelExec::bdecode_next(std::vector<std::int32_t>& out_tokens)
+{
+  return _model && _model->bdecode_next(out_tokens);
+}
+
+void
+MetalQwenModelExec::bdecode_end() { if (_model) { _model->bdecode_end(); } }
+
+bool
+MetalQwenModelExec::mtp_generate(
+    ContextId ctx, std::int32_t first_token, int max_tokens, int rope_first,
+    const GpuSamplerParams& sp,
+    const std::function<bool(std::int32_t)>&                  is_stop,
+    const std::function<bool(std::span<const std::int32_t>)>& on_tokens,
+    int* produced, bool* hit_stop)
+{
+  if (produced) { *produced = 0; }
+  if (hit_stop) { *hit_stop = false; }
+  if (_model == nullptr || !_model->has_mtp()) { return false; }
+  CtxState* st = state_for_(ctx);
+  if (st == nullptr) { return false; }
+  MtpDecodeCtl c;
+  c.rope_first = rope_first;
+  c.is_stop    = is_stop;
+  c.on_round   = on_tokens;
+  c.hit_stop   = hit_stop;
+  c.sampler    = sp;
+  // The penalty seen-set's start (gpu_sampler::kPrime), if the caller
+  // sent one.
+  std::vector<std::int32_t> prime;
+  {
+    const FlexData pv = bag::value(sp.extra, gpu_sampler::kPrime);
+    if (pv.is_array()) {
+      const std::span<const std::int64_t> s = pv.as_int_span();
+      prime.assign(s.begin(), s.end());
+    }
+  }
+  c.prime      = prime;
+  std::vector<std::int32_t> out;
+  const bool ok = _model->mtp_decode(st->metal_cid, first_token, max_tokens,
+                                     out, /*draft_len=*/1, /*accepted_out=*/
+                                     nullptr, /*rounds_out=*/nullptr, c);
+  if (produced) { *produced = static_cast<int>(out.size()); }
+  return ok;
+}
+
+bool
+MetalQwenModelExec::pdecode_commit(ContextId ctx)
+{
+  CtxState* st = state_for_(ctx);
+  if (st == nullptr) { return false; }
+  return _model->pdecode_commit(st->metal_cid);
+}
+
+std::int32_t
+MetalQwenModelExec::pdecode_next(ContextId ctx)
+{
+  CtxState* st = state_for_(ctx);
+  if (st == nullptr) { return -1; }
+  return _model->pdecode_next(st->metal_cid);
+}
+
+void
+MetalQwenModelExec::pdecode_end(ContextId ctx)
+{
+  CtxState* st = state_for_(ctx);
+  if (st == nullptr) { return; }
+  _model->pdecode_end(st->metal_cid);
+}
+
+bool
+MetalQwenModelExec::pdecode_supports_runahead() const
+{
+  // pdecode_end rolls back the speculative tail on BOTH state planes the
+  // qwen forward advances: the paged KV (ContextManager::kv_rollback) and the
+  // GDN recurrent ssm/conv ring (gdn_ring_rollback + gdn_ring_end). Dense
+  // backends (Qwen3-ASR) carry no GDN state -> the ring is inert and the KV
+  // rollback alone suffices. Either way run-ahead is safe.
+  return _model != nullptr;
+}
+
+std::vector<float>
+MetalQwenModelExec::embed_text_rows(std::span<const std::int32_t> ids)
+{
+  if (_model == nullptr || ids.empty()) {
+    return {};
+  }
+  return _model->embed_text(
+      std::vector<std::int32_t>(ids.begin(), ids.end()));
+}
+
+std::int32_t
+MetalQwenModelExec::prefill_embeddings_buf(
+    ContextId ctx, metal_compute::SharedBuffer&& rows, int n)
+{
+  if (_model == nullptr || n <= 0 || rows.empty()) { return -1; }
+  CtxState* st = state_for_(ctx);
+  if (st == nullptr) { return -1; }
+  _logits = _model->prefill_embeddings_buf(st->metal_cid, std::move(rows), n);
+  if (_logits.empty()) { return -1; }
+  return argmax_(_logits);
+}
+
+std::int32_t
+MetalQwenModelExec::prefill_embeddings_mrope_buf(
+    ContextId ctx, metal_compute::SharedBuffer&& rows,
+    const std::vector<std::int32_t>& position_ids, int n)
+{
+  if (_model == nullptr || n <= 0 || rows.empty()) { return -1; }
+  CtxState* st = state_for_(ctx);
+  if (st == nullptr) { return -1; }
+  _logits = _model->prefill_multimodal_buf(
+      st->metal_cid, std::move(rows), position_ids, n);
+  if (_logits.empty()) { return -1; }
+  return argmax_(_logits);
+}
+
+metal_compute::SharedBuffer
+MetalQwenModelExec::embed_text_buf(std::span<const std::int32_t> ids)
+{
+  if (_model == nullptr || ids.empty()) { return {}; }
+  return _model->embed_text_buf(
+      std::vector<std::int32_t>(ids.begin(), ids.end()));
+}
+
+bool
+MetalQwenModelExec::branch_context(ContextId parent, ContextId child)
+{
+  if (_model == nullptr) {
+    return false;
+  }
+  const ContextId metal_parent = metal_cid_(parent);
+  if (!metal_parent.valid()) {
+    return false;
+  }
+  ContextId metal_child = _model->context_manager()->branch(metal_parent);
+  if (!metal_child.valid()) {
+    return false;
+  }
+  CtxState st;
+  st.metal_cid = metal_child;
+  std::lock_guard<std::mutex> lk(_ctx_mu);
+  _ctxmap[child.v] = st;
+  return true;
+}
+
+void
+MetalQwenModelExec::release_context(ContextId ctx)
+{
+  if (_model == nullptr) { return; }
+  ContextId cid;
+  {
+    std::lock_guard<std::mutex> lk(_ctx_mu);
+    auto it = _ctxmap.find(ctx.v);
+    if (it == _ctxmap.end()) { return; }
+    cid = it->second.metal_cid;
+    _ctxmap.erase(it);
+  }
+  // Return this context's KV pages to the pool (refcount drop; shared
+  // prefix pages survive until the last brancher releases); the entry
+  // is gone already, so a recycled ContextId re-acquires a fresh root.
+  _model->context_manager()->release(cid);
+}
+
+bool
+MetalQwenModelExec::reserve_branch_context(ContextId child, int max_tokens)
+{
+  if (_model == nullptr) { return false; }
+  (void)max_tokens;
+  auto* cm = _model->context_manager();
+  // Reserve the per-branch SSM/conv + contiguous-KV BUFFERS only (the
+  // expensive, churn-to-reallocate part). Do NOT pre-reserve KV pages:
+  // pinning ~max_tokens/page_tokens pages PER pooled branch held a large
+  // slice of the page pool idle across scenes and starved the scene's
+  // base prefill (a big multi-frame describe-prefix would then fail to
+  // allocate and the prefill returned -1). Branches now allocate their
+  // question/answer pages lazily from the pool and release them each
+  // scene (detach_branch / rebranch), so the full pool is available to
+  // the base prefill.
+  auto ids = cm->reserve_branches(1, /*pages_each=*/0);
+  if (ids.empty() || !ids[0].valid()) { return false; }
+  CtxState st;
+  st.metal_cid = ids[0];
+  std::lock_guard<std::mutex> lk(_ctx_mu);
+  _ctxmap[child.v] = st;
+  return true;
+}
+
+bool
+MetalQwenModelExec::rebranch_context(ContextId parent, ContextId child)
+{
+  if (_model == nullptr) { return false; }
+  const ContextId p = metal_cid_(parent);
+  const ContextId c = metal_cid_(child);
+  if (!p.valid() || !c.valid()) { return false; }
+  return _model->context_manager()->rebranch(c, p);
+}
+
+bool
+MetalQwenModelExec::detach_branch_context(ContextId child)
+{
+  if (_model == nullptr) { return false; }
+  const ContextId c = metal_cid_(child);
+  if (!c.valid()) { return false; }
+  _model->context_manager()->detach_branch(c);
+  return true;
+}
+
+void
+MetalQwenModelExec::set_i8_gemm(bool on)
+{
+  if (_model != nullptr) { _model->set_i8_gemm(on); }
+}
+
+
+void*
+MetalQwenModelExec::query_extension(std::string_view id) noexcept
+{
+  if (id == spec_decode::kExtensionId) {
+    return static_cast<SpecDecodeExt*>(this);
+  }
+  if (id == context_io::kExtensionId) {
+    return static_cast<ContextIoExt*>(this);
+  }
+  return ModelExec::query_extension(id);
+}
+
+bool
+MetalQwenModelExec::export_context(ContextId ctx,
+                                   const ContextManager::ByteSink& out)
+{
+  if (_model == nullptr) { return false; }
+  const ContextId cid = metal_cid_(ctx);
+  if (!cid.valid()) { return false; }
+  return _model->context_manager()->export_context(cid, out);
+}
+
+bool
+MetalQwenModelExec::import_context(ContextId ctx,
+                                   const ContextManager::ByteSource& in)
+{
+  if (_model == nullptr || metal_cid_(ctx).valid()) { return false; }
+  const ContextId cid = _model->context_manager()->import_context(in);
+  if (!cid.valid()) { return false; }
+  std::lock_guard<std::mutex> lk(_ctx_mu);
+  _ctxmap[ctx.v] = CtxState{cid};
+  return true;
+}
+
+std::string_view
+MetalQwenModelExec::drafter() const noexcept
+{
+  if (_model == nullptr) { return {}; }
+  if (const MetalDFlashDrafter* d = _model->dflash()) {
+    return d->config().v2() ? spec_decode::kDrafterDFlash2
+                            : spec_decode::kDrafterDFlash;
+  }
+  return _model->has_mtp() ? spec_decode::kDrafterMtp : std::string_view{};
+}
+
+bool
+MetalQwenModelExec::attach_drafter(const std::string& dir, int bits,
+                                   std::string* err)
+{
+  if (_model == nullptr) {
+    if (err) { *err = "no model"; }
+    return false;
+  }
+  if (dir.empty()) { return _model->attach_dflash(nullptr, err); }
+  MetalDFlashDrafter::Options opt;
+  opt.quant_bits = bits;
+  opt.target_bf16 = _model->config().use_bf16;
+  // A full-attention drafter layer caches the whole context: size it to
+  // what this model's KV can hold.
+  const int kv_cap =
+      _model->config().page_tokens * _model->config().max_pages;
+  opt.max_context = kv_cap > 0 ? std::max(1024, kv_cap) : 32768;
+  auto d = MetalDFlashDrafter::load(open_weight_set(dir, _session), _mc,
+                                    opt, err);
+  if (!d) { return false; }
+  return _model->attach_dflash(std::move(d), err);
+}
+
+bool
+MetalQwenModelExec::generate(const SpecDecodeRequest& rq,
+                             SpecDecodeResult* out)
+{
+  SpecDecodeResult r;
+  if (_model == nullptr || rq.max_tokens <= 0) {
+    if (out) { *out = std::move(r); }
+    return false;
+  }
+  CtxState* st = state_for_(rq.ctx);
+  if (st == nullptr) {
+    if (out) { *out = std::move(r); }
+    return false;
+  }
+  MtpDecodeCtl c;
+  c.rope_first = rq.rope_first;
+  if (rq.is_stop) { c.is_stop = *rq.is_stop; }
+  if (rq.on_tokens) { c.on_round = *rq.on_tokens; }
+  c.hit_stop = &r.hit_stop;
+  c.sampler = rq.sampler;
+  c.prime = rq.prime;
+  std::vector<std::int32_t> ids;
+  bool ok = false;
+  if (_model->has_dflash()) {
+    MetalQwenModel::SpecStats ss;
+    ok = _model->dflash_decode(st->metal_cid, rq.first_token, rq.max_tokens,
+                               ids, c, rq.block, &ss);
+    r.rounds = ss.rounds;
+    r.drafted = ss.drafted;
+    r.accepted = ss.accepted;
+  } else if (_model->has_mtp()) {
+    long acc = 0, rounds = 0;
+    ok = _model->mtp_decode(st->metal_cid, rq.first_token, rq.max_tokens,
+                            ids, /*draft_len=*/1, &acc, &rounds, c);
+    r.rounds = rounds;
+    r.accepted = acc;
+  }
+  r.produced = static_cast<int>(ids.size());
+  if (out) { *out = std::move(r); }
+  return ok;
+}
+
+}  // namespace vpipe::genai

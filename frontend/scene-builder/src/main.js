@@ -1,3 +1,4 @@
+import { fitLockedCamera, configureLockedOrbit } from './camera.js';
 import { initFrameControl } from './poses/frame-control.js';
 import { initBlenderGallery } from './poses/gallery2.js';
 import { captureExactPose, applyExactPose, jointNodes } from './poses/exact-state.js';
@@ -328,8 +329,9 @@ function attachGizmo(mannequin) {
     }
     transformProxy.rotation.copy(mannequin.rotation);
     transformProxy.scale.copy(mannequin.scale);
-    transformControl.attach(transformProxy);
-    connectionLine.visible = true;
+    // Character transforms are edited in Properties; keep viewport handles detached.
+    transformControl.detach();
+    connectionLine.visible = false;
     updateLayerWindow();
   }
 
@@ -644,6 +646,7 @@ function addMannequinFromPickedFile() {
 
 // ─── Save/Load Project ────────────────────────────────────────────────────────
 function serializeProject() {
+  fitCamera();
   return {
     ...serializeObjects(),
     camera: {
@@ -669,7 +672,9 @@ async function restoreProject(data) {
   }
   Object.keys(ikEnabled).forEach(key => { ikEnabled[key] = data.ik?.enabled?.[key] ?? false; }); window.ikToggleActive = data.ik?.active ?? false;
   isDraggingIK = false; activeIKHandle = null;
+  fitCamera();
   exportController.restore(data.export);
+  fitCamera(); updateHUDValues();
   updatePropertiesPanel(); updateLayerWindow();
 }
 function saveProject() {
@@ -692,18 +697,27 @@ function loadProject(file, objectOnly = false) {
 
 // ─── HUD Updates ──────────────────────────────────────────────────────────────
 function updateHUDValues() {
-  document.getElementById('cam-pos-x').value = stage.camera.position.x;
-  document.getElementById('cam-pos-y').value = stage.camera.position.y;
-  document.getElementById('cam-pos-z').value = stage.camera.position.z;
-  document.getElementById('val-cam-pos-x').textContent = stage.camera.position.x.toFixed(1);
-  document.getElementById('val-cam-pos-y').textContent = stage.camera.position.y.toFixed(1);
-  document.getElementById('val-cam-pos-z').textContent = stage.camera.position.z.toFixed(1);
-  document.getElementById('cam-rot-x').value = THREE.MathUtils.radToDeg(stage.camera.rotation.x);
-  document.getElementById('cam-rot-y').value = THREE.MathUtils.radToDeg(stage.camera.rotation.y);
-  document.getElementById('cam-rot-z').value = THREE.MathUtils.radToDeg(stage.camera.rotation.z);
-  document.getElementById('val-cam-rot-x').textContent = THREE.MathUtils.radToDeg(stage.camera.rotation.x).toFixed(1) + '°';
-  document.getElementById('val-cam-rot-y').textContent = THREE.MathUtils.radToDeg(stage.camera.rotation.y).toFixed(1) + '°';
-  document.getElementById('val-cam-rot-z').textContent = THREE.MathUtils.radToDeg(stage.camera.rotation.z).toFixed(1) + '°';
+  if (!stage?.controls) return;
+  const degrees = THREE.MathUtils.radToDeg(stage.controls.getAzimuthalAngle());
+  document.getElementById('cam-orbit').value = degrees;
+  document.getElementById('val-cam-orbit').textContent = degrees.toFixed(0) + '°';
+}
+
+function fitCamera() {
+  if (!stage?.controls || !activeMannequin) return;
+  const height = stage.renderer.domElement.clientHeight;
+  const top = Math.min(0.35, 130 / Math.max(1, height));
+  const frame = exportController?.getFrame() ?? { x: 0, y: top, width: 1, height: 1 - top };
+  fitLockedCamera(stage.camera, stage.controls, activeMannequin, frame);
+}
+
+function setCameraOrbit(angle) {
+  const target = stage.controls.target;
+  const distance = Math.max(1, stage.camera.position.distanceTo(target));
+  stage.camera.position.set(target.x + Math.sin(angle) * distance, 0.7, target.z + Math.cos(angle) * distance);
+  stage.controls.update();
+  fitCamera();
+  updateHUDValues();
 }
 
 function updateMannequinHUD() {
@@ -766,8 +780,6 @@ function renderSliders() {
       <button class="btn mannequin-cam-preset" data-preset="back">Back</button>
       <button class="btn mannequin-cam-preset" data-preset="left">Left</button>
       <button class="btn mannequin-cam-preset" data-preset="right">Right</button>
-      <button class="btn mannequin-cam-preset" data-preset="top">Top</button>
-      <button class="btn mannequin-cam-preset" data-preset="bottom">Bottom</button>
     </div>
   </div>`;
   
@@ -872,34 +884,12 @@ function setupSliderListeners() {
       const preset = e.target.dataset.preset;
       const torso = activeMannequin.torso;
       
-      const distance = 5; // distance from torso
-      const offsets = {
-        front: new THREE.Vector3(distance, 0, 0),
-        back: new THREE.Vector3(-distance, 0, 0),
-        left: new THREE.Vector3(0, 0, -distance),
-        right: new THREE.Vector3(0, 0, distance),
-        top: new THREE.Vector3(0, distance, 0),
-        bottom: new THREE.Vector3(0, -distance, 0)
-      };
-
-      const offset = offsets[preset].clone();
-      
-      // Apply torso's world rotation to the offset
+      const angles = { front: Math.PI / 2, back: -Math.PI / 2, left: Math.PI, right: 0 };
       const torsoWorldQuat = new THREE.Quaternion();
       torso.getWorldQuaternion(torsoWorldQuat);
-      offset.applyQuaternion(torsoWorldQuat);
-
-      // Get torso's world position
-      const torsoWorldPos = new THREE.Vector3();
-      torso.getWorldPosition(torsoWorldPos);
-
-      // Set camera position and target
-      stage.camera.position.copy(torsoWorldPos).add(offset);
-      stage.controls.target.copy(torsoWorldPos);
-      
-      stage.camera.lookAt(torsoWorldPos);
-      stage.controls.update();
-      updateHUDValues();
+      const forward = new THREE.Vector3(1, 0, 0).applyQuaternion(torsoWorldQuat);
+      const yaw = Math.hypot(forward.x, forward.z) > 1e-6 ? Math.atan2(forward.x, forward.z) - Math.PI / 2 : 0;
+      setCameraOrbit(angles[preset] + yaw);
     });
   });
 }
@@ -959,39 +949,10 @@ function setupKeyboardShortcuts() {
 
 // ─── Camera HUD Listeners ─────────────────────────────────────────────────────
 function setupHUDListeners() {
-  ['x', 'y', 'z'].forEach(a => {
-    const rng = document.getElementById(`cam-pos-${a}`);
-    const num = document.getElementById(`val-cam-pos-${a}`);
-    const inc = document.getElementById(`btn-cam-pos-${a}-inc`);
-    const dec = document.getElementById(`btn-cam-pos-${a}-dec`);
-    rng.addEventListener('input', () => { stage.camera.position[a] = +rng.value; num.textContent = rng.value; });
-    inc.addEventListener('click', () => { stage.camera.position[a] += 1; updateHUDValues(); });
-    dec.addEventListener('click', () => { stage.camera.position[a] -= 1; updateHUDValues(); });
-  });
-  ['x', 'y', 'z'].forEach(a => {
-    const rng = document.getElementById(`cam-rot-${a}`);
-    const num = document.getElementById(`val-cam-rot-${a}`);
-    const inc = document.getElementById(`btn-cam-rot-${a}-inc`);
-    const dec = document.getElementById(`btn-cam-rot-${a}-dec`);
-    rng.addEventListener('input', () => {
-      stage.camera.rotation[a] = THREE.MathUtils.degToRad(+rng.value);
-      num.textContent = rng.value + '°';
-    });
-    inc.addEventListener('click', () => {
-      stage.camera.rotation[a] = THREE.MathUtils.degToRad(THREE.MathUtils.radToDeg(stage.camera.rotation[a]) + 0.5);
-      updateHUDValues();
-    });
-    dec.addEventListener('click', () => {
-      stage.camera.rotation[a] = THREE.MathUtils.degToRad(THREE.MathUtils.radToDeg(stage.camera.rotation[a]) - 0.5);
-      updateHUDValues();
-    });
-  });
-  document.querySelectorAll('.cam-preset-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const pos = { front: [0, 0.7, 7], back: [0, 0.7, -7], left: [-7, 0.7, 0], right: [7, 0.7, 0], top: [0, 10, 0.01] }[btn.dataset.preset];
-      if (pos) { stage.camera.position.set(...pos); updateHUDValues(); }
-    });
-  });
+  document.getElementById('cam-orbit').addEventListener('input', e => setCameraOrbit(THREE.MathUtils.degToRad(+e.target.value)));
+  for (const [id, step] of [['cam-orbit-dec', -5], ['cam-orbit-inc', 5]]) {
+    document.getElementById(id).addEventListener('click', () => setCameraOrbit(stage.controls.getAzimuthalAngle() + THREE.MathUtils.degToRad(step)));
+  }
 }
 
 // ─── Mouse Interaction ────────────────────────────────────────────────────────
@@ -1132,7 +1093,7 @@ function init() {
   stage.renderer.shadowMap.enabled = true; stage.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   oldRenderer.domElement.replaceWith(stage.renderer.domElement); oldRenderer.dispose();
   stage.controls = new OrbitControls(stage.camera, stage.renderer.domElement);
-  stage.controls.enableDamping = true; stage.controls.target.set(0, 0.7, 0); stage.controls.update();
+  configureLockedOrbit(stage.controls); stage.controls.target.set(0, 0.7, 0); stage.controls.update();
   window.addEventListener('resize', () => {
     stage.camera.aspect = window.innerWidth / window.innerHeight; stage.camera.updateProjectionMatrix();
     stage.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -1153,6 +1114,7 @@ function init() {
   stage.scene.add(connectionLine);
 
   transformControl = new TransformControls(stage.camera, stage.renderer.domElement);
+  transformControl.enabled = false;
   transformControl.userData.exportHideWhenGizmoDisabled = true;
   transformControl.traverse(obj => {
     obj.userData.exportHideWhenGizmoDisabled = true;
@@ -1187,14 +1149,12 @@ function init() {
     getSelection: () => activeMannequin, getSubjects: () => [...mannequins, ...importedModels],
   });
   initIKHandles();
-  exportController = initExportSystem(stage, THREE, capture => editorBridge.sendCapture(capture), () => lightingController.flush(true));
+  exportController = initExportSystem(stage, THREE, capture => editorBridge.sendCapture(capture), () => { fitCamera(); lightingController.flush(true); });
   setupHUDListeners();
   setupKeyboardShortcuts();
 
   document.getElementById('btn-focus-center').addEventListener('click', () => {
-    stage.camera.position.set(0, 0.7, 7);
-    stage.controls.target.set(0, 0.7, 0);
-    updateHUDValues();
+    setCameraOrbit(0);
   });
 
   const btnTranslate = document.getElementById('btn-gizmo-translate');
@@ -1286,6 +1246,7 @@ function init() {
 
   // Create initial mannequin
   addMannequin();
+  fitCamera();
 }
 
 function addMannequin(poseName = 'Default') {
@@ -1332,7 +1293,7 @@ initBlenderGallery({
 
 const defaultProject = serializeProject();
 function animate() {
-  stage.controls.update(); stage.animationLoop?.(); lightingController.flush(); lightingUI.updateOverlays(); stage.renderer.render(stage.scene, stage.camera);
+  stage.controls.update(); stage.animationLoop?.(); fitCamera(); lightingController.flush(); lightingUI.updateOverlays(); stage.renderer.render(stage.scene, stage.camera);
 }
 editorBridge = initEditorBridge({
   whenIdle,

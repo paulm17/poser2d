@@ -312,10 +312,9 @@ body {
   pointer-events: none;
   overflow: hidden;
 }
-#export-resize-handle {
+.export-resize-handle {
   position: absolute;
-  right: -10px;
-  bottom: -10px;
+  touch-action: none;
   width: 22px;
   height: 22px;
   border: 1px solid rgba(255,255,255,0.35);
@@ -517,3 +516,11 @@ input:checked + .slider:before {
 
 #lighting-panel label > span { min-width: 90px; flex: 1; }
 #lighting-panel label input[type=range] { width: 80px; flex: 1; }
+
+.export-resize-handle[data-corner="nw"] { left: -10px; top: -10px; cursor: nwse-resize; }
+.export-resize-handle[data-corner="ne"] { right: -10px; top: -10px; cursor: nesw-resize; }
+.export-resize-handle[data-corner="sw"] { left: -10px; bottom: -10px; cursor: nesw-resize; }
+.export-resize-handle[data-corner="se"] { right: -10px; bottom: -10px; cursor: nwse-resize; }
+
+/* Keep editor HUDs out of the crop workspace while Export is open. */
+#camera-hud.export-hidden, #mannequin-pos-hud.export-hidden { display: none; }

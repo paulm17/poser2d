@@ -522,6 +522,17 @@ impl Engine {
             return;
         }
         let mut graph: Value = serde_json::from_str(&work.args[1]).expect("generated graph");
+        match finalize_reference_sizes(&mut graph) {
+            Ok(messages) => {
+                for message in messages {
+                    self.log(&work.id, &message);
+                }
+            }
+            Err(error) => {
+                self.finish(&work.id, "failed", Some(error));
+                return;
+            }
+        }
         graph["stages"][0]["config"]["hf_dir"] = json!(pack);
         work.args[1] = graph.to_string();
         self.log(
@@ -1028,7 +1039,7 @@ fn image_pipeline(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Va
                 &resize,
                 "image-resample",
                 vec![port(&load)],
-                json!({"width":1024,"height":1024,"fit":"pad","algorithm":"lanczos"}),
+                json!({"fit":"stretch","algorithm":"bilinear"}),
             ));
             inputs.push(port(&resize));
         }
@@ -1045,7 +1056,7 @@ fn image_pipeline(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Va
             "ref-resample",
             "image-resample",
             vec![port("load-ref")],
-            json!({"width":1024,"height":1024,"fit":"pad","algorithm":"lanczos"}),
+            json!({"fit":"stretch","algorithm":"bilinear"}),
         ));
         stages.push(stage(
             "vae-encode",
@@ -1295,6 +1306,90 @@ fn reference_index(follow: &str, count: usize) -> Result<usize, String> {
         .map(|i| i - 1)
         .ok_or_else(|| "Enhancer ratio_follow names a nonexistent reference image".into())
 }
+fn finalize_reference_sizes(graph: &mut Value) -> Result<Vec<String>, String> {
+    let stages = graph["stages"]
+        .as_array_mut()
+        .ok_or("Invalid image pipeline")?;
+    let generation = stages
+        .iter()
+        .find(|s| s["id"] == "generate-image")
+        .ok_or("Missing image generation stage")?;
+    let width = generation["config"]["width"]
+        .as_u64()
+        .filter(|w| *w > 0)
+        .ok_or("Missing output width")?;
+    let height = generation["config"]["height"]
+        .as_u64()
+        .filter(|h| *h > 0)
+        .ok_or("Missing output height")?;
+    let mut sizes = Vec::new();
+    for stage in stages.iter().filter(|s| s["type"] == "image-resample") {
+        let load_id = stage["iports"][0]["src"]
+            .as_str()
+            .ok_or("Missing reference input")?;
+        let load = stages
+            .iter()
+            .find(|s| s["id"] == load_id)
+            .ok_or("Missing reference loader")?;
+        let url = &load["config"]["url"];
+        let path = url
+            .as_str()
+            .or_else(|| url[0].as_str())
+            .ok_or("Missing reference path")?;
+        let (w, h) = image::image_dimensions(path)
+            .map_err(|e| format!("Cannot read reference {path}: {e}"))?;
+        let (rw, rh) = edit_reference_size(w, h, width, height)?;
+        sizes.push((
+            stage["id"]
+                .as_str()
+                .ok_or("Missing resample id")?
+                .to_owned(),
+            w,
+            h,
+            rw,
+            rh,
+        ));
+    }
+    let mut messages = Vec::new();
+    let mut area = 1024u64;
+    for (id, w, h, rw, rh) in sizes {
+        let stage = stages.iter_mut().find(|s| s["id"] == id).unwrap();
+        stage["config"]["width"] = json!(rw);
+        stage["config"]["height"] = json!(rh);
+        area = area.max(u64::from(rw) * u64::from(rh));
+        messages.push(format!(
+            "[vpipe] reference {id}: {w}x{h} -> {rw}x{rh}, output {width}x{height}"
+        ));
+    }
+    if !messages.is_empty() {
+        let config = &mut stages
+            .iter_mut()
+            .find(|s| s["id"] == "model-config")
+            .ok_or("Missing model config stage")?["config"];
+        config["vl_long_edge"] = json!(0);
+        config["vl_min_pixels"] = json!(1024);
+        config["vl_pixel_budget"] = json!(area);
+        config["vl_max_pixels"] = json!(area);
+    }
+    Ok(messages)
+}
+
+fn edit_reference_size(w: u32, h: u32, output_w: u64, output_h: u64) -> Result<(u32, u32), String> {
+    if w == 0 || h == 0 || output_w == 0 || output_h == 0 {
+        return Err("Reference and output dimensions must be positive".into());
+    }
+    let ratio = f64::from(w) / f64::from(h);
+    let width = (output_w as f64 * output_h as f64 * ratio).sqrt();
+    let align = |n: f64| -> Result<u32, String> {
+        let n = (n / 32.0).round().max(1.0) * 32.0;
+        if !n.is_finite() || n > u32::MAX as f64 {
+            return Err("Calculated reference dimensions are too large".into());
+        }
+        Ok(n as u32)
+    };
+    Ok((align(width)?, align(width / ratio)?))
+}
+
 fn reference_size(w: u32, h: u32) -> (u32, u32) {
     let ratio = f64::from(w) / f64::from(h);
     let width = (1024.0 * 1024.0 * ratio).sqrt();
@@ -1328,6 +1423,175 @@ fn ratio_size(ratio: &str) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn edit_references_follow_output_area_and_alignment() {
+        for size in [128, 256, 512, 1024, 1536, 4096] {
+            assert_eq!(
+                edit_reference_size(1254, 1254, size, size).unwrap(),
+                (size as u32, size as u32)
+            );
+        }
+        assert_eq!(edit_reference_size(446, 724, 256, 256).unwrap(), (192, 320));
+        assert_eq!(edit_reference_size(724, 446, 256, 256).unwrap(), (320, 192));
+        assert_eq!(edit_reference_size(100, 100, 320, 800).unwrap(), (512, 512));
+        assert_eq!(edit_reference_size(1, 8192, 128, 128).unwrap().0, 32);
+        assert!(edit_reference_size(0, 100, 256, 256).is_err());
+    }
+
+    #[test]
+    fn finalized_references_share_geometry_and_follow_final_canvas() {
+        let root = std::env::temp_dir().join(format!("reference-sizing-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let refs = vec![root.join("pose.png"), root.join("avatar.png")];
+        image::RgbaImage::new(446, 724).save(&refs[0]).unwrap();
+        image::RgbaImage::new(1254, 1254).save(&refs[1]).unwrap();
+        let r = request(&root, "vpipe", "edit");
+        for inputs in [&refs[..1], &refs[..]] {
+            let mut graph = image_pipeline(&r, inputs, &root.join("out.png"));
+            for stage in graph["stages"].as_array_mut().unwrap() {
+                if stage["id"] == "generate-image" {
+                    stage["config"]["width"] = json!(256);
+                    stage["config"]["height"] = json!(256);
+                }
+            }
+            assert_eq!(
+                finalize_reference_sizes(&mut graph).unwrap().len(),
+                inputs.len()
+            );
+            let stages = graph["stages"].as_array().unwrap();
+            let sizes: Vec<_> = stages
+                .iter()
+                .filter(|s| s["type"] == "image-resample")
+                .collect();
+            assert_eq!(sizes[0]["config"]["width"], 192);
+            assert_eq!(sizes[0]["config"]["height"], 320);
+            assert_eq!(sizes[0]["config"]["fit"], "stretch");
+            let config = &stages.iter().find(|s| s["id"] == "model-config").unwrap()["config"];
+            assert_eq!(config["vl_min_pixels"], 1024);
+            assert!(config["vl_pixel_budget"].as_u64().unwrap() >= 192 * 320);
+            if inputs.len() == 2 {
+                assert_eq!(sizes[1]["config"]["width"], 256);
+                let list = stages.iter().find(|s| s["id"] == "ref-list").unwrap();
+                assert_eq!(
+                    list["iports"],
+                    json!([port("ref-resample-0"), port("ref-resample-1")])
+                );
+                assert_eq!(
+                    stages.iter().find(|s| s["id"] == "vae-encode").unwrap()["iports"][2],
+                    port("ref-list")
+                );
+                assert_eq!(
+                    stages
+                        .iter()
+                        .find(|s| s["id"] == "diffusion-conditioner")
+                        .unwrap()["iports"][6],
+                    port("ref-list")
+                );
+            } else {
+                assert_eq!(
+                    stages.iter().find(|s| s["id"] == "vae-encode").unwrap()["iports"][0],
+                    port("ref-resample")
+                );
+                assert_eq!(
+                    stages
+                        .iter()
+                        .find(|s| s["id"] == "diffusion-conditioner")
+                        .unwrap()["iports"][3],
+                    port("ref-resample")
+                );
+            }
+        }
+        let mut graph = image_pipeline(&r, &refs[1..], &root.join("out.png"));
+        for stage in graph["stages"].as_array_mut().unwrap() {
+            if stage["id"] == "generate-image" {
+                stage["config"]["width"] = json!(320);
+                stage["config"]["height"] = json!(800);
+            }
+        }
+        finalize_reference_sizes(&mut graph).unwrap();
+        let stages = graph["stages"].as_array().unwrap();
+        let config = &stages.iter().find(|s| s["id"] == "model-config").unwrap()["config"];
+        assert_eq!(config["vl_pixel_budget"], 512 * 512);
+        assert_eq!(config["vl_max_pixels"], 512 * 512);
+        let resize = stages.iter().find(|s| s["id"] == "ref-resample").unwrap();
+        assert_eq!(resize["config"]["width"], 512);
+        assert_eq!(resize["config"]["height"], 512);
+        let mut graph = image_pipeline(&r, &[root.join("missing.png")], &root.join("out.png"));
+        assert!(
+            finalize_reference_sizes(&mut graph)
+                .unwrap_err()
+                .contains("Cannot read reference")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "real Metal inference with locally cached models and supplied desktop references"]
+    async fn ui_sized_pose_edit_256() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let out = root.join("artifacts/vpipe-256-diagnosis/app-worker");
+        let engine = Engine::new(out.clone(), &tokio::runtime::Handle::current());
+        let mut r = request(
+            &root,
+            "",
+            "Change the pose of <image2> to match <image1>. Keep her appearance and clothing.",
+        );
+        r.paths = cached_paths(
+            root.join("vpipe/build/apps/vpipe/vpipe")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        r.paths.quant_bits = 8;
+        r.paths.pose_enabled = true;
+        r.paths.pose_strength = 0.7;
+        r.settings.width = Some(256);
+        r.settings.height = Some(256);
+        r.settings.steps = 8;
+        r.settings.cfg = 1.0;
+        r.settings.seed = 42;
+        r.settings.enhance = false;
+        r.references = [
+            "/Volumes/Data/Users/paul/Desktop/scene.png",
+            "/Volumes/Data/Users/paul/Desktop/1.png",
+        ]
+        .iter()
+        .map(|p| Reference {
+            png: STANDARD.encode(std::fs::read(p).unwrap()),
+        })
+        .collect();
+        let id = engine.submit(r).unwrap()["id"].as_str().unwrap().to_owned();
+        let job = tokio::time::timeout(std::time::Duration::from_secs(600), async {
+            loop {
+                let snapshot = engine.snapshot();
+                let job = snapshot["jobs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|j| j["id"] == id)
+                    .unwrap()
+                    .clone();
+                if matches!(
+                    job["state"].as_str(),
+                    Some("completed" | "failed" | "cancelled")
+                ) {
+                    break job;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(job["state"], "completed", "{job}");
+        assert_eq!(
+            image::image_dimensions(out.join(&id).join("output.png")).unwrap(),
+            (256, 256)
+        );
+        println!(
+            "Validated output: {}",
+            out.join(id).join("output.png").display()
+        );
+    }
+
     fn request(root: &std::path::Path, cli: &str, prompt: &str) -> Request {
         let mut paths = cached_paths_in(root, cli.into());
         paths.model = root.join("model").to_string_lossy().into_owned();

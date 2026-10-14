@@ -18,60 +18,16 @@
     <!-- App Container -->
     <div id="app">
       <!-- Camera HUD -->
-      <div id="camera-hud" class="glass-panel" style="top: 24.1px; left: 24.1px; padding: 15.1px; font-family: monospace; font-size: 11.1px; gap: 10.1px; min-width: 320.1px; pointer-events: auto;">
+      <div id="camera-hud" class="glass-panel" style="top: 130px; left: 24.1px; padding: 15.1px; font-family: monospace; font-size: 11.1px; gap: 10.1px; min-width: 320.1px; pointer-events: auto;">
         <div style="color: var(--text-secondary); margin-bottom: 4.1px; font-weight: bold; border-bottom: 1px solid var(--glass-border); padding-bottom: 4.1px;">CAMERA CONTROL</div>
-        <div style="display:flex; flex-direction:column; gap:12.1px;">
-          <!-- Position Control -->
-          <div style="display:flex; flex-direction:column; gap:6.1px;">
-            <div style="font-size: 9.1px; color: var(--text-secondary);">POSITION (X, Y, Z) - Step: 1.0</div>
-            <div style="display:flex; align-items:center; gap:8.1px;">
-              <span style="width:12.1px; color:var(--text-secondary);">X</span>
-              <button class="btn-small" id="btn-cam-pos-x-dec">-</button>
-              <input type="range" id="cam-pos-x" min="-50" max="50" step="0.1" style="flex:1;">
-              <button class="btn-small" id="btn-cam-pos-x-inc">+</button>
-              <span id="val-cam-pos-x" style="width:40.1px; text-align:right;">0.0</span>
-            </div>
-            <div style="display:flex; align-items:center; gap:8.1px;">
-              <span style="width:12.1px; color:var(--text-secondary);">Y</span>
-              <button class="btn-small" id="btn-cam-pos-y-dec">-</button>
-              <input type="range" id="cam-pos-y" min="-50" max="50" step="0.1" style="flex:1;">
-              <button class="btn-small" id="btn-cam-pos-y-inc">+</button>
-              <span id="val-cam-pos-y" style="width:40.1px; text-align:right;">0.0</span>
-            </div>
-            <div style="display:flex; align-items:center; gap:8.1px;">
-              <span style="width:12.1px; color:var(--text-secondary);">Z</span>
-              <button class="btn-small" id="btn-cam-pos-z-dec">-</button>
-              <input type="range" id="cam-pos-z" min="-50" max="50" step="0.1" style="flex:1;">
-              <button class="btn-small" id="btn-cam-pos-z-inc">+</button>
-              <span id="val-cam-pos-z" style="width:40.1px; text-align:right;">0.0</span>
-            </div>
-          </div>
-          <!-- Rotation Control -->
-          <div style="display:flex; flex-direction:column; gap:6.1px;">
-            <div style="font-size: 9.1px; color: var(--text-secondary);">ROTATION (X, Y, Z) - Step: 0.5°</div>
-            <div style="display:flex; align-items:center; gap:8.1px;">
-              <span style="width:12.1px; color:var(--text-secondary);">X</span>
-              <button class="btn-small" id="btn-cam-rot-x-dec">-</button>
-              <input type="range" id="cam-rot-x" min="-180" max="180" step="0.5" style="flex:1;">
-              <button class="btn-small" id="btn-cam-rot-x-inc">+</button>
-              <span id="val-cam-rot-x" style="width:40.1px; text-align:right;">0°</span>
-            </div>
-            <div style="display:flex; align-items:center; gap:8.1px;">
-              <span style="width:12.1px; color:var(--text-secondary);">Y</span>
-              <button class="btn-small" id="btn-cam-rot-y-dec">-</button>
-              <input type="range" id="cam-rot-y" min="-180" max="180" step="0.5" style="flex:1;">
-              <button class="btn-small" id="btn-cam-rot-y-inc">+</button>
-              <span id="val-cam-rot-y" style="width:40.1px; text-align:right;">0°</span>
-            </div>
-            <div style="display:flex; align-items:center; gap:8.1px;">
-              <span style="width:12.1px; color:var(--text-secondary);">Z</span>
-              <button class="btn-small" id="btn-cam-rot-z-dec">-</button>
-              <input type="range" id="cam-rot-z" min="-180" max="180" step="0.5" style="flex:1;">
-              <button class="btn-small" id="btn-cam-rot-z-inc">+</button>
-              <span id="val-cam-rot-z" style="width:40.1px; text-align:right;">0°</span>
-            </div>
-          </div>
+        <label for="cam-orbit">Horizontal orbit</label>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="btn-small" id="cam-orbit-dec" aria-label="Rotate view left">−</button>
+          <input type="range" id="cam-orbit" min="-180" max="180" step="1" value="0" style="flex:1;">
+          <button class="btn-small" id="cam-orbit-inc" aria-label="Rotate view right">+</button>
+          <span id="val-cam-orbit">0°</span>
         </div>
+        <p style="color:var(--text-secondary);">Height locked · Automatic full-body framing</p>
       </div>
 
       <!-- Mannequin POS HUD -->
@@ -215,7 +171,10 @@
       <div id="export-frame">
         <div id="export-frame-toolbar">Export Area</div>
         <div id="annotation-layer"></div>
-        <button id="export-resize-handle" type="button" aria-label="Resize export frame"></button>
+        <button class="export-resize-handle" data-corner="nw" type="button" aria-label="Resize export top left corner"></button>
+<button class="export-resize-handle" data-corner="ne" type="button" aria-label="Resize export top right corner"></button>
+<button class="export-resize-handle" data-corner="sw" type="button" aria-label="Resize export bottom left corner"></button>
+<button class="export-resize-handle" data-corner="se" type="button" aria-label="Resize export bottom right corner"></button>
       </div>
     </div>
 

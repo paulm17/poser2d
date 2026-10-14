@@ -1,3 +1,4 @@
+import { generationAction } from './generation-action';
 import {
   useEffect,
   useRef,
@@ -144,6 +145,11 @@ export function App() {
     catch { return { ...emptyPaths }; }
   });
   const [jobs, setJobs] = useState<Job[]>([]);
+  const submittingRef = useRef(new Set<string>());
+  const [submittingSessions, setSubmittingSessions] = useState<ReadonlySet<string>>(new Set());
+  const cancellingRef = useRef(new Set<string>());
+  const [pendingCancellations, setPendingCancellations] = useState<ReadonlySet<string>>(new Set());
+  const action = generationAction(jobs, active, submittingSessions.has(active), pendingCancellations);
   const [engineConnected, setEngineConnected] = useState(false);
   const completedJobs = useRef(new Set<string>());
   const failedJobs = useRef(new Set<string>());
@@ -359,7 +365,31 @@ export function App() {
     setDialog(null);
     setError("");
   }
+  async function refreshJobs() {
+    const snapshot = await engine.snapshot();
+    setJobs(previous => {
+      const merged = new Map(previous.map(job => [job.id, job]));
+      for (const job of snapshot.jobs) if ((merged.get(job.id)?.revision ?? -1) <= job.revision) merged.set(job.id, job);
+      return [...merged.values()];
+    });
+  }
+  async function cancelGeneration(job: Job) {
+    if (cancellingRef.current.has(job.id) || job.state === 'cancelling') return;
+    cancellingRef.current.add(job.id);
+    setPendingCancellations(new Set(cancellingRef.current));
+    setError("");
+    try {
+      await engine.cancel(job.id);
+      await refreshJobs();
+    } catch (err) {
+      if (activeRef.current === job.session) setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      cancellingRef.current.delete(job.id);
+      setPendingCancellations(new Set(cancellingRef.current));
+    }
+  }
   async function generate() {
+    if (submittingRef.current.has(active) || action.job) return;
     setError("");
     if (!settings.prompt.trim()) {
       setError("Write a prompt first.");
@@ -388,6 +418,9 @@ export function App() {
       setError("CFG must be between 1 and 10.");
       return;
     }
+    const session = active;
+    submittingRef.current.add(session);
+    setSubmittingSessions(new Set(submittingRef.current));
     try {
       const size = plannedSize({ ...settings, enhance: false }, refs);
       const result = await engine.generate({
@@ -406,16 +439,14 @@ export function App() {
         references: refs,
       });
       setLogs(previous => [...previous, `[studio] Queued render ${result.id.slice(0, 8)}.`]);
-      const snapshot = await engine.snapshot();
-      setJobs(previous => {
-        const merged = new Map(previous.map(j => [j.id, j]));
-        for (const job of snapshot.jobs) if ((merged.get(job.id)?.revision ?? -1) <= job.revision) merged.set(job.id, job);
-        return [...merged.values()];
-      });
+      await refreshJobs();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setError(message);
+      if (activeRef.current === session) setError(message);
       setLogs((prev) => [...prev, `[studio] ${message}`]);
+    } finally {
+      submittingRef.current.delete(session);
+      setSubmittingSessions(new Set(submittingRef.current));
     }
   }
   function loadDemo() {
@@ -466,7 +497,6 @@ export function App() {
       ],
     }));
   }
-  const command = `Qwen-Image-2.1 ${isTurbo ? "Turbo" : "Non-Turbo"} · ${modelId.endsWith("8") ? 8 : 4}-bit · ${effectiveSteps} steps · seed ${settings.seed}`;
   const numberField = (
     key: "width" | "height" | "steps" | "seed",
     label: string,
@@ -588,7 +618,8 @@ export function App() {
       {stageOpened && <StageEditor ref={stageRef} sessionId={active} visible={view === 'stage'} onCapture={receiveScene} onBusy={setStageBusy} />}
       {view === 'studio' && (
         <div className="layout">
-          <aside className="panel" aria-label="Parameters">
+          <aside className="panel parameters" aria-label="Parameters">
+            <div className="parameters-scroll">
             <section>
               <div className="label">Model</div>
               <div className="model-picker" ref={modelPopover}>
@@ -855,19 +886,14 @@ export function App() {
                 description="Asks for an alpha channel; the take is always saved as PNG."
               />
             </section>
-            <section>
-              <button className="primary" onClick={generate}>
-                Generate
+            </div>
+            <div className="parameters-action">
+              {error && <p className="errors" role="alert">{error}</p>}
+              <button className="primary" disabled={action.disabled}
+                onClick={() => action.job ? cancelGeneration(action.job) : generate()}>
+                {action.label}
               </button>
-              {error && (
-                <p className="errors" role="alert">
-                  {error}
-                </p>
-              )}
-              <div className="cmd" aria-label="Equivalent command">
-                {command}
-              </div>
-            </section>
+            </div>
           </aside>
           <main className="panel center" aria-label="Preview">
             <section className="stage">
@@ -1088,7 +1114,6 @@ export function App() {
                     <div key={job.id} className="engine-job">
                       <span>{job.settings.prompt.slice(0, 60)}</span>
                       <span className="muted">{job.state} · {job.stage}{job.step > 0 ? ` ${job.step}/${job.total}` : ""}</span>
-                      <button className="btn sm" disabled={job.state === "cancelling"} onClick={() => engine.cancel(job.id).catch(error => setError(String(error)))}>Cancel</button>
                     </div>
                   ))}
                 </div>

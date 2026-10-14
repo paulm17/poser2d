@@ -1,9 +1,10 @@
+import { resizeCrop } from './crop.js';
 export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {}) {
   const exportPanel   = document.getElementById('export-panel');
   const exportMask    = document.getElementById('export-mask');
   const exportFrame   = document.getElementById('export-frame');
   const frameToolbar  = document.getElementById('export-frame-toolbar');
-  const resizeHandle  = document.getElementById('export-resize-handle');
+  const resizeHandles = document.querySelectorAll('.export-resize-handle');
   const annotLayer    = document.getElementById('annotation-layer');
   const annotList     = document.getElementById('annotation-list');
   const presetSelect  = document.getElementById('export-preset');
@@ -13,6 +14,7 @@ export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {})
   const btnAddArrow   = document.getElementById('btn-add-arrow');
   const btnDoExport   = document.getElementById('btn-do-export');
   const uiOverlay     = document.getElementById('ui-overlay');
+  const editorHUDs = ['camera-hud', 'mannequin-pos-hud'].map(id => document.getElementById(id));
   const propertiesPanel = document.getElementById('properties-panel');
   let exportActive = false;
   let propertiesPanelWasHidden = false;
@@ -24,6 +26,7 @@ export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {})
   const frameRect = { x: 0, y: 0, width: 0, height: 0 };
   let frameDrag = null;
   let frameResize = null;
+  let cameraFrame = null;
 
   // Track all annotation objects
   const annotations = []; // { id, type, el, data }
@@ -42,17 +45,8 @@ export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {})
 
   function clampFrame() {
     const canvasRect = getCanvasRect();
-    const aspect = getAspectRatio();
-    const minWidth = Math.min(canvasRect.width, Math.max(220, aspect >= 1 ? 220 : 180 * aspect));
-    const maxWidth = Math.min(canvasRect.width, canvasRect.height * aspect);
-
-    frameRect.width = Math.min(Math.max(frameRect.width, minWidth), maxWidth);
-    frameRect.height = frameRect.width / aspect;
-
-    if (frameRect.height > canvasRect.height) {
-      frameRect.height = canvasRect.height;
-      frameRect.width = frameRect.height * aspect;
-    }
+    frameRect.width = Math.min(Math.max(frameRect.width, 8), canvasRect.width);
+    frameRect.height = Math.min(Math.max(frameRect.height, 8), canvasRect.height);
 
     const maxX = canvasRect.right - frameRect.width;
     const maxY = canvasRect.bottom - frameRect.height;
@@ -95,6 +89,10 @@ export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {})
 
     clampFrame();
     applyFrameRect();
+    // Fit once to the preset frame; subsequent corner drags crop this view.
+    cameraFrame = { x: (frameRect.x - canvasRect.left) / canvasRect.width,
+      y: (frameRect.y - canvasRect.top) / canvasRect.height,
+      width: frameRect.width / canvasRect.width, height: frameRect.height / canvasRect.height };
   }
 
   document.getElementById('btn-export').addEventListener('click', () => {
@@ -103,6 +101,7 @@ export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {})
     exportMask.classList.remove('hidden');
     propertiesPanelWasHidden = propertiesPanel.classList.contains('hidden');
     uiOverlay.classList.add('hidden');
+    editorHUDs.forEach(panel => panel.classList.add('export-hidden'));
     propertiesPanel.classList.add('hidden');
     updateFrameSize(true);
     if (stage.controls) stage.controls.enabled = false;
@@ -114,6 +113,7 @@ export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {})
     exportPanel.classList.add('hidden');
     exportMask.classList.add('hidden');
     uiOverlay.classList.remove('hidden');
+    editorHUDs.forEach(panel => panel.classList.remove('export-hidden'));
     if (!propertiesPanelWasHidden) propertiesPanel.classList.remove('hidden');
     frameDrag = null;
     frameResize = null;
@@ -132,7 +132,7 @@ export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {})
       frameRect.x = next.left + (frameRect.x - previousCanvas.left) * next.width / previousCanvas.width;
       frameRect.y = next.top + (frameRect.y - previousCanvas.top) * next.height / previousCanvas.height;
       frameRect.width *= next.width / previousCanvas.width;
-      frameRect.height = frameRect.width / getAspectRatio();
+      frameRect.height *= next.height / previousCanvas.height;
       clampFrame(); applyFrameRect();
     }
     previousCanvas = next;
@@ -152,9 +152,10 @@ export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {})
     e.stopPropagation();
   });
 
-  resizeHandle.addEventListener('pointerdown', e => {
+  resizeHandles.forEach(handle => handle.addEventListener('pointerdown', e => {
     if (!exportActive) return;
     frameResize = {
+      corner: handle.dataset.corner,
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
@@ -163,10 +164,10 @@ export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {})
       x: frameRect.x,
       y: frameRect.y,
     };
-    resizeHandle.setPointerCapture(e.pointerId);
+    handle.setPointerCapture(e.pointerId);
     e.preventDefault();
     e.stopPropagation();
-  });
+  }));
 
   window.addEventListener('pointermove', e => {
     if (frameDrag && e.pointerId === frameDrag.pointerId) {
@@ -177,22 +178,18 @@ export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {})
     }
 
     if (frameResize && e.pointerId === frameResize.pointerId) {
-      const aspect = getAspectRatio();
-      const widthFromX = frameResize.width + (e.clientX - frameResize.startX);
-      const widthFromY = (frameResize.height + (e.clientY - frameResize.startY)) * aspect;
-      frameRect.width = Math.abs(widthFromX - frameResize.width) >= Math.abs(widthFromY - frameResize.width) ? widthFromX : widthFromY;
-      frameRect.height = frameRect.width / aspect;
-      frameRect.x = frameResize.x;
-      frameRect.y = frameResize.y;
-      clampFrame();
+      Object.assign(frameRect, resizeCrop(frameResize, frameResize.corner,
+        e.clientX - frameResize.startX, e.clientY - frameResize.startY, getCanvasRect()));
       applyFrameRect();
     }
   });
 
-  window.addEventListener('pointerup', e => {
+  const finishPointer = e => {
     if (frameDrag && e.pointerId === frameDrag.pointerId) frameDrag = null;
     if (frameResize && e.pointerId === frameResize.pointerId) frameResize = null;
-  });
+  };
+  window.addEventListener('pointerup', finishPointer);
+  window.addEventListener('pointercancel', finishPointer);
 
   // ── Annotation helpers ──────────────────────────────────────────────────────
   function getFrameScale() {
@@ -462,6 +459,7 @@ export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {})
   sendButton.addEventListener('click', () => run(() => onSend(() => capture())));
 
   return {
+    getFrame() { return exportActive ? cameraFrame : null; },
     snapshot() {
       const rect = getCanvasRect();
       return {
@@ -469,7 +467,7 @@ export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {})
         gizmo: document.getElementById('export-gizmo').checked,
         coordinates: document.getElementById('export-coordinates').checked,
         includeBackground: document.getElementById('export-background').checked,
-        frame: rect.width && rect.height ? { x: (frameRect.x - rect.left) / rect.width, y: (frameRect.y - rect.top) / rect.height, width: frameRect.width / rect.width } : null,
+        frame: rect.width && rect.height ? { x: (frameRect.x - rect.left) / rect.width, y: (frameRect.y - rect.top) / rect.height, width: frameRect.width / rect.width, height: frameRect.height / rect.height } : null,
         annotations: annotations.map(a => ({ ...a.data })),
       };
     },
@@ -483,11 +481,12 @@ export function initExportSystem(stage, THREE, onSend, beforeCapture = () => {})
       document.getElementById('export-background').checked = data?.includeBackground ?? true;
       for (const a of data?.annotations ?? []) { if (a.type === 'text') addText(a); else if (a.type === 'arrow') addArrow(a); }
       selectAnnotation(null);
+      beforeCapture();
       if (data?.active) document.getElementById('btn-export').click();
       if (data?.frame) {
         const rect = getCanvasRect();
         frameRect.x = rect.left + data.frame.x * rect.width; frameRect.y = rect.top + data.frame.y * rect.height;
-        frameRect.width = data.frame.width * rect.width; frameRect.height = frameRect.width / getAspectRatio();
+        frameRect.width = data.frame.width * rect.width; frameRect.height = data.frame.height === undefined ? frameRect.width / getAspectRatio() : data.frame.height * rect.height;
         clampFrame(); applyFrameRect();
       }
       message.textContent = '';

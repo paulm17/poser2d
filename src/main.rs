@@ -13,6 +13,7 @@ fn main() {
     let engine = engine::Engine::new(root, runtime.handle());
     let submit = engine.clone();
     let cancel = engine.clone();
+    let splat = engine.clone();
     let snapshot = engine.clone();
     let ready = engine.clone();
     let shutdown = engine.clone();
@@ -21,6 +22,9 @@ fn main() {
         .assets(|path| Assets::get(path))
         .register_ipc("submit_generation", move |args| {
             submit.submit(serde_json::from_value(args.clone()).map_err(|e| e.to_string())?)
+        })
+        .register_ipc("submit_splat", move |args| {
+            splat.submit_splat(args["source_take"].as_str().ok_or("Missing source take")?)
         })
         .register_ipc("cancel_generation", move |args| {
             cancel.cancel(args["id"].as_str().ok_or("Missing job ID")?)

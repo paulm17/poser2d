@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TripoSplat viewer</title>
+<style>
+  body { margin: 0; background: #171717; color: white; font: 14px system-ui; }
+  canvas { display: block; }
+  #tools { position: fixed; bottom: 12px; right: 12px; pointer-events: none; padding: 12px; background: #222d; border-radius: 6px; z-index: 1; }
+  button, input { margin: 4px 0; }
+  #status { margin-top: 6px; max-width: 480px; }
+</style>
+<div id="tools"><div>Drag to orbit · Scroll to zoom · Right-drag to pan</div><div id="status">Loading splat…</div></div>
+<script type="importmap">
+{"imports":{
+  "three":"./vendor/three.module.js",
+  "three/addons/controls/OrbitControls.js":"./vendor/OrbitControls.js",
+  "three/addons/postprocessing/Pass.js":"./vendor/Pass.js",
+  "@sparkjsdev/spark":"./vendor/spark.module.js"
+}}
+</script>
+<script>
+window.addEventListener('error', event => {
+  document.querySelector('#status').textContent = `Could not initialize viewer: ${event.message}`;
+});
+window.addEventListener('unhandledrejection', event => {
+  document.querySelector('#status').textContent = `Could not load splat: ${event.reason?.message ?? event.reason}`;
+});
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
+
+const status = document.querySelector('#status');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#171717');
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.01, 100);
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+scene.add(new SparkRenderer({ renderer }));
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+let mesh, request = 0;
+
+function reset() {
+  controls.target.set(0, 0, 0);
+  camera.position.set(0, 0, 1.6);
+  controls.update();
+}
+async function load(options, name) {
+  const id = ++request;
+  status.textContent = `Loading ${name}…`;
+  let next;
+  try {
+    next = new SplatMesh(options);
+    await next.initialized;
+    if (id !== request) { next.dispose(); return; }
+    if (mesh) { scene.remove(mesh); mesh.dispose(); }
+    mesh = next;
+    // TripoSplat exports in viewer coordinates; Spark uses Three.js coordinates.
+    mesh.rotation.x = Math.PI;
+    const box = mesh.getBoundingBox();
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const scale = 1 / Math.max(size.x, size.y, size.z, 0.001);
+    mesh.scale.setScalar(scale);
+    mesh.position.copy(center.multiplyScalar(scale).applyQuaternion(mesh.quaternion).negate());
+    scene.add(mesh);
+    reset();
+    status.textContent = `${name} — ${mesh.numSplats.toLocaleString()} Gaussians`;
+  } catch (error) {
+    next?.dispose();
+    if (id === request) status.textContent = `Could not load ${name}: ${error.message}`;
+    console.error(error);
+  }
+}
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+let last = 0;
+renderer.setAnimationLoop((time) => {
+  controls.autoRotate = false;
+  controls.autoRotateSpeed = 1;
+  controls.update(Math.min((time - last) / 1000, 0.1));
+  last = time;
+  renderer.render(scene, camera);
+});
+reset();
+const url = new URLSearchParams(location.search).get('url');
+if (url) load({ url, fileType: 'splat' }, 'Splat');
+else status.textContent = 'No splat selected';
+let disposed = false;
+function dispose() {
+  if (disposed) return;
+  disposed = true;
+  ++request;
+  renderer.setAnimationLoop(null);
+  controls.dispose();
+  mesh?.dispose();
+  scene.traverse(object => { if (object instanceof SparkRenderer) object.dispose?.(); });
+  renderer.dispose();
+}
+window.disposeSplatViewer = dispose;
+window.addEventListener('pagehide', dispose);
+</script>
+</html>

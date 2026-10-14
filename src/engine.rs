@@ -102,6 +102,8 @@ pub struct Request {
 }
 #[derive(Clone, Serialize)]
 pub struct Job {
+    pub kind: String,
+    pub source_take: Option<String>,
     pub enhanced_prompt: Option<String>,
     pub revision: u64,
     pub id: String,
@@ -127,6 +129,7 @@ struct Enhancement {
     references: Vec<PathBuf>,
 }
 struct Work {
+    splat: Option<SplatWork>,
     enhancement: Option<Enhancement>,
     references: Vec<Reference>,
     id: String,
@@ -234,6 +237,197 @@ impl Engine {
     pub fn shutdown(&self) {
         for cancel in self.state.lock().unwrap().cancels.values() {
             cancel.send_replace(true);
+        }
+    }
+    pub fn submit_splat(&self, source: &str) -> Result<Value, String> {
+        {
+            let state = self.state.lock().unwrap();
+            if !state
+                .jobs
+                .iter()
+                .any(|j| j.id == source && j.kind == "image" && j.state == "completed")
+            {
+                return Err("Select a completed generated image".into());
+            }
+            if let Some(existing) = state.jobs.iter().find(|j| {
+                j.source_take.as_deref() == Some(source)
+                    && matches!(
+                        j.state.as_str(),
+                        "queued" | "running" | "cancelling" | "completed"
+                    )
+            }) {
+                return Ok(json!({"id":existing.id}));
+            }
+        }
+        self.submit_splat_with_runtime(source, splat_runtime()?)
+    }
+    fn submit_splat_with_runtime(
+        &self,
+        source: &str,
+        runtime: SplatRuntime,
+    ) -> Result<Value, String> {
+        let mut state = self.state.lock().unwrap();
+        let original = state
+            .jobs
+            .iter()
+            .find(|j| j.id == source && j.kind == "image" && j.state == "completed")
+            .cloned()
+            .ok_or("Select a completed generated image")?;
+        if let Some(existing) = state.jobs.iter().find(|j| {
+            j.source_take.as_deref() == Some(source)
+                && matches!(
+                    j.state.as_str(),
+                    "queued" | "running" | "cancelling" | "completed"
+                )
+        }) {
+            return Ok(json!({"id":existing.id}));
+        }
+        if state
+            .jobs
+            .iter()
+            .filter(|j| matches!(j.state.as_str(), "queued" | "running" | "cancelling"))
+            .count()
+            >= 32
+        {
+            return Err("Queue is full (32 jobs)".into());
+        }
+        let input = self.root.join(source).join("output.png");
+        if !input.is_file() {
+            return Err("Original image file is missing".into());
+        }
+        let image = image::open(&input).map_err(|e| e.to_string())?;
+        let needs_background = !image.to_rgba8().pixels().any(|p| p.0[3] < 255);
+        if needs_background
+            && !runtime
+                .models
+                .join("background_removal/birefnet.safetensors")
+                .is_file()
+        {
+            return Err("TripoSplat background-removal checkpoint is missing".into());
+        }
+        let id = Uuid::new_v4().to_string();
+        let dir = self.root.join(&id);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let (cancel, _) = watch::channel(false);
+        let work = Work {
+            splat: Some(SplatWork { runtime, input }),
+            enhancement: None,
+            references: vec![],
+            id: id.clone(),
+            args: vec![],
+            pose_modules: 0,
+            anyangle_modules: 0,
+            lightning_modules: 0,
+            paths: default_paths(),
+            cli: PathBuf::new(),
+            dir: dir.clone(),
+        };
+        state.cancels.insert(id.clone(), cancel);
+        state.jobs.push(Job {
+            kind: "splat".into(),
+            source_take: Some(source.into()),
+            enhanced_prompt: None,
+            revision: 0,
+            id: id.clone(),
+            session: original.session,
+            settings: original.settings,
+            state: "queued".into(),
+            stage: "load".into(),
+            step: 0,
+            total: 20,
+            logs: vec![],
+            error: None,
+            output: None,
+            width: None,
+            height: None,
+        });
+        if let Err(error) = self.queue.try_send(work) {
+            state.jobs.retain(|j| j.id != id);
+            state.cancels.remove(&id);
+            let _ = std::fs::remove_dir_all(dir);
+            return Err(error.to_string());
+        }
+        Ok(json!({"id":id}))
+    }
+    async fn run_splat(
+        self: &Arc<Self>,
+        work: &Work,
+        splat: SplatWork,
+        mut cancel: watch::Receiver<bool>,
+    ) {
+        let mut command = Command::new(&splat.runtime.python);
+        command
+            .arg("-u")
+            .arg(&splat.runtime.script)
+            .arg(&splat.input)
+            .arg("--triposplat-source")
+            .arg(&splat.runtime.source)
+            .arg("--model-dir")
+            .arg(&splat.runtime.models)
+            .arg("--output-dir")
+            .arg(&work.dir)
+            .env_remove("PYTORCH_ENABLE_MPS_FALLBACK")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .process_group(0);
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                self.finish(&work.id, "failed", Some(e.to_string()));
+                return;
+            }
+        };
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let a = self.clone();
+        let id = work.id.clone();
+        let out = tokio::spawn(async move { a.read(stdout, &id).await });
+        let a = self.clone();
+        let id = work.id.clone();
+        let err = tokio::spawn(async move { a.read(stderr, &id).await });
+        let result = tokio::select! { biased;
+            _ = async { if !*cancel.borrow() { let _ = cancel.changed().await; } } => {
+                if let Some(pid) = child.id() { unsafe { libc::kill(-(pid as i32), libc::SIGKILL); } }
+                let _ = child.wait().await; None
+            },
+            result = child.wait() => Some(result),
+        };
+        let _ = out.await;
+        let _ = err.await;
+        if result.is_none() || *cancel.borrow() {
+            self.finish(&work.id, "cancelled", None);
+            let _ = std::fs::remove_dir_all(&work.dir);
+            return;
+        }
+        match result.unwrap() {
+            Ok(status) if status.success() => {
+                let path = work.dir.join("output.splat");
+                let output = validate_splat(&path).and_then(|_| {
+                    rust_cef::state::register_file_stream(rust_cef::state::FileStreamEntry {
+                        path: path.to_string_lossy().into_owned(),
+                        mime_type: "application/octet-stream".into(),
+                    })
+                });
+                match output {
+                    Ok(token) => {
+                        self.update(&work.id, |j| {
+                            j.output = Some(format!("app://localhost/__stream__/{token}"));
+                            j.stage = "save".into();
+                            j.step = j.total;
+                        });
+                        self.finish(&work.id, "completed", None);
+                    }
+                    Err(e) => self.finish(&work.id, "failed", Some(e)),
+                }
+            }
+            Ok(status) => self.finish(
+                &work.id,
+                "failed",
+                Some(format!("TripoSplat exited with {status}; see render log")),
+            ),
+            Err(e) => self.finish(&work.id, "failed", Some(e.to_string())),
         }
     }
     pub fn submit(&self, mut request: Request) -> Result<Value, String> {
@@ -384,6 +578,8 @@ impl Engine {
             }
             state.cancels.insert(id.clone(), cancel);
             state.jobs.push(Job {
+                kind: "image".into(),
+                source_take: None,
                 enhanced_prompt: None,
                 revision: 0,
                 id: id.clone(),
@@ -401,6 +597,7 @@ impl Engine {
             });
         }
         if let Err(e) = self.queue.try_send(Work {
+            splat: None,
             enhancement,
             paths: request.paths.clone(),
             references: request.references,
@@ -436,6 +633,10 @@ impl Engine {
             return;
         }
         self.update(&work.id, |j| j.state = "running".into());
+        if let Some(splat) = work.splat.take() {
+            self.run_splat(&work, splat, cancel).await;
+            return;
+        }
         let references = std::mem::take(&mut work.references);
         let dir = work.dir.clone();
         let prepared =
@@ -817,6 +1018,16 @@ impl Engine {
                 }
             }
             let lower = text.to_lowercase();
+            if j.kind == "splat" && text.starts_with('[') && text.contains("loading streamed stage")
+            {
+                j.stage = text
+                    .split(']')
+                    .next()
+                    .unwrap_or("[load")
+                    .trim_start_matches('[')
+                    .into();
+                j.step = 0;
+            }
             if j.stage != "enhance"
                 && (lower.contains("decoding")
                     || lower.contains("'vae decode'")
@@ -1422,6 +1633,132 @@ fn ratio_size(ratio: &str) -> Option<(u32, u32)> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn splat_jobs_keep_source_identity_deduplicate_cancel_and_retry() {
+        let root = std::env::temp_dir().join(format!("splat-engine-{}", Uuid::new_v4()));
+        let engine = Engine::new(root.clone(), &tokio::runtime::Handle::current());
+        let script = root.join("fixture.sh");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&script, "while [ ! -f \"$0.ready\" ]; do sleep 0.02; done\nwhile [ \"$1\" != --output-dir ]; do shift; done\nshift\nhead -c 1048576 /dev/zero > \"$1/output.splat\"\n").unwrap();
+        for source in ["first", "second"] {
+            std::fs::create_dir_all(root.join(source)).unwrap();
+            image::RgbaImage::new(1, 1)
+                .save(root.join(source).join("output.png"))
+                .unwrap();
+            engine.state.lock().unwrap().jobs.push(Job {
+                kind: "image".into(),
+                source_take: None,
+                enhanced_prompt: None,
+                revision: 0,
+                id: source.into(),
+                session: source.into(),
+                settings: request(&root, "", "source").settings,
+                state: "completed".into(),
+                stage: "save".into(),
+                step: 1,
+                total: 1,
+                logs: vec![],
+                error: None,
+                output: Some("image-url".into()),
+                width: Some(1),
+                height: Some(1),
+            });
+        }
+        let runtime = || SplatRuntime {
+            python: "/bin/sh".into(),
+            script: script.clone(),
+            source: root.clone(),
+            models: root.clone(),
+        };
+        assert!(
+            engine
+                .submit_splat_with_runtime("unknown", runtime())
+                .is_err()
+        );
+        let first = engine
+            .submit_splat_with_runtime("first", runtime())
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(
+            engine
+                .submit_splat_with_runtime("first", runtime())
+                .unwrap()["id"],
+            first
+        );
+        wait(&engine, &first, "running").await;
+        let second = engine
+            .submit_splat_with_runtime("second", runtime())
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(
+            engine.snapshot()["jobs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|j| j["id"] == second)
+                .unwrap()["state"],
+            "queued"
+        );
+        engine.cancel(&second).unwrap();
+        std::fs::write(script.with_extension("sh.ready"), "").unwrap();
+        wait(&engine, &first, "completed").await;
+        wait(&engine, &second, "cancelled").await;
+        assert_eq!(
+            engine
+                .submit_splat_with_runtime("first", runtime())
+                .unwrap()["id"],
+            first
+        );
+        std::fs::write(&script, "exit 7\n").unwrap();
+        let failed = engine
+            .submit_splat_with_runtime("second", runtime())
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        wait(&engine, &failed, "failed").await;
+        std::fs::write(&script, "while [ \"$1\" != --output-dir ]; do shift; done\nshift\nhead -c 1048576 /dev/zero > \"$1/output.splat\"\n").unwrap();
+        let retry = engine
+            .submit_splat_with_runtime("second", runtime())
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        wait(&engine, &retry, "completed").await;
+        let jobs = engine.snapshot();
+        let jobs = jobs["jobs"].as_array().unwrap();
+        assert_eq!(jobs.iter().filter(|j| j["kind"] == "image").count(), 2);
+        let splat = jobs.iter().find(|j| j["id"] == retry).unwrap();
+        assert_eq!(splat["source_take"], "second");
+        assert_eq!(splat["session"], "second");
+        assert!(
+            splat["output"]
+                .as_str()
+                .unwrap()
+                .starts_with("app://localhost/__stream__/")
+        );
+        engine.shutdown();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn splat_export_validation_rejects_missing_truncated_and_nonfinite_files() {
+        let path = std::env::temp_dir().join(format!("splat-{}.splat", super::Uuid::new_v4()));
+        assert!(super::validate_splat(&path).is_err());
+        std::fs::write(&path, [0; 32]).unwrap();
+        assert!(super::validate_splat(&path).is_err());
+        let mut bytes = vec![0; 32768 * 32];
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(super::validate_splat(&path).is_ok());
+        bytes[..4].copy_from_slice(&f32::NAN.to_le_bytes());
+        std::fs::write(&path, bytes).unwrap();
+        assert!(super::validate_splat(&path).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+
     use super::*;
     #[test]
     fn edit_references_follow_output_area_and_alignment() {
@@ -2210,4 +2547,84 @@ mod anyangle_cfg_tests {
         assert!(discover_anyangle(&root).ends_with("a/QI2.1_AnyAngle.safetensors"));
         std::fs::remove_dir_all(root).unwrap();
     }
+}
+
+struct SplatRuntime {
+    python: PathBuf,
+    script: PathBuf,
+    source: PathBuf,
+    models: PathBuf,
+}
+struct SplatWork {
+    runtime: SplatRuntime,
+    input: PathBuf,
+}
+fn splat_runtime() -> Result<SplatRuntime, String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = std::env::var_os("TRIPOSPLAT_SOURCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.parent().unwrap().join("TripoSplat"));
+    let python = std::env::var_os("TRIPOSPLAT_PYTHON")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let bridge = root.join("vpipe/examples/triposplat/.venv/bin/python");
+            if bridge.is_file() {
+                bridge
+            } else {
+                source.join(".venv/bin/python")
+            }
+        });
+    let script = root.join("vpipe/examples/triposplat/run.py");
+    let models = if let Some(path) = std::env::var_os("TRIPOSPLAT_MODEL_DIR") {
+        PathBuf::from(path)
+    } else {
+        let cache = dirs::home_dir()
+            .ok_or("Cannot locate model cache")?
+            .join(".cache/huggingface/hub/models--VAST-AI--TripoSplat");
+        let revision = std::fs::read_to_string(cache.join("refs/main"))
+            .map_err(|_| "TripoSplat weights missing; set TRIPOSPLAT_MODEL_DIR")?;
+        cache.join("snapshots").join(revision.trim())
+    };
+    for path in [
+        &python,
+        &script,
+        &source.join("model.py"),
+        &source.join("triposplat.py"),
+        &models.join("clip_vision/dino_v3_vit_h.safetensors"),
+        &models.join("vae/flux2-vae.safetensors"),
+        &models.join("diffusion_models/triposplat_fp16.safetensors"),
+        &models.join("vae/triposplat_vae_decoder_fp16.safetensors"),
+    ] {
+        if !path.is_file() {
+            return Err(format!("TripoSplat dependency missing: {}", path.display()));
+        }
+    }
+    let probe = std::process::Command::new(&python).args(["-c", "import torch, torchvision, accelerate, safetensors, PIL, numpy, tqdm, huggingface_hub; assert torch.backends.mps.is_available(), 'Metal (MPS) is unavailable'"])
+        .env_remove("PYTORCH_ENABLE_MPS_FALLBACK").output().map_err(|e| e.to_string())?;
+    if !probe.status.success() {
+        return Err(format!(
+            "TripoSplat runtime unavailable: {}",
+            String::from_utf8_lossy(&probe.stderr)
+        ));
+    }
+    Ok(SplatRuntime {
+        python,
+        script,
+        source,
+        models,
+    })
+}
+fn validate_splat(path: &std::path::Path) -> Result<(), String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("Missing splat output: {e}"))?;
+    if bytes.len() != 32768 * 32 {
+        return Err("Invalid splat output size".into());
+    }
+    for splat in bytes.chunks_exact(32) {
+        for component in splat[..24].chunks_exact(4) {
+            if !f32::from_le_bytes(component.try_into().unwrap()).is_finite() {
+                return Err("Non-finite splat attributes".into());
+            }
+        }
+    }
+    Ok(())
 }

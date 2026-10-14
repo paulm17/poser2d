@@ -1,3 +1,5 @@
+import { SplatViewer } from './SplatViewer';
+import { splatAction } from './splat-action';
 import { generationAction } from './generation-action';
 import {
   useEffect,
@@ -128,6 +130,10 @@ export function App() {
   const sessionTakes = takes[active] ?? [];
   const [selected, setSelected] = useState<string | null>(null);
   const take = sessionTakes.find((t) => t.id === selected);
+  const [previewMode, setPreviewMode] = useState<"image" | "splat">("image");
+  const [splatSubmitting, setSplatSubmitting] = useState<ReadonlySet<string>>(new Set());
+  const splatSubmittingRef = useRef(new Set<string>());
+  useEffect(() => setPreviewMode("image"), [active, selected]);
   const [view, setView] = useState<"studio" | "stage">("studio");
   const stageRef = useRef<StageEditorHandle>(null);
   const [stageOpened, setStageOpened] = useState(false);
@@ -149,12 +155,24 @@ export function App() {
   const [submittingSessions, setSubmittingSessions] = useState<ReadonlySet<string>>(new Set());
   const cancellingRef = useRef(new Set<string>());
   const [pendingCancellations, setPendingCancellations] = useState<ReadonlySet<string>>(new Set());
-  const action = generationAction(jobs, active, submittingSessions.has(active), pendingCancellations);
+  const action = generationAction(jobs.filter(j => j.kind !== "splat"), active, submittingSessions.has(active), pendingCancellations);
   const [engineConnected, setEngineConnected] = useState(false);
   const completedJobs = useRef(new Set<string>());
   const failedJobs = useRef(new Set<string>());
   const activeRef = useRef(active); activeRef.current = active;
-  const currentJob = jobs.find(j => j.session === active && (j.state === "running" || j.state === "cancelling"));
+  const currentJob = jobs.find(j => j.kind !== "splat" && j.session === active && (j.state === "running" || j.state === "cancelling"));
+  const splat = splatAction(jobs, take?.id, !!take && splatSubmitting.has(take.id));
+  const splatJob = splat.job;
+  async function generateSplat() {
+    if (!take || splatSubmittingRef.current.has(take.id)) return;
+    const source = take.id;
+    splatSubmittingRef.current.add(source);
+    setSplatSubmitting(new Set(splatSubmittingRef.current));
+    setError("");
+    try { await engine.splat(source); }
+    catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    finally { splatSubmittingRef.current.delete(source); setSplatSubmitting(new Set(splatSubmittingRef.current)); }
+  }
   useEffect(() => { localStorage.setItem("qwen-engine-paths", JSON.stringify(paths)); }, [paths]);
   useEffect(() => {
     let disposed = false;
@@ -169,7 +187,7 @@ export function App() {
         failedJobs.current.add(job.id);
         if (activeRef.current === job.session) setError(job.error ?? "Render failed. See render log.");
       }
-      if (job.state === "completed" && job.output && job.width && job.height && !completedJobs.current.has(job.id)) {
+      if (job.kind !== "splat" && job.state === "completed" && job.output && job.width && job.height && !completedJobs.current.has(job.id)) {
         completedJobs.current.add(job.id);
         if (sessionsRef.current.some(s => s.id === job.session)) {
           const take: Take = { id: job.id, url: job.output, settings: job.settings, width: job.width, height: job.height, enhancedPrompt: job.enhanced_prompt ?? undefined, generated: true };
@@ -896,7 +914,12 @@ export function App() {
             </div>
           </aside>
           <main className="panel center" aria-label="Preview">
-            <section className="stage">
+            {previewMode === "splat" && splatJob?.state === "completed" && splatJob.output ? (
+              <section className="stage splat-stage" aria-label="Splat preview">
+                <div className="stagehead"><span className="spacer" /><button className="btn sm" onClick={() => setPreviewMode("image")}>View image</button></div>
+                <SplatViewer url={splatJob.output} />
+              </section>
+            ) : <section className="stage">
               <div className="stagehead">
                 <span className="mono">
                   {take
@@ -909,6 +932,10 @@ export function App() {
                   </span>
                 )}
                 <span className="spacer" />
+                {take?.generated && <button className="btn sm" disabled={splat.disabled}
+                  onClick={() => splatJob?.state === "completed" ? setPreviewMode("splat") : generateSplat()}>
+                  {splat.label}
+                </button>}
                 <button
                   className="btn sm"
                   disabled={!take}
@@ -987,7 +1014,8 @@ export function App() {
                   Load demo take
                 </button>
               </p>
-            </section>
+              {splatJob?.state === "failed" && <p className="errors" role="alert">{splatJob.error}</p>}
+            </section>}
             {take?.enhancedPrompt && (
               <section className={`enhanced${expanded ? " open" : ""}`}>
                 <div className="label">
@@ -1112,7 +1140,7 @@ export function App() {
                   {jobs.filter(j => j.state === "queued" || j.state === "running" || j.state === "cancelling").length === 0 && <span className="none">No jobs queued</span>}
                   {jobs.filter(j => j.state === "queued" || j.state === "running" || j.state === "cancelling").map(job => (
                     <div key={job.id} className="engine-job">
-                      <span>{job.settings.prompt.slice(0, 60)}</span>
+                      <span>{job.kind === "splat" ? "Splat · " : ""}{job.settings.prompt.slice(0, 60)}</span>
                       <span className="muted">{job.state} · {job.stage}{job.step > 0 ? ` ${job.step}/${job.total}` : ""}</span>
                     </div>
                   ))}

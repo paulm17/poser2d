@@ -3,6 +3,7 @@ import { invoke, listen } from "./ipc";
 export interface EnginePaths { anyangle_lora: string; anyangle_enabled: boolean; anyangle_strength: number; lightning_enabled: boolean; lightning_lora: string; pose_lora: string; pose_enabled: boolean; pose_strength: number; turbo: boolean; pe_cli: string; pe_model: string; pe_system: string; pe_i2i_model: string; pe_i2i_system: string; cli: string; model: string; model8: string; quant_bits: 4 | 8; vae: string; llm: string; vision: string; }
 export const emptyPaths: EnginePaths = { anyangle_lora: "", anyangle_enabled: false, anyangle_strength: 1, lightning_enabled: false, lightning_lora: "", pose_lora: "", pose_enabled: false, pose_strength: 0.7, turbo: false, pe_cli: "", pe_model: "", pe_system: "", pe_i2i_model: "", pe_i2i_system: "", cli: "", model: "", model8: "", quant_bits: 4, vae: "", llm: "", vision: "" };
 export interface Job {
+  kind: "image" | "splat"; source_take: string | null;
   id: string; session: string; settings: Settings; revision: number;
   state: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
   stage: string; step: number; total: number; logs: string[];
@@ -29,6 +30,7 @@ export const engine = {
     for (const reference of request.references) references.push(await referencePNG(reference));
     return invoke("submit_generation", { ...request, references });
   },
+  splat: (source_take: string) => invoke<{ id: string }>("submit_splat", { source_take }),
   catalog: () => invoke<CatalogModel[]>("model_catalog"),
   ready: () => invoke("engine_subscribed"),
   cancel: (id: string) => invoke("cancel_generation", { id }),

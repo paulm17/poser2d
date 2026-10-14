@@ -1,15 +1,15 @@
 import type { Settings, ReferenceImage } from "./models";
 import { invoke, listen } from "./ipc";
-export interface EnginePaths { lightning_enabled: boolean; lightning_lora: string; pose_lora: string; pose_enabled: boolean; pose_strength: number; turbo: boolean; pe_cli: string; pe_model: string; pe_system: string; cli: string; model: string; model8: string; quant_bits: 4 | 8; vae: string; llm: string; vision: string; }
-export const emptyPaths: EnginePaths = { lightning_enabled: false, lightning_lora: "", pose_lora: "", pose_enabled: false, pose_strength: 0.7, turbo: false, pe_cli: "", pe_model: "", pe_system: "", cli: "", model: "", model8: "", quant_bits: 4, vae: "", llm: "", vision: "" };
+export interface EnginePaths { anyangle_lora: string; anyangle_enabled: boolean; anyangle_strength: number; lightning_enabled: boolean; lightning_lora: string; pose_lora: string; pose_enabled: boolean; pose_strength: number; turbo: boolean; pe_cli: string; pe_model: string; pe_system: string; pe_i2i_model: string; pe_i2i_system: string; cli: string; model: string; model8: string; quant_bits: 4 | 8; vae: string; llm: string; vision: string; }
+export const emptyPaths: EnginePaths = { anyangle_lora: "", anyangle_enabled: false, anyangle_strength: 1, lightning_enabled: false, lightning_lora: "", pose_lora: "", pose_enabled: false, pose_strength: 0.7, turbo: false, pe_cli: "", pe_model: "", pe_system: "", pe_i2i_model: "", pe_i2i_system: "", cli: "", model: "", model8: "", quant_bits: 4, vae: "", llm: "", vision: "" };
 export interface Job {
   id: string; session: string; settings: Settings; revision: number;
   state: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
   stage: string; step: number; total: number; logs: string[];
   enhanced_prompt: string | null; error: string | null; output: string | null; width: number | null; height: number | null;
 }
-export interface CatalogModel { id: string; turbo: boolean; bits: 4 | 8; available: boolean; pose_available: boolean; lightning_available: boolean; }
-export interface AdapterSelection { id: "lightning" | "pose"; strength: number; }
+export interface CatalogModel { id: string; turbo: boolean; bits: 4 | 8; available: boolean; anyangle_available: boolean; pose_available: boolean; lightning_available: boolean; }
+export interface AdapterSelection { id: "lightning" | "pose" | "anyangle"; strength: number; }
 export interface GenerationRequest { loras?: AdapterSelection[]; model_id?: string; auto_ratio: boolean; session: string; settings: Settings; references: ReferenceImage[]; paths?: EnginePaths; }
 // Normalize browser-only blob URLs (including scene captures and SVG demo takes)
 // before crossing into Rust; vpipe receives immutable PNG files per job.
@@ -40,7 +40,7 @@ export const engine = {
 export function mergePaths(previous: EnginePaths, defaults: EnginePaths): EnginePaths {
   const legacy = /\.gguf$/i.test(previous.model) || /sd-cli$/.test(previous.cli);
   const merged: EnginePaths = { ...defaults, ...previous, turbo: true, quant_bits: previous.quant_bits === 8 ? 8 : 4 };
-  for (const key of ["cli", "model", "model8", "vae", "llm", "pe_cli", "pe_model", "pe_system", "pose_lora"] as const) {
+  for (const key of ["cli", "model", "model8", "vae", "llm", "pe_cli", "pe_model", "pe_system", "pe_i2i_model", "pe_i2i_system", "pose_lora", "anyangle_lora"] as const) {
     if (!previous[key] || (legacy && key !== "pose_lora")) merged[key] = defaults[key];
   }
   merged.vision = "";
@@ -54,4 +54,8 @@ export function selectModelPaths(paths: EnginePaths, id: string): EnginePaths {
   return { ...paths, turbo: id.startsWith("turbo"), quant_bits: id.endsWith("8") ? 8 : 4,
     lightning_enabled: !id.startsWith("turbo") && paths.lightning_enabled };
 }
-export const unavailableCatalog: CatalogModel[] = [true, false].flatMap(turbo => ([4,8] as const).map(bits => ({id: `${turbo ? "turbo" : "base"}-${bits}`, turbo, bits, available:false, pose_available:false, lightning_available:false})));
+export const unavailableCatalog: CatalogModel[] = [true, false].flatMap(turbo => ([4,8] as const).map(bits => ({id: `${turbo ? "turbo" : "base"}-${bits}`, turbo, bits, available:false, anyangle_available:false, pose_available:false, lightning_available:false})));
+
+export function effectiveGuidance(cfg: number, adapters: AdapterSelection[]): number {
+  return adapters.some(a => a.id === "anyangle") ? 3 : cfg;
+}

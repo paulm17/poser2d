@@ -100,11 +100,11 @@ All source and prepared model files live under `/Volumes/Data/Users/paul/.cache/
 python3 scripts/prepare-vpipe-models.py
 ```
 
-The script downloads `Qwen/Qwen-Image-2.1-Turbo`, `Qwen/Qwen-Image-2.1`, `Qwen/Qwen-Image-2.1-PE-T2I`, and the Lightning adapter, then uses vpipe's `model-quantize` stage to prepare:
+The script downloads `Qwen/Qwen-Image-2.1-Turbo`, `Qwen/Qwen-Image-2.1`, `Qwen/Qwen-Image-2.1-PE-T2I`, `Qwen/Qwen-Image-2.1-PE-I2I`, and the Lightning adapter, then uses vpipe's `model-quantize` stage to prepare:
 
 - `vpipe-prepared/Qwen-Image-2.1-Turbo-4bit` and `Qwen-Image-2.1-Turbo-8bit`, group size 64.
 - A shared 4-bit Qwen3-VL language encoder, preserving its vision components and the VAE at source precision.
-- `vpipe-prepared/Qwen-Image-2.1-PE-T2I-4bit`, using the official system prompt and tokenizer.
+- `vpipe-prepared/Qwen-Image-2.1-PE-T2I-4bit` and `Qwen-Image-2.1-PE-I2I-4bit`, using their official system prompts and tokenizers; PE-I2I also retains its vision tower.
 - `vpipe-prepared/Qwen-Image-2.1-4bit` and `Qwen-Image-2.1-8bit`, with a shared base 4-bit text encoder and a separate compatible Lightning runtime adapter.
 
 Preparation recipes, logs, and source snapshot revisions are retained in `vpipe-prepared`. Base Qwen components add approximately 33 GB to the Turbo and enhancer downloads; prepared weights need additional disk space. Component copies use vpipe's hard-link support. Original source files remain unchanged. Use `--skip-download` to prepare already-cached sources.
@@ -115,7 +115,7 @@ The model catalog detects these prepared directories and the existing PoseStudio
 
 Turbo uses its official eight-step schedule, CFG 1, and prefix KV caching. Image edits feed each reference into both vision conditioning and VAE encoding. PoseStudio applies only to edits, at strength 0.7 by default; incomplete adapter binding fails visibly.
 
-**Enhance prompt** runs the 4-bit PE-T2I model through vpipe's Qwen3.5 backend before image generation. Its process exits before the image model starts. The official system prompt, thinking option, JSON parsing, and displayed rewritten prompt are retained. The enhancer output head and embedding table are quantized together so both load through the affine backend. Enhancement remains text-to-image only. Sampling uses temperature 1.0, top-p 0.95, top-k 20, seed 42, and a 16,256-token cap; MTP is disabled.
+**Enhance prompt** runs the 4-bit PE-T2I model through vpipe's Qwen3.5 backend before image generation. Its process exits before the image model starts. The official system prompt, thinking option, JSON parsing, and displayed rewritten prompt are retained. The enhancer output head and embedding table are quantized together so both load through the affine backend. With reference images, enhancement automatically uses PE-I2I and its own official system prompt. Reference order is preserved; automatic canvas sizing respects `wh_ratio` or `ratio_follow`, while explicit sizes take precedence. Image attachments that cannot be encoded fail the job. Sampling uses temperature 1.0, top-p 0.95, top-k 20, seed 42, and a 16,256-token cap for T2I or 24,000 for I2I; MTP is disabled.
 
 Outputs and per-job pipelines/logs live in the application data directory under `qwen-image-studio/renders`. Models run sequentially using vpipe's automatic SSD streaming. VAE decoding uses overlapping 512-pixel windows by default to bound GPU command and memory costs at 1024 × 1024; windows are blended and can differ from a full-frame decode. Set `VPIPE_VAE_TILE` to override the latent window size (32 by default, 16 pixels per cell for Qwen 2.1). `/usr/bin/time -l` records elapsed process time and peak resident memory in each render log. This measures process residency, not total system memory.
 
@@ -128,9 +128,9 @@ cargo run --bin validate-vpipe
 python3 scripts/report-vpipe-validation.py
 ```
 
-The validation runner uses the same backend as the desktop app. It generates six 1024 × 1024 images with seed 42: plain T2I, enhanced T2I, and PoseStudio I2I for each precision. Both I2I runs use the supplied character image. Pass a different reference path as its first argument if needed.
+The validation runner uses the same backend as the desktop app. It covers plain T2I, I2I, PoseStudio I2I, enhanced T2I, enhanced I2I, and enhanced multi-image editing for both precisions and both Turbo and standard models, using seed 42. The default validation size is 512 × 512; set `VPIPE_VALIDATION_SIZE` to override it. Pass reference paths as its first and optional second arguments, and use `VPIPE_VALIDATION_FILTER` to select individual jobs.
 
-Outputs, final pipelines, enhancer replies, complete render logs, model paths, and timing are saved under `artifacts/vpipe-validation`; `results.json` records the six results. The runner checks output dimensions and reports any failed job. Fixture tests cover pipeline construction, settings migration, enhancement parsing, progress, queue order, cancellation, and failure recovery.
+Outputs, final pipelines, enhancer replies, complete render logs, model paths, and timing are saved under `artifacts/vpipe-validation`; `results.json` records the results. The runner checks output dimensions and reports any failed job. Fixture tests cover pipeline construction, settings migration, enhancement parsing, progress, queue order, cancellation, and failure recovery.
 
 For targeted reruns, set `VPIPE_VALIDATION_FILTER` to comma-separated names such as `turbo-4-t2i,base-8-pose`. The results manifest keeps the latest attempt for each workflow.
 
@@ -138,6 +138,38 @@ The earlier six Turbo/enhancer jobs passed on an M1 Pro with 32 GB RAM. Generati
 
 ## Qwen model selection
 
-Use the Model popover at the top left to select Turbo or Non-Turbo and 4-bit or 8-bit weights. Installed models are discovered automatically in the Hugging Face cache. Add adapters in the left-hand LoRAs section; each row has a model, strength, and remove button. Lightning is available only for Non-Turbo, uses four steps, and can be stacked with Pose. Pose applies only to image edits.
+Use the Model popover at the top left to select Turbo or Non-Turbo and 4-bit or 8-bit weights. Installed models are discovered automatically in the Hugging Face cache. Add adapters in the left-hand LoRAs section; each row has a model, strength, and remove button. Lightning is available only for Non-Turbo, uses four steps, and can be stacked with Pose. Pose applies only to image edits. AnyAngle is discovered from the cached `lilylilith/QI_2.1_AnyAngle` adapter and can be stacked with the other adapters. CFG defaults to 1 and accepts values from 1 to 10; selecting AnyAngle locks it at 3, and removing AnyAngle restores the previous value.
 
 `python3 scripts/prepare-qwen-base.py` downloads the standard Qwen-Image-2.1 components and Lightning adapter, verifies component identities before sharing cached Turbo files, and prepares both transformer precisions. The original Lightning file stays intact; a tensor-name-compatible runtime copy is written under `vpipe-prepared`.
+
+### Image editing prompt enhancer
+
+Prepare just PE-I2I with:
+
+```sh
+python3 scripts/prepare-vpipe-models.py --only-pe-i2i --cache /Volumes/Data/Users/paul/.cache/huggingface/hub
+```
+
+Official sources are stored in `models--Qwen--Qwen-Image-2.1-PE-I2I` beneath that cache. The 4-bit runtime checkpoint, including vision weights, tokenizer, and system prompt, lives in `vpipe-prepared/Qwen-Image-2.1-PE-I2I-4bit`. Full preparation also includes this model; `--skip-download` reuses cached sources.
+
+Enable **Enhance prompt** with one or more references to use PE-I2I. **Let it think** remains available; reasoning is recommended for the official enhancer models. The enhancer exits before the image model loads. The bundled compatibility patch includes vision tensor-prefix detection for official Qwen3.5 checkpoints; rebuild vpipe after applying it. For real validation, select `turbo-4-enhanced-i2i`, `turbo-4-enhanced-multi`, or `turbo-4-enhanced` through `VPIPE_VALIDATION_FILTER` when running `cargo run --bin validate-vpipe -- /path/to/reference.png /path/to/second-reference.png` (the second reference is optional).
+
+### AnyAngle CLI comparison
+
+AnyAngle can be tested independently of the app's LoRA selector. Download the original adapter into the Hugging Face cache:
+
+```sh
+hf download lilylilith/QI_2.1_AnyAngle QI2.1_AnyAngle.safetensors --cache-dir "$HOME/.cache/huggingface/hub"
+```
+
+After applying the existing vpipe compatibility patch, also apply `scripts/patches/vpipe-qwen21-cfg.patch` and rebuild `vpipe` and `vpipe_test`. This fixes Qwen 2.1 CFG bookkeeping: positive and negative conditioning retain separate image-slot metadata, layouts, and prefix caches. Setting guidance above 1 requires negative conditioning to be wired; the runner uses an empty, image-grounded negative.
+
+```sh
+git -C vpipe apply ../scripts/patches/vpipe-qwen21-cfg.patch
+cmake --build vpipe/build --target vpipe vpipe_test -j 4
+python3 scripts/validate-anyangle.py /path/to/pose.png /path/to/avatar.png
+```
+
+The runner uses the full pose as reference 1 and avatar as reference 2, with `Change the camera angle from <image2> to <image1>.` It preserves reference content with padding and derives the output aspect ratio from the pose canvas, aligned to 32 pixels. All runs use CFG 3: Turbo 8-bit at eight steps with seeds 42 and 43 compares no adapter, AnyAngle 1.0, and AnyAngle 0.7; standard 8-bit at 20 steps compares no adapter and AnyAngle 1.0 with seed 42; a separate Turbo seed-42 run stacks AnyAngle 1.0 with PoseStudio 0.7. Standard runs do not use Lightning; prompt enhancement is disabled throughout.
+
+Pipelines, logs, model revision/hash, timings, memory measurements, saved latents, and results are saved under `artifacts/anyangle-cli-tests`. VAE decoding uses the app's 32-cell (512-pixel) overlapping tiles for every run; these can differ from full-frame decoding. `--prepare-only` writes the pipelines without inference; `--filter` selects comma-separated job names; `--resume` skips successful runs whose pipeline is unchanged. Each successful adapter run must bind all 192 modules and execute both CFG branches. These checks establish runtime compatibility; viewpoint and identity fidelity still require reviewing the outputs. Metal inference and the fused-LoRA test require GPU access outside environments that hide the Metal device.

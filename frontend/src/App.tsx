@@ -16,7 +16,7 @@ import {
   type Take,
   type Ratio,
 } from "./models";
-import { engine, emptyPaths, mergePaths, initialModelId, selectModelPaths, unavailableCatalog, type EnginePaths, type Job, type AdapterSelection, type CatalogModel } from "./engine";
+import { effectiveGuidance, engine, emptyPaths, mergePaths, initialModelId, selectModelPaths, unavailableCatalog, type EnginePaths, type Job, type AdapterSelection, type CatalogModel } from "./engine";
 import { StageEditor, type StageEditorHandle } from "./StageEditor";
 
 function Dialog({
@@ -184,10 +184,13 @@ export function App() {
   const selectedModel = catalog.find(m => m.id === modelId);
   const isTurbo = modelId.startsWith("turbo");
   const [loras, setLoras] = useState<AdapterSelection[]>(() => {
-    try { const saved = JSON.parse(localStorage.getItem("qwen-loras") ?? "null"); if (Array.isArray(saved)) return saved.filter(a => (a.id === "pose" || a.id === "lightning") && Number.isFinite(a.strength)); } catch {}
+    try { const saved = JSON.parse(localStorage.getItem("qwen-loras") ?? "null"); if (Array.isArray(saved)) return saved.filter(a => (a.id === "pose" || a.id === "lightning" || a.id === "anyangle") && Number.isFinite(a.strength)); } catch {}
     return [...(paths.pose_enabled ? [{id:"pose" as const, strength:paths.pose_strength}] : []), ...(!isTurbo && paths.lightning_enabled ? [{id:"lightning" as const,strength:1}] : [])];
   });
   const lightningActive = !isTurbo && loras.some(a => a.id === "lightning");
+  const anyangleActive = loras.some(a => a.id === "anyangle");
+  const effectiveCfg = effectiveGuidance(settings.cfg, loras);
+  const adapterAvailable = (id: AdapterSelection["id"]) => id === "pose" ? selectedModel?.pose_available : id === "anyangle" ? selectedModel?.anyangle_available : selectedModel?.lightning_available;
   const effectiveSteps = isTurbo ? 8 : lightningActive ? 4 : settings.steps;
   useEffect(() => { localStorage.setItem("qwen-loras", JSON.stringify(loras)); }, [loras]);
   useEffect(() => { engine.catalog().then(setCatalog).catch(() => {}); }, []);
@@ -381,6 +384,10 @@ export function App() {
       setError("Use 1–200 steps and a non-negative integer seed.");
       return;
     }
+    if (!Number.isFinite(effectiveCfg) || effectiveCfg < 1 || effectiveCfg > 10) {
+      setError("CFG must be between 1 and 10.");
+      return;
+    }
     try {
       const size = plannedSize({ ...settings, enhance: false }, refs);
       const result = await engine.generate({
@@ -390,8 +397,9 @@ export function App() {
         loras,
         settings: {
           ...settings,
-          enhance: settings.enhance && refs.length === 0, think: settings.think && settings.enhance && refs.length === 0,
+          enhance: settings.enhance, think: settings.think && settings.enhance,
           steps: effectiveSteps,
+          cfg: effectiveCfg,
           width: size.width, height: size.height,
           prompt: resolveMentions(settings.prompt, refs),
         },
@@ -615,12 +623,12 @@ export function App() {
               <div className="label">LoRAs</div>
               {loras.map((adapter, index) => <div className="lora-row" key={adapter.id}>
                 <div className="lora-heading"><label>LoRA model<select value={adapter.id} onChange={e => setLoras(a => a.map((item, i) => i === index ? {id:e.target.value as AdapterSelection["id"], strength:e.target.value === "pose" ? 0.7 : 1} : item))}>
-                  {(["lightning","pose"] as const).filter(id => id !== "lightning" || !isTurbo).map(id => <option key={id} value={id} disabled={(id === "pose" ? !selectedModel?.pose_available : !selectedModel?.lightning_available) || loras.some((a,i) => i !== index && a.id === id)}>{id === "pose" ? "Pose" : "Lightning · 4 steps"}{(id === "pose" ? !selectedModel?.pose_available : !selectedModel?.lightning_available) ? " · Not installed" : ""}</option>)}
+                  {(["lightning","pose","anyangle"] as const).filter(id => id !== "lightning" || !isTurbo).map(id => <option key={id} value={id} disabled={!adapterAvailable(id) || loras.some((a,i) => i !== index && a.id === id)}>{id === "pose" ? "Pose" : id === "anyangle" ? "AnyAngle" : "Lightning · 4 steps"}{!adapterAvailable(id) ? " · Not installed" : ""}</option>)}
                 </select></label><button className="btn" aria-label={`Remove ${adapter.id} LoRA`} onClick={() => setLoras(a => a.filter((_,i) => i !== index))}>×</button></div>
                 <label>LoRA strength<input type="number" min="0" max="2" step="0.1" value={adapter.strength} onChange={e => setLoras(a => a.map((item,i) => i === index ? {...item,strength:Number(e.target.value)} : item))}/></label>
               </div>)}
-              <button className="btn" disabled={!(["lightning","pose"] as const).some(id => (id !== "lightning" || !isTurbo) && (id === "pose" ? selectedModel?.pose_available : selectedModel?.lightning_available) && !loras.some(a => a.id === id))} onClick={() => {
-                const id = (["lightning","pose"] as const).find(id => (id !== "lightning" || !isTurbo) && (id === "pose" ? selectedModel?.pose_available : selectedModel?.lightning_available) && !loras.some(a => a.id === id));
+              <button className="btn" disabled={!(["lightning","pose","anyangle"] as const).some(id => (id !== "lightning" || !isTurbo) && adapterAvailable(id) && !loras.some(a => a.id === id))} onClick={() => {
+                const id = (["lightning","pose","anyangle"] as const).find(id => (id !== "lightning" || !isTurbo) && adapterAvailable(id) && !loras.some(a => a.id === id));
                 if (id) setLoras(a => [...a,{id,strength:id === "pose" ? 0.7 : 1}]);
               }}>＋ Add LoRA</button>
               <p className="hint">Stack adapters here. Pose applies to image edits.</p>
@@ -721,17 +729,16 @@ export function App() {
               <div className="label">Prompt enhancer</div>
               <Toggle
                 title="Enhance prompt"
-                checked={settings.enhance && refs.length === 0}
-                disabled={refs.length > 0}
+                checked={settings.enhance}
                 onChange={(v) => update("enhance", v)}
                 tag={refs.length ? "PE-I2I · 9B" : "PE-T2I · 9B"}
-                description="Rewrites text prompts with PE-T2I before loading the image model. Edit enhancement is not yet connected."
+                description="Rewrites prompts with PE-T2I for generation or PE-I2I with your reference images for editing, before loading the image model."
               />
               <Toggle
                 title="Let it think"
-                checked={settings.think && refs.length === 0}
+                checked={settings.think}
                 onChange={(v) => update("think", v)}
-                disabled={!settings.enhance || refs.length > 0}
+                disabled={!settings.enhance}
                 sub
                 description="Reasons before answering. Slower, often by minutes on MPS."
               />
@@ -803,6 +810,14 @@ export function App() {
             </section>
             <section className="grid2">
               {numberField("steps", "Steps", 1, 200)}
+              <div>
+                <label className="label" htmlFor="cfg">CFG</label>
+                <input id="cfg" type="number" min="1" max="10" step="0.1"
+                  value={effectiveCfg} disabled={anyangleActive}
+                  aria-describedby={anyangleActive ? "cfgHint" : undefined}
+                  onChange={e => update("cfg", Number(e.target.value))}/>
+                {anyangleActive && <p id="cfgHint" className="hint">AnyAngle requires CFG 3</p>}
+              </div>
               <div>
                 <label className="label" htmlFor="seed">
                   Seed
@@ -883,7 +898,7 @@ export function App() {
                     setSessions((prev) =>
                       prev.map((s) =>
                         s.id === active
-                          ? { ...s, settings: { ...take.settings } }
+                          ? { ...s, settings: { ...defaults, ...take.settings } }
                           : s,
                       ),
                     )

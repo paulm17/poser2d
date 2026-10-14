@@ -5,6 +5,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser()
 p.add_argument('--cache', type=pathlib.Path, default=pathlib.Path('/Volumes/Data/Users/paul/.cache/huggingface/hub'))
 p.add_argument('--skip-download', action='store_true')
+p.add_argument('--only-pe-i2i', action='store_true', help='Download and prepare only the image editing enhancer')
 a = p.parse_args()
 cache = a.cache.resolve()
 prepared = cache / 'vpipe-prepared'
@@ -46,6 +47,20 @@ def quant(src,out,bits,target):
         if not (component/shard).is_file(): raise RuntimeError(f'{out}: missing shard {shard}')
     print(f'Prepared {out}',flush=True)
 
+pe_i2i=source('Qwen/Qwen-Image-2.1-PE-I2I')
+quant(pe_i2i,prepared/'Qwen-Image-2.1-PE-I2I-4bit',4,'all')
+for name in ('system_prompt.txt', 'tokenizer.json', 'chat_template.jinja'):
+    if not (prepared/'Qwen-Image-2.1-PE-I2I-4bit'/name).is_file():
+        raise RuntimeError(f'Missing PE-I2I metadata: {name}')
+i2i_out = prepared/'Qwen-Image-2.1-PE-I2I-4bit'
+i2i_config = json.loads((i2i_out/'config.json').read_text())
+i2i_names = json.loads((i2i_out/'model.safetensors.index.json').read_text())['weight_map']
+if not i2i_config.get('vision_config') or not any('visual.' in name for name in i2i_names):
+    raise RuntimeError('Prepared PE-I2I is missing its vision configuration or weights')
+(prepared/'pe-i2i-source.json').write_text(json.dumps({'enhancer_i2i':str(pe_i2i),'group_size':64},indent=2))
+if a.only_pe_i2i:
+    raise SystemExit(0)
+
 turbo=source('Qwen/Qwen-Image-2.1-Turbo')
 pe=source('Qwen/Qwen-Image-2.1-PE-T2I')
 enc=prepared/'Qwen-Image-2.1-Turbo-encoder-4bit'
@@ -56,7 +71,7 @@ for bits in (4,8):
     # Share the prepared encoder physically and by path across both packs.
     # vpipe's component copier hard-links files, so no second tensor copy is needed.
 quant(pe,prepared/'Qwen-Image-2.1-PE-T2I-4bit',4,'all')
-(prepared/'sources.json').write_text(json.dumps({'turbo':str(turbo),'enhancer':str(pe),'group_size':64},indent=2))
+(prepared/'sources.json').write_text(json.dumps({'turbo':str(turbo),'enhancer':str(pe),'enhancer_i2i':str(pe_i2i),'group_size':64},indent=2))
 
 # Prepare non-Turbo variants and the runtime Lightning adapter too.
 subprocess.run(["python3", str(ROOT / "scripts/prepare-qwen-base.py"), "--cache", str(cache)] + (["--skip-download"] if a.skip_download else []), check=True)

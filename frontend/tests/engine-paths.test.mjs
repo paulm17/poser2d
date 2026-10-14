@@ -6,7 +6,7 @@ const compile = source => ts.transpileModule(source, { compilerOptions: { module
 const url = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 const ipc = url(compile(await readFile(new URL('../src/ipc.ts', import.meta.url), 'utf8')));
 const source = compile(await readFile(new URL('../src/engine.ts', import.meta.url), 'utf8')).replace('"./ipc"', JSON.stringify(ipc));
-const { mergePaths, emptyPaths, initialModelId, selectModelPaths } = await import(url(source));
+const { mergePaths, emptyPaths, initialModelId, selectModelPaths, effectiveGuidance } = await import(url(source));
 const defaults = {...emptyPaths,cli:'/bundled/vpipe',model:'/cache/4bit',model8:'/cache/8bit',vae:'/cache/vae',llm:'/cache/encoder',pe_cli:'/bundled/vpipe',pe_model:'/cache/enhancer',pe_system:'/cache/system.txt',turbo:true};
 test('migrates sd-cli and GGUF paths and preserves pose preferences',()=>{
  const saved={...emptyPaths,cli:'/old/sd-cli',model:'/old/turbo.gguf',pe_model:'/old/pe.gguf',pose_enabled:false,pose_strength:0.5};
@@ -39,4 +39,28 @@ test('all four models preserve Pose and only Turbo disables Lightning', () => {
   assert.equal(selected.pose_enabled,true);
   assert.equal(selected.lightning_enabled,id.startsWith('base'));
  }
+});
+
+test('older saved paths receive I2I enhancer defaults and preserve custom paths', () => {
+ const next = {...defaults, pe_i2i_model:'/cache/i2i', pe_i2i_system:'/cache/i2i/system_prompt.txt'};
+ const old = {...defaults}; delete old.pe_i2i_model; delete old.pe_i2i_system;
+ assert.equal(mergePaths(old,next).pe_i2i_model,next.pe_i2i_model);
+ assert.equal(mergePaths(old,next).pe_i2i_system,next.pe_i2i_system);
+ assert.equal(mergePaths({...next,pe_i2i_model:'/custom/i2i'},next).pe_i2i_model,'/custom/i2i');
+});
+
+test('AnyAngle temporarily locks CFG and preserves the editable value', () => {
+ const cfg = 6.4;
+ const adapters = [{id:'anyangle',strength:1}];
+ assert.equal(effectiveGuidance(cfg, adapters), 3);
+ assert.equal(effectiveGuidance(cfg, []), cfg);
+ assert.equal(effectiveGuidance(1, [{id:'pose',strength:0.7}]), 1);
+});
+test('AnyAngle cached path is filled and custom selection is preserved', () => {
+ const installed = {...defaults,anyangle_lora:'/cache/anyangle.safetensors'};
+ const merged = mergePaths({...defaults,anyangle_enabled:false}, installed);
+ assert.equal(merged.anyangle_lora, installed.anyangle_lora);
+ assert.equal(merged.anyangle_enabled, false);
+ const custom = {...defaults,anyangle_enabled:true,anyangle_lora:'/custom/angle.safetensors',anyangle_strength:0.8};
+ assert.deepEqual(mergePaths(custom, installed), custom);
 });

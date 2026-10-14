@@ -16,6 +16,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let paths = engine::cached_paths(cli.to_string_lossy().into_owned());
     let reference = std::env::args().nth(1).unwrap_or_else(|| "/Volumes/Data/Users/paul/scratch/awakenJesus/books/manga/source images/thekenoma/yahweh/christian_yahweh_halo_no_bg.png".into());
     let png = base64::engine::general_purpose::STANDARD.encode(std::fs::read(&reference)?);
+    let second_png = match std::env::args().nth(2) {
+        Some(path) => base64::engine::general_purpose::STANDARD.encode(std::fs::read(path)?),
+        None => png.clone(),
+    };
     let mut results: Vec<serde_json::Value> = std::fs::read(artifacts.join("results.json"))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
@@ -27,7 +31,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(512);
     for model in ["turbo-4", "turbo-8", "base-8", "base-4"] {
         let bits = if model.ends_with("8") { 8 } else { 4 };
-        for mode in ["t2i", "i2i", "pose"] {
+        for mode in [
+            "t2i",
+            "i2i",
+            "pose",
+            "enhanced",
+            "enhanced-i2i",
+            "enhanced-multi",
+        ] {
             let name = format!("{model}-{mode}");
             if let Ok(filter) = std::env::var("VPIPE_VALIDATION_FILTER") {
                 if !filter.split(',').any(|f| f == name) {
@@ -40,8 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             paths.pose_enabled = mode == "pose";
             let req = Request {
                 loras:None,model_id:Some(model.into()),auto_ratio:false,session:name.clone(),paths,
-                references:if mode!="t2i" { vec![Reference{png:png.clone()}] } else {vec![]},
-                settings:Settings { prompt:if mode!="t2i" {"Place this character on a quiet beach at sunset, preserving her face, pointed ears, white dress, and full-body standing pose."} else {"A blue ceramic mug on a wooden table beside a window, soft morning light"}.into(),width:Some(size),height:Some(size),steps:8,seed:42,enhance:mode=="enhanced",think:false,transparent:false,device:"mps".into(),ratio:Some("1:1".into()) }
+                references:if mode == "enhanced-multi" { vec![Reference{png:png.clone()}, Reference{png:second_png.clone()}] } else if mode!="t2i" && mode!="enhanced" { vec![Reference{png:png.clone()}] } else {vec![]},
+                settings:Settings { prompt:if mode == "enhanced-multi" {"Use <image1> as the subject and <image2> as the style reference. Place the subject on a beach at sunset."} else if mode!="t2i" && mode!="enhanced" {"Place this character on a quiet beach at sunset, preserving her face, pointed ears, white dress, and full-body standing pose."} else {"A blue ceramic mug on a wooden table beside a window, soft morning light"}.into(),width:Some(size),height:Some(size),steps:8,cfg:1.0,seed:42,enhance:mode.starts_with("enhanced"),think:false,transparent:false,device:"mps".into(),ratio:Some("1:1".into()) }
             };
             let identity = serde_json::to_value(&req.paths)?;
             let id = engine.submit(req).map_err(std::io::Error::other)?["id"]

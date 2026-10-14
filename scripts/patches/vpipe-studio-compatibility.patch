@@ -322,3 +322,24 @@ index 46849b0..bbfbc60 100644
 +  EXPECT_FALSE(ad->bind_split("img_mlp.gate_up", G, U+1, K, &bad_g, &bad_u));
 +  EXPECT_TRUE(bad_g.empty()); EXPECT_TRUE(bad_u.empty());
 +}
+
+diff --git a/generative-models/qwen3/metal-qwen-vision.cc b/generative-models/qwen3/metal-qwen-vision.cc
+index 63bfdf4..9ea8803 100644
+--- a/generative-models/qwen3/metal-qwen-vision.cc
++++ b/generative-models/qwen3/metal-qwen-vision.cc
+@@ -474,3 +474,14 @@ MetalQwenVisionEncoder::load(std::shared_ptr<WeightSet> ws_in,
+
+-  const std::string r = cfg.weight_prefix;   // "vision_tower." or "visual."
++  // Official Qwen3.5 checkpoints nest the tower under model.visual.;
++  // split/repacked encoders use vision_tower. or visual. instead.
++  std::string r = cfg.weight_prefix;
++  if (!gguf && !wts->has(r + "patch_embed.proj.weight")) {
++    for (const std::string& prefix : {std::string("model.visual."),
++                                      std::string("visual.")}) {
++      if (wts->has(prefix + "patch_embed.proj.weight")) {
++        r = prefix;
++        break;
++      }
++    }
++  }
+   m->_pe_w = gguf ? patch_embed_gguf() : to_f16(r + "patch_embed.proj.weight");

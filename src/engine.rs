@@ -20,6 +20,8 @@ pub struct Settings {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub steps: u32,
+    #[serde(default = "default_cfg")]
+    pub cfg: f32,
     pub seed: u64,
     pub enhance: bool,
     pub think: bool,
@@ -31,6 +33,12 @@ pub struct Settings {
 pub struct Paths {
     #[serde(default)]
     pub lightning_lora: String,
+    #[serde(default)]
+    pub anyangle_lora: String,
+    #[serde(default)]
+    pub anyangle_enabled: bool,
+    #[serde(default = "default_cfg")]
+    pub anyangle_strength: f32,
     #[serde(default)]
     pub lightning_enabled: bool,
     #[serde(default)]
@@ -46,6 +54,10 @@ pub struct Paths {
     #[serde(default)]
     pub pe_system: String,
     #[serde(default)]
+    pub pe_i2i_model: String,
+    #[serde(default)]
+    pub pe_i2i_system: String,
+    #[serde(default)]
     pub turbo: bool,
     pub cli: String,
     pub model: String,
@@ -57,6 +69,7 @@ pub struct Paths {
     pub llm: String,
     pub vision: String,
 }
+fn default_cfg() -> f32 { 1.0 }
 fn default_bits() -> u8 {
     4
 }
@@ -111,6 +124,7 @@ struct Enhancement {
     prompt: String,
     think: bool,
     auto_ratio: bool,
+    references: Vec<PathBuf>,
 }
 struct Work {
     enhancement: Option<Enhancement>,
@@ -118,6 +132,7 @@ struct Work {
     id: String,
     args: Vec<String>,
     pose_modules: usize,
+    anyangle_modules: usize,
     lightning_modules: usize,
     paths: Paths,
     cli: PathBuf,
@@ -225,6 +240,8 @@ impl Engine {
         if let Some(id) = &request.model_id {
             let pose = request.paths.pose_enabled;
             let lightning = request.paths.lightning_enabled;
+            let anyangle = request.paths.anyangle_enabled;
+            let anyangle_strength = request.paths.anyangle_strength;
             let mut paths = cached_paths(default_cli());
             let selected = model_catalog()
                 .into_iter()
@@ -246,6 +263,8 @@ impl Engine {
                 .to_string_lossy()
                 .into_owned();
             paths.pose_enabled = pose;
+            paths.anyangle_enabled = anyangle;
+            paths.anyangle_strength = anyangle_strength;
             paths.lightning_enabled = lightning && !paths.turbo;
             request.paths = paths;
         }
@@ -260,6 +279,11 @@ impl Engine {
         if request.paths.quant_bits == 8 {
             request.paths.model = request.paths.model8.clone();
         }
+        if request.settings.enhance && !request.references.is_empty() {
+            request.paths.pe_model = request.paths.pe_i2i_model.clone();
+            request.paths.pe_system = request.paths.pe_i2i_system.clone();
+        }
+        if request.paths.anyangle_enabled { request.settings.cfg = 3.0; }
         validate(&request)?;
         for path in [
             &mut request.paths.cli,
@@ -316,6 +340,10 @@ impl Engine {
         } else {
             0
         };
+        let anyangle_modules = if request.paths.anyangle_enabled {
+            request.paths.anyangle_lora = std::fs::canonicalize(&request.paths.anyangle_lora).map_err(|e| e.to_string())?.to_string_lossy().into_owned();
+            adapter_modules(&request.paths.anyangle_lora)?
+        } else { 0 };
         let id = Uuid::new_v4().to_string();
         let dir = self.root.join(&id);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -339,6 +367,7 @@ impl Engine {
             prompt: request.settings.prompt.clone(),
             think: request.settings.think,
             auto_ratio: request.auto_ratio && request.settings.ratio.is_none(),
+            references: refs.clone(),
         });
         let (cancel, _) = watch::channel(false);
         {
@@ -378,6 +407,7 @@ impl Engine {
             id: id.clone(),
             args,
             pose_modules,
+            anyangle_modules,
             lightning_modules,
             cli,
             dir: dir.clone(),
@@ -423,7 +453,7 @@ impl Engine {
         if let Some(enhancement) = &work.enhancement {
             self.update(&work.id, |j| j.stage = "enhance".into());
             match self.enhance(enhancement, &work.id, &mut cancel).await {
-                Ok(Some((prompt, ratio))) => {
+                Ok(Some((prompt, ratio, follow))) => {
                     let mut graph: Value =
                         serde_json::from_str(&work.args[1]).expect("generated graph");
                     // Preserve the transparency instructions applied by arguments().
@@ -445,7 +475,17 @@ impl Engine {
                         prompt.clone()
                     });
                     if enhancement.auto_ratio {
-                        if let Some((w, h)) = ratio_size(&ratio) {
+                        let size = if follow.is_empty() {
+                            ratio_size(&ratio)
+                        } else {
+                            reference_index(&follow, enhancement.references.len())
+                                .ok()
+                                .and_then(|i| {
+                                    image::image_dimensions(&enhancement.references[i]).ok()
+                                })
+                                .map(|(w, h)| reference_size(w, h))
+                        };
+                        if let Some((w, h)) = size {
                             for stage in graph["stages"].as_array_mut().unwrap() {
                                 if stage["id"] == "generate-image" {
                                     stage["config"]["width"] = json!(w);
@@ -556,6 +596,7 @@ impl Engine {
             Ok(status) if status.success() => {
                 for (label, path, count) in [
                     ("Pose", &work.paths.pose_lora, work.pose_modules),
+                    ("AnyAngle", &work.paths.anyangle_lora, work.anyangle_modules),
                     (
                         "Lightning",
                         &work.paths.lightning_lora,
@@ -629,10 +670,17 @@ impl Engine {
         pe: &Enhancement,
         id: &str,
         cancel: &mut watch::Receiver<bool>,
-    ) -> Result<Option<(String, String)>, String> {
+    ) -> Result<Option<(String, String, String)>, String> {
         self.log(
             id,
-            "[enhance] Loading PE-T2I. Image generation waits until this process exits.",
+            &format!(
+                "[enhance] Loading {}. Image generation waits until this process exits.",
+                if pe.references.is_empty() {
+                    "PE-T2I"
+                } else {
+                    "PE-I2I"
+                }
+            ),
         );
         let system = std::fs::read_to_string(&pe.system).map_err(|e| e.to_string())?;
         let dir = self.root.join(id);
@@ -664,15 +712,22 @@ impl Engine {
         let output = tokio::spawn(async move { a.capture(stdout, &job).await });
         let b = self.clone();
         let job = id.to_string();
-        let logs = tokio::spawn(async move { b.read(stderr, &job).await });
+        let logs = tokio::spawn(async move { b.capture(stderr, &job).await });
         let status = tokio::select! { biased;
             _ = async { if !*cancel.borrow() { let _ = cancel.changed().await; } } => { if let Some(pid) = child.id() { unsafe { libc::kill(-(pid as i32), libc::SIGKILL); } } let _ = child.wait().await; None },
             status = child.wait() => Some(status.map_err(|e| e.to_string())?),
         };
-        let _stdout = output.await.map_err(|e| e.to_string())?;
-        let _ = logs.await;
+        let stdout = output.await.map_err(|e| e.to_string())?;
+        let stderr = logs.await.map_err(|e| e.to_string())?;
         if status.is_none() || *cancel.borrow() {
             return Ok(None);
+        }
+        if !pe.references.is_empty()
+            && [&stdout, &stderr].iter().any(|log| {
+                log.contains("dropping image attachment") || log.contains("dropping the attachment")
+            })
+        {
+            return Err("PE-I2I could not encode a reference image; see render log".into());
         }
         if !status.unwrap().success() {
             return Err("Prompt enhancer failed; see render log".into());
@@ -680,6 +735,12 @@ impl Engine {
         let text = std::fs::read_to_string(dir.join("enhanced.txt"))
             .map_err(|e| format!("Enhancer produced no reply: {e}"))?;
         let parsed = parse_enhancement(&text)?;
+        if !pe.references.is_empty() && parsed.1.is_empty() && parsed.2.is_empty() {
+            return Err("PE-I2I returned no canvas aspect ratio".into());
+        }
+        if !parsed.2.is_empty() {
+            reference_index(&parsed.2, pe.references.len())?;
+        }
         self.log(
             id,
             "[enhance] Prompt ready; enhancer process exited and its memory has been released.",
@@ -795,6 +856,12 @@ fn prepare_references(references: Vec<Reference>, dir: &std::path::Path) -> Resu
     Ok(())
 }
 fn validate(r: &Request) -> Result<(), String> {
+    if !r.settings.cfg.is_finite() || !(1.0..=10.0).contains(&r.settings.cfg) { return Err("CFG must be between 1 and 10".into()); }
+    if r.paths.anyangle_enabled {
+        if !PathBuf::from(&r.paths.anyangle_lora).is_file() { return Err("AnyAngle LoRA is not installed".into()); }
+        if !r.paths.anyangle_strength.is_finite() || !(0.0..=2.0).contains(&r.paths.anyangle_strength) { return Err("AnyAngle LoRA strength must be between 0 and 2".into()); }
+    }
+
     let s = &r.settings;
     if r.session.is_empty() || s.prompt.trim().is_empty() {
         return Err("Session and prompt are required".into());
@@ -805,15 +872,13 @@ fn validate(r: &Request) -> Result<(), String> {
                 .join("config.json")
                 .is_file()
         {
-            return Err("Select a prepared PE-T2I Safetensors model directory".into());
+            return Err("Select a prepared prompt enhancer Safetensors model directory".into());
         }
-        if !r.references.is_empty() {
-            return Err("Prompt enhancement currently supports text-to-image only".into());
-        }
+
         for (label, path) in [
             ("vpipe enhancer executable", &r.paths.pe_cli),
-            ("PE-T2I weights", &r.paths.pe_model),
-            ("PE-T2I system prompt", &r.paths.pe_system),
+            ("Prompt enhancer weights", &r.paths.pe_model),
+            ("Prompt enhancer system prompt", &r.paths.pe_system),
         ] {
             if !PathBuf::from(path).exists() {
                 return Err(format!("Select existing {label}"));
@@ -937,6 +1002,11 @@ fn image_pipeline(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Va
         cfg["lora2"] = json!(r.paths.pose_lora);
         cfg["lora2_scale"] = json!(r.paths.pose_strength);
     }
+    if r.paths.anyangle_enabled {
+        cfg["lora3"] = json!(r.paths.anyangle_lora);
+        cfg["lora3_scale"] = json!(r.paths.anyangle_strength);
+    }
+    let guidance = if r.paths.anyangle_enabled { 3.0 } else { r.settings.cfg };
     let mut stages = vec![
         stage(
             "model-select",
@@ -947,7 +1017,29 @@ fn image_pipeline(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Va
         stage("text-prompt", "text-prompt", vec![], json!({"text":prompt})),
         stage("model-config", "qwen-image-21-model-config", vec![], cfg),
     ];
-    if !refs.is_empty() {
+    let multi = refs.len() > 1;
+    if multi {
+        let mut inputs = Vec::new();
+        for (i, reference) in refs.iter().enumerate() {
+            let load = format!("load-ref-{i}");
+            let resize = format!("ref-resample-{i}");
+            stages.push(stage(&load, "load-image", vec![], json!({"url":reference})));
+            stages.push(stage(
+                &resize,
+                "image-resample",
+                vec![port(&load)],
+                json!({"width":1024,"height":1024,"fit":"pad","algorithm":"lanczos"}),
+            ));
+            inputs.push(port(&resize));
+        }
+        stages.push(stage("ref-list", "tensor-list", inputs, json!({})));
+        stages.push(stage(
+            "vae-encode",
+            "vae-encode",
+            vec![port(""), port("model-select"), port("ref-list")],
+            json!({"unload_when_idle":"always"}),
+        ));
+    } else if !refs.is_empty() {
         stages.push(stage("load-ref", "load-image", vec![], json!({"url":refs})));
         stages.push(stage(
             "ref-resample",
@@ -962,7 +1054,11 @@ fn image_pipeline(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Va
             json!({"unload_when_idle":"always"}),
         ));
     }
-    let ref_port = if refs.is_empty() { "" } else { "ref-resample" };
+    let ref_port = if refs.is_empty() || multi {
+        ""
+    } else {
+        "ref-resample"
+    };
     stages.push(stage(
         "diffusion-conditioner",
         "diffusion-conditioner",
@@ -973,10 +1069,36 @@ fn image_pipeline(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Va
             port(ref_port),
             port(""),
             port("model-config"),
+            port(if multi { "ref-list" } else { "" }),
         ],
-        json!({"unload_when_idle":"always"}),
+        json!({"unload_when_idle":"always", "grounded_negative":guidance > 1.0}),
     ));
-    stages.push(stage("generate-image", "generate-image", vec![port("diffusion-conditioner"),port(""),port("model-select"),port(""),port(""),port(if refs.is_empty(){""}else{"vae-encode"}),port(""),port("model-config")], json!({"width":r.settings.width,"height":r.settings.height,"seed":r.settings.seed,"steps":r.settings.steps,"guidance_scale":1.0,"unload_when_idle":"always"})));
+    let mut generation_inputs = vec![
+        port("diffusion-conditioner"),
+        port(""),
+        port("model-select"),
+        port(""),
+        port(""),
+        port(if refs.is_empty() || multi {
+            ""
+        } else {
+            "vae-encode"
+        }),
+        port(""),
+        port("model-config"),
+        port(""),
+    ];
+    if guidance > 1.0 { generation_inputs[1] = json!({"src":"diffusion-conditioner","oport":1}); }
+    if multi {
+        generation_inputs[8] = json!({"src":"vae-encode","oport":1});
+    }
+    stages.push(stage(
+        "generate-image",
+        "generate-image",
+        generation_inputs,
+        json!({"width":r.settings.width,"height":r.settings.height,"seed":r.settings.seed,
+            "steps":r.settings.steps,"guidance_scale":guidance,"unload_when_idle":"always"}),
+    ));
     stages.push(stage(
         "vae-decode",
         "vae-decode",
@@ -992,10 +1114,19 @@ fn image_pipeline(r: &Request, refs: &[PathBuf], output: &std::path::Path) -> Va
     json!({"id":"studio-image","stages":stages,"subpipelines":[]})
 }
 fn enhancement_pipeline(pe: &Enhancement, system: &str, output: &std::path::Path) -> Value {
+    let edit = !pe.references.is_empty();
+    let mut content = String::new();
+    for path in &pe.references {
+        content.push_str(&format!(
+            "<|__vpipe_fs_im_start__|>{}<|__vpipe_fs_im_end__|>\n",
+            path.display()
+        ));
+    }
+    content.push_str(&pe.prompt);
     json!({"id":"studio-enhance","subpipelines":[],"stages":[
-        stage("input","text-prompt",vec![],json!({"value":{"messages":[{"role":"system","content":system},{"role":"user","content":pe.prompt}]}})),
-        stage("sampler","sampler-select",vec![],json!({"temperature":1.0,"top_p":0.95,"top_k":20,"seed":42})),
-        stage("chat","text-chat",vec![port("input"),port("sampler")],json!({"hf_dir":pe.model,"compute_dtype":"bf16","max_new_tokens":16256,"page_tokens":1024,"max_pages":32,"disable_thinking":!pe.think,"enable_tools":false,"mtp":false})),
+        stage("input","text-prompt",vec![],json!({"value":{"messages":[{"role":"system","content":system},{"role":"user","content":content}]}})),
+        stage("sampler","sampler-select",vec![],json!({"temperature":1.0,"top_p":0.95,"top_k":20,"presence_penalty":0.0,"seed":42})),
+        stage("chat","text-chat",vec![port("input"),port("sampler")],json!({"hf_dir":pe.model,"compute_dtype":"bf16","max_new_tokens":if edit {24000} else {16256},"page_tokens":1024,"max_pages":if edit {64} else {32},"disable_thinking":!pe.think,"enable_tools":false,"mtp":false})),
         stage("save","save-text",vec![port("chat")],json!({"path":output,"key":"text","append":false}))
     ]})
 }
@@ -1100,14 +1231,29 @@ fn cached_paths_in(hub: &std::path::Path, cli: String) -> Paths {
         pe_cli: cli,
         pe_model: pe.to_string_lossy().into_owned(),
         pe_system: pe.join("system_prompt.txt").to_string_lossy().into_owned(),
+        pe_i2i_model: prepared
+            .join("Qwen-Image-2.1-PE-I2I-4bit")
+            .to_string_lossy()
+            .into_owned(),
+        pe_i2i_system: prepared
+            .join("Qwen-Image-2.1-PE-I2I-4bit/system_prompt.txt")
+            .to_string_lossy()
+            .into_owned(),
         pose_enabled: false,
         pose_lora: pose,
         pose_strength: 0.7,
+        anyangle_lora: discover_anyangle(hub),
+        anyangle_enabled: false,
+        anyangle_strength: 1.0,
     }
 }
 
-fn parse_enhancement(text: &str) -> Result<(String, String), String> {
-    let answer = text.rsplit_once("</think>").map(|(_, a)| a).unwrap_or(text);
+fn parse_enhancement(text: &str) -> Result<(String, String, String), String> {
+    let answer = text
+        .rsplit_once("</think>")
+        .or_else(|| text.rsplit_once("<|__vpipe_think_end__|>"))
+        .map(|(_, a)| a)
+        .unwrap_or(text);
     let mut result = None;
     for (i, c) in answer.char_indices() {
         if c != '{' {
@@ -1126,13 +1272,36 @@ fn parse_enhancement(text: &str) -> Result<(String, String), String> {
                 result = Some((
                     prompt.trim().to_string(),
                     value["wh_ratio"].as_str().unwrap_or("").to_string(),
+                    value["ratio_follow"].as_str().unwrap_or("").to_string(),
                 ));
             }
+        }
+    }
+    if let Some((_, ratio, follow)) = &result {
+        if !ratio.is_empty() && (!follow.is_empty() || ratio_size(ratio).is_none()) {
+            return Err("Invalid enhancer aspect ratio fields".into());
         }
     }
     result.ok_or_else(|| {
         "Prompt enhancer did not return a valid rewritten_prompt JSON object; see render log".into()
     })
+}
+fn reference_index(follow: &str, count: usize) -> Result<usize, String> {
+    follow
+        .strip_prefix("<image")
+        .and_then(|s| s.strip_suffix('>'))
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|i| *i > 0 && *i <= count)
+        .map(|i| i - 1)
+        .ok_or_else(|| "Enhancer ratio_follow names a nonexistent reference image".into())
+}
+fn reference_size(w: u32, h: u32) -> (u32, u32) {
+    let ratio = f64::from(w) / f64::from(h);
+    let width = (1024.0 * 1024.0 * ratio).sqrt();
+    (
+        ((width / 32.0).round() as u32 * 32).clamp(256, 4096),
+        ((width / ratio / 32.0).round() as u32 * 32).clamp(256, 4096),
+    )
 }
 fn ratio_size(ratio: &str) -> Option<(u32, u32)> {
     let (a, b) = ratio.split_once(':')?;
@@ -1166,6 +1335,7 @@ mod tests {
         paths.llm = root.join("encoder").to_string_lossy().into_owned();
         paths.vae = root.join("vae").to_string_lossy().into_owned();
         paths.pose_enabled = false;
+    paths.anyangle_enabled = false;
         Request {
             loras: None,
             model_id: None,
@@ -1178,6 +1348,7 @@ mod tests {
                 width: Some(1024),
                 height: Some(1024),
                 steps: 8,
+                cfg: 1.0,
                 seed: 42,
                 enhance: false,
                 think: false,
@@ -1221,7 +1392,24 @@ mod tests {
         let graph = image_pipeline(&r, &refs, &root.join("output.png"));
         assert_eq!(graph["stages"][1]["config"]["text"], r.settings.prompt);
         assert_eq!(graph["stages"][2]["config"]["lora2_scale"], json!(0.7f32));
-        assert_eq!(graph["stages"][3]["config"]["url"], json!(refs));
+        assert_eq!(graph["stages"][3]["config"]["url"], json!(refs[0]));
+        assert_eq!(graph["stages"][5]["config"]["url"], json!(refs[1]));
+        let stages = graph["stages"].as_array().unwrap();
+        let list = stages.iter().find(|s| s["id"] == "ref-list").unwrap();
+        assert_eq!(
+            list["iports"],
+            json!([port("ref-resample-0"), port("ref-resample-1")])
+        );
+        let conditioner = stages
+            .iter()
+            .find(|s| s["id"] == "diffusion-conditioner")
+            .unwrap();
+        assert_eq!(conditioner["iports"][6], port("ref-list"));
+        let generation = stages.iter().find(|s| s["id"] == "generate-image").unwrap();
+        assert_eq!(
+            generation["iports"][8],
+            json!({"src":"vae-encode","oport":1})
+        );
         assert!(
             image_pipeline(&r, &[], &root.join("out.png"))["stages"][2]["config"]
                 .get("lora")
@@ -1354,6 +1542,7 @@ mod tests {
             prompt: "mug".into(),
             think: true,
             auto_ratio: false,
+            references: vec![],
         };
         let p = enhancement_pipeline(&pe, "official instructions", std::path::Path::new("/out"));
         assert_eq!(
@@ -1372,6 +1561,54 @@ mod tests {
         );
         assert!(parse_enhancement("malformed").is_err());
     }
+    #[test]
+    fn edit_enhancement_preserves_images_and_canvas_contract() {
+        let pe = Enhancement {
+            cli: "vpipe".into(),
+            model: "/pe-i2i".into(),
+            system: "/system".into(),
+            prompt: "Put <image1> into <image2>".into(),
+            think: false,
+            auto_ratio: true,
+            references: vec!["/first.png".into(), "/second.png".into()],
+        };
+        let graph = enhancement_pipeline(&pe, "edit instructions", std::path::Path::new("/reply"));
+        let content = graph["stages"][0]["config"]["value"]["messages"][1]["content"]
+            .as_str()
+            .unwrap();
+        assert!(content.find("/first.png").unwrap() < content.find("/second.png").unwrap());
+        assert!(content.ends_with("Put <image1> into <image2>"));
+        assert_eq!(graph["stages"][2]["config"]["max_new_tokens"], 24000);
+        assert_eq!(graph["stages"][2]["config"]["disable_thinking"], true);
+        let result = parse_enhancement(
+            r#"{"rewritten_prompt":"Edit sky","wh_ratio":"","ratio_follow":"<image2>"}"#,
+        )
+        .unwrap();
+        assert_eq!(reference_index(&result.2, 2).unwrap(), 1);
+        assert_eq!(reference_size(1024, 1024), (1024, 1024));
+        assert_eq!(reference_size(2048, 1024), (1440, 736));
+        assert_eq!(reference_size(1024, 2048), (736, 1440));
+        for bad in ["<image0>", "<image3>", "image1", "<image-1>"] {
+            assert!(reference_index(bad, 2).is_err());
+        }
+        assert!(
+            parse_enhancement(
+                r#"{"rewritten_prompt":"Edit","wh_ratio":"1:1","ratio_follow":"<image1>"}"#
+            )
+            .is_err()
+        );
+        assert!(parse_enhancement(r#"{"rewritten_prompt":"Edit","wh_ratio":"invalid"}"#).is_err());
+        let mut value = serde_json::to_value(cached_paths_in(
+            std::path::Path::new("/cache"),
+            "vpipe".into(),
+        ))
+        .unwrap();
+        value.as_object_mut().unwrap().remove("pe_i2i_model");
+        value.as_object_mut().unwrap().remove("pe_i2i_system");
+        let old: Paths = serde_json::from_value(value).unwrap();
+        assert!(old.pe_i2i_model.is_empty());
+    }
+
     #[test]
     fn defaults_choose_four_bit_and_keep_both_models() {
         let paths = cached_paths_in(std::path::Path::new("/cache"), "vpipe".into());
@@ -1395,6 +1632,9 @@ p=json.load(open(sys.argv[sys.argv.index('--launch')+1])); stages=p['stages']; p
 if p['id']=='studio-enhance':
  prompt=stages[0]['config']['value']['messages'][-1]['content']
  if prompt=='slow': time.sleep(60)
+ if '<|__vpipe_fs_im_start__|>' in prompt:
+  assert pathlib.Path(prompt.split('<|__vpipe_fs_im_start__|>')[1].split('<|__vpipe_fs_im_end__|>')[0]).is_file()
+  if prompt.endswith('drop'): print('dropping image attachment: vision encode failed',file=sys.stderr)
  pathlib.Path(stages[-1]['config']['path']).write_text('malformed' if prompt=='bad' else json.dumps({'rewritten_prompt':'Enhanced mug','wh_ratio':'1:1'}))
  sys.exit(0)
 if prompt=='slow': time.sleep(60)
@@ -1450,6 +1690,30 @@ if prompt!='noout': shutil.copyfile(pathlib.Path(__file__).parent/'source.png',s
                 .unwrap()["enhanced_prompt"],
             "Enhanced mug"
         );
+        for prompt in ["edit", "drop"] {
+            let mut r = req(prompt);
+            r.settings.enhance = true;
+            r.paths.pe_cli = cli.to_string_lossy().into_owned();
+            r.paths.pe_i2i_model = root.join("encoder").to_string_lossy().into_owned();
+            r.paths.pe_i2i_system = root.join("system.txt").to_string_lossy().into_owned();
+            r.references = vec![Reference {
+                png: STANDARD.encode(std::fs::read(root.join("source.png")).unwrap()),
+            }];
+            let id = submit(r);
+            wait(
+                &engine,
+                &id,
+                if prompt == "drop" {
+                    "failed"
+                } else {
+                    "completed"
+                },
+            )
+            .await;
+            if prompt == "drop" {
+                assert!(!root.join("renders").join(&id).join("output.png").exists());
+            }
+        }
         for prompt in ["bad", "slow"] {
             let mut r = req(prompt);
             r.settings.enhance = true;
@@ -1510,6 +1774,7 @@ pub struct CatalogModel {
     pub bits: u8,
     pub available: bool,
     pub pose_available: bool,
+    pub anyangle_available: bool,
     pub lightning_available: bool,
     #[serde(skip)]
     pub path: String,
@@ -1538,6 +1803,7 @@ pub fn model_catalog() -> Vec<CatalogModel> {
                         && component_installed(&path.join("text_encoder"))
                         && component_installed(&path.join("vae"))
                         && path.join("model_index.json").is_file(),
+                    anyangle_available: PathBuf::from(&defaults.anyangle_lora).is_file(),
                     pose_available: PathBuf::from(&defaults.pose_lora).is_file(),
                     lightning_available: PathBuf::from(&defaults.lightning_lora).is_file(),
                     path: path.to_string_lossy().into_owned(),
@@ -1592,6 +1858,7 @@ fn default_paths() -> Paths {
 fn apply_adapter_selection(paths: &mut Paths, adapters: &[AdapterSelection]) -> Result<(), String> {
     paths.lightning_enabled = false;
     paths.pose_enabled = false;
+    paths.anyangle_enabled = false;
     let mut seen = std::collections::HashSet::new();
     for adapter in adapters {
         if !seen.insert(&adapter.id) {
@@ -1602,6 +1869,7 @@ fn apply_adapter_selection(paths: &mut Paths, adapters: &[AdapterSelection]) -> 
         }
         match adapter.id.as_str() {
             "lightning" if !paths.turbo => paths.lightning_enabled = true,
+            "anyangle" => { paths.anyangle_enabled = true; paths.anyangle_strength = adapter.strength; }
             "pose" => {
                 paths.pose_enabled = true;
                 paths.pose_strength = adapter.strength;
@@ -1610,4 +1878,72 @@ fn apply_adapter_selection(paths: &mut Paths, adapters: &[AdapterSelection]) -> 
         }
     }
     Ok(())
+}
+
+fn discover_anyangle(hub: &std::path::Path) -> String {
+    let repo = hub.join("models--lilylilith--QI_2.1_AnyAngle");
+    if let Ok(revision) = std::fs::read_to_string(repo.join("refs/main")) {
+        let path = repo.join("snapshots").join(revision.trim()).join("QI2.1_AnyAngle.safetensors");
+        if path.is_file() { return path.to_string_lossy().into_owned(); }
+    }
+    let mut paths: Vec<_> = std::fs::read_dir(repo.join("snapshots")).into_iter().flatten().filter_map(Result::ok).map(|e| e.path().join("QI2.1_AnyAngle.safetensors")).filter(|p| p.is_file()).collect();
+    paths.sort();
+    paths.last().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod anyangle_cfg_tests {
+    use super::*;
+    #[test]
+    fn old_settings_default_cfg_and_invalid_cfg_is_rejected() {
+        let settings: Settings = serde_json::from_value(json!({"prompt":"cup","width":256,"height":256,"steps":8,"seed":42,"enhance":false,"think":false,"transparent":false,"device":"mps","ratio":null})).unwrap();
+        assert_eq!(settings.cfg, 1.0);
+        let mut request = Request { settings, paths: cached_paths_in(std::path::Path::new("/missing"), String::new()), loras: None, model_id: None, auto_ratio: false, session: "test".into(), references: vec![] };
+        for cfg in [0.9, 10.1, f32::NAN] { request.settings.cfg = cfg; assert!(validate(&request).unwrap_err().contains("CFG")); }
+        request.settings.cfg = 3.0;
+        request.paths.anyangle_enabled = true;
+        assert!(validate(&request).unwrap_err().contains("AnyAngle LoRA is not installed"));
+    }
+    #[test]
+    fn cfg_pipeline_wires_negative_for_all_reference_counts_and_stacks_adapters() {
+        let settings: Settings = serde_json::from_value(json!({"prompt":"cup","width":256,"height":256,"steps":8,"cfg":2.5,"seed":42,"enhance":false,"think":false,"transparent":false,"device":"mps","ratio":null})).unwrap();
+        let mut request = Request { settings, paths: cached_paths_in(std::path::Path::new("/missing"), String::new()), loras: None, model_id: None, auto_ratio: false, session: "test".into(), references: vec![] };
+        for count in 0..=2 {
+            let refs = vec![PathBuf::from("ref.png"); count];
+            let p = image_pipeline(&request, &refs, std::path::Path::new("out.png"));
+            let stage = |id| p["stages"].as_array().unwrap().iter().find(|s| s["id"] == id).unwrap();
+            assert_eq!(stage("generate-image")["config"]["guidance_scale"], 2.5);
+            assert_eq!(stage("generate-image")["iports"][1], json!({"src":"diffusion-conditioner","oport":1}));
+            assert_eq!(stage("diffusion-conditioner")["config"]["grounded_negative"], true);
+        }
+        request.settings.cfg = 1.0;
+        let p = image_pipeline(&request, &[], std::path::Path::new("out.png"));
+        let generation = p["stages"].as_array().unwrap().iter().find(|s| s["id"] == "generate-image").unwrap();
+        assert_eq!(generation["iports"][1]["src"], "");
+        request.paths.turbo = false;
+        apply_adapter_selection(&mut request.paths, &[AdapterSelection {id:"lightning".into(),strength:1.0}, AdapterSelection {id:"pose".into(),strength:0.7}, AdapterSelection {id:"anyangle".into(),strength:1.2}]).unwrap();
+        let p = image_pipeline(&request, &[PathBuf::from("ref.png")], std::path::Path::new("out.png"));
+        let model = p["stages"].as_array().unwrap().iter().find(|s| s["id"] == "model-config").unwrap();
+        assert!(model["config"].get("lora").is_some());
+        assert!(model["config"].get("lora2").is_some());
+        assert_eq!(model["config"]["lora3_scale"], json!(1.2f32));
+        let generation = p["stages"].as_array().unwrap().iter().find(|s| s["id"] == "generate-image").unwrap();
+        assert_eq!(generation["config"]["guidance_scale"], 3.0);
+        assert!(apply_adapter_selection(&mut request.paths, &[AdapterSelection {id:"anyangle".into(),strength:2.1}]).is_err());
+    }
+    #[test]
+    fn discovers_anyangle_and_prefers_current_revision() {
+        let root = std::env::temp_dir().join(format!("anyangle-discovery-{}", Uuid::new_v4()));
+        assert!(discover_anyangle(&root).is_empty());
+        let repo = root.join("models--lilylilith--QI_2.1_AnyAngle");
+        for revision in ["a", "z"] {
+            let dir = repo.join("snapshots").join(revision);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("QI2.1_AnyAngle.safetensors"), b"test").unwrap();
+        }
+        std::fs::create_dir_all(repo.join("refs")).unwrap();
+        std::fs::write(repo.join("refs/main"), "a\n").unwrap();
+        assert!(discover_anyangle(&root).ends_with("a/QI2.1_AnyAngle.safetensors"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

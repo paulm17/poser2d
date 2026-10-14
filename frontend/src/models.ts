@@ -14,6 +14,7 @@ export interface Settings {
   width: number | null;
   height: number | null;
   steps: number;
+  cfg: number;
   seed: number;
   enhance: boolean;
   think: boolean;
@@ -47,6 +48,7 @@ export const defaults: Settings = {
   width: null,
   height: null,
   steps: 40,
+  cfg: 1,
   seed: 42,
   enhance: false,
   think: false,

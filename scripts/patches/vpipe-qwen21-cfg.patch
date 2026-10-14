@@ -1,0 +1,187 @@
+diff --git a/stages/diffusion-conditioner-stage.cc b/stages/diffusion-conditioner-stage.cc
+index ca71b37..3bebdac 100644
+--- a/stages/diffusion-conditioner-stage.cc
++++ b/stages/diffusion-conditioner-stage.cc
+@@ -4050,6 +4050,10 @@ DiffusionConditionerStage::process(RuntimeContext& ctx)
+   // (README: "negative (leave empty) -- only used at CFG > 1"), enabled by
+   // `grounded_negative` on an image-aware run. encode_("") still splices the
+   // vision tokens, so the empty negative stays image-grounded.
++  const auto positive_slots = _qi21_slots;
++  const auto positive_grid_h = _qi21_grid_h;
++  const auto positive_grid_w = _qi21_grid_w;
++  const int positive_nref = _qi21_nref;
+   const bool emit_neg =
+       !_negative_prompt.empty()
+       || (_grounded_negative && n_img > 0 && !vtok.empty());
+@@ -4057,9 +4061,18 @@ DiffusionConditionerStage::process(RuntimeContext& ctx)
+     int n_neg = 0;
+     SharedBuffer nc = encode_(_negative_prompt, "negative", n_neg, vtok, n_img);
+     if (!nc.empty()) {
+-      co_await ctx.write(1, to_beat_(nc, shape_for(n_neg), cdt));
++      auto negative_beat = to_beat_(nc, shape_for(n_neg), cdt);
++      if (_family == "qwen-image-21" && (int)_qi21_slots.size() == n_neg) {
++        negative_beat->sideband = qi21_sideband_(
++            _qi21_slots, _qi21_nref, _qi21_grid_h, _qi21_grid_w);
++      }
++      co_await ctx.write(1, std::move(negative_beat));
+     }
+   }
++  _qi21_slots = positive_slots;
++  _qi21_grid_h = positive_grid_h;
++  _qi21_grid_w = positive_grid_w;
++  _qi21_nref = positive_nref;
+   // Drop the encoder BEFORE the conditioning is published: the DiT stage starts
+   // its denoise as soon as the beat lands, so releasing here is what gives it
+   // the working set. It reloads when the next prompt arrives. A BATCH holds
+diff --git a/stages/generate-image-stage.cc b/stages/generate-image-stage.cc
+index 3534db6..0f6cd76 100644
+--- a/stages/generate-image-stage.cc
++++ b/stages/generate-image-stage.cc
+@@ -4069,6 +4069,25 @@ GenerateImageStage::generate_qwen_image21_(
+ 
+   const bool cfg = !txt_neg.empty() && n_real_neg > 0 &&
+                    _guidance_scale != 1.0;
++  genai::qi21::Layout negative_layout;
++  if (cfg) {
++    auto negative_slots = _qi21_negative_slots;
++    if ((int)negative_slots.size() != n_real_neg) {
++      session()->warn(fmt("GenerateImageStage('{}'): negative conditioning "
++                          "has no matching Qwen-Image-2.1 slot mask", this->id()));
++      return {};
++    }
++    negative_slots.insert(negative_slots.end(), (std::size_t)(img_seq / 4), 1);
++    if (!genai::qi21::build_layout(negative_slots, {}, blocks,
++                                  &negative_layout, &lerr)) {
++      session()->warn(fmt("GenerateImageStage('{}'): negative layout: {}",
++                          this->id(), lerr));
++      return {};
++    }
++    session()->info(fmt("GenerateImageStage('{}'): true CFG {}, positive {} "
++                        "rows, negative {} rows, independent layouts",
++                        this->id(), _guidance_scale, n_real, n_real_neg));
++  }
+   const float gscale = (float)_guidance_scale;
+   bool dit_ok = true;
+   UiProgress bar = session()->open_progress("denoise");
+@@ -4118,14 +4137,13 @@ GenerateImageStage::generate_qwen_image21_(
+   const bool use_kv = _qi21_use_kv_cache && lay.prefix_len > 0;
+   int step_i = 0;
+ 
+-  auto run = [&](const SharedBuffer& txt, int rows,
++  auto run = [&](const SharedBuffer& txt, const genai::qi21::Layout& layout,
+                  genai::MetalQwenImage21Transformer::KvCache* kv, float sigma)
+       -> SharedBuffer {
+-    (void)rows;
+     genai::MetalQwenImage21Transformer::Request req;
+     req.latents = &latbuf;
+     req.txt = &txt;
+-    req.layout = &lay;
++    req.layout = &layout;
+     req.timestep = sigma;
+     if (use_kv) {
+       req.kv = kv;
+@@ -4156,7 +4174,7 @@ GenerateImageStage::generate_qwen_image21_(
+     for (std::size_t k = 0; k < cand.size(); ++k) {
+       lb[tgt_off + k] = f32_to_bf16_(cand[k]);
+     }
+-    SharedBuffer v = run(txt_pos, n_real, &kv_pos, (float)sigma);
++    SharedBuffer v = run(txt_pos, lay, &kv_pos, (float)sigma);
+     if (!dit_ok || v.empty()) { return {}; }
+     std::vector<float> out((std::size_t)img_seq * IC);
+     const auto* vp = static_cast<const std::uint16_t*>(v.contents());
+@@ -4165,7 +4183,7 @@ GenerateImageStage::generate_qwen_image21_(
+     }
+     prog.end_forward();
+     if (cfg) {
+-      SharedBuffer nv = run(txt_neg, n_real_neg, &kv_neg, (float)sigma);
++      SharedBuffer nv = run(txt_neg, negative_layout, &kv_neg, (float)sigma);
+       if (!dit_ok || nv.empty()) { return {}; }
+       const auto* np = static_cast<const std::uint16_t*>(nv.contents());
+       for (std::size_t k = 0; k < out.size(); ++k) {
+@@ -5415,6 +5433,7 @@ GenerateImageStage::process(RuntimeContext& ctx)
+   // classifier-free guidance, read with its positive at the top.
+   metal_compute::SharedBuffer cond_neg;
+   int n_real_neg = 0;
++  _qi21_negative_slots.clear();
+   {
+     const auto* ntb =
+         _neg_beat ? dynamic_cast<const TensorBeatPayload*>(_neg_beat.get())
+@@ -5422,6 +5441,19 @@ GenerateImageStage::process(RuntimeContext& ctx)
+     if (ntb != nullptr && !ntb->shape.empty() && ntb->shape[0] > 0) {
+       cond_neg = cond_to_shared_(mc, *ntb);
+       if (!cond_neg.empty()) { n_real_neg = (int)ntb->shape[0]; }
++      if (_family == "qwen-image-21" && ntb->sideband.is_object()) {
++        const FlexData sb = ntb->sideband;
++        const auto o = sb.as_object();
++        if (o.contains(genai::cond_sideband::kImgSlots)) {
++          const FlexData slots = o.at(genai::cond_sideband::kImgSlots);
++          if (slots.is_array()) {
++            const auto a = slots.as_array();
++            for (std::size_t i = 0; i < a.size(); ++i) {
++              _qi21_negative_slots.push_back(a.at(i).as_int(0) != 0 ? 1 : 0);
++            }
++          }
++        }
++      }
+       session()->log_debug(fmt(
+           "GenerateImageStage('{}'): negative conditioning [{} rows]", this->id(),
+           n_real_neg));
+diff --git a/stages/generate-image-stage.h b/stages/generate-image-stage.h
+index afc82d1..dd966e2 100644
+--- a/stages/generate-image-stage.h
++++ b/stages/generate-image-stage.h
+@@ -565,7 +565,7 @@ private:
+   // beat's sideband. Nothing here can reconstruct it: which conditioning
+   // rows are image slots depends on where the tower's rows were spliced
+   // in, and an image row carries no token id.
+-  std::vector<std::uint8_t> _qi21_slots;
++  std::vector<std::uint8_t> _qi21_slots, _qi21_negative_slots;
+   std::vector<int> _qi21_ref_gh, _qi21_ref_gw;
+   bool load_qwen_image21_dit_();
+   void free_qwen_image21_dit_for_decode_(int gen_w, int gen_h);
+diff --git a/tests/unit-tests/qwen-image-21-layout.cc b/tests/unit-tests/qwen-image-21-layout.cc
+index 4b4a047..6c78924 100644
+--- a/tests/unit-tests/qwen-image-21-layout.cc
++++ b/tests/unit-tests/qwen-image-21-layout.cc
+@@ -441,3 +441,32 @@ TEST(qwen_image_21_layout, the_schedule_comes_from_the_checkpoint)
+       GIS::qi21_checkpoint_schedule(bad.string()).sample_sigmas.empty());
+   fs::remove_all(base);
+ }
++
++TEST(qwen_image21_layout, cfg_branches_keep_distinct_text_indices_and_prefixes)
++{
++  auto positive = make_slots_({3, 5}, {4, 4});
++  auto negative = make_slots_({3, 5}, {4, 4});
++  positive.insert(positive.end(), 8, 0);
++  negative.insert(negative.end(), 1, 0);
++  auto with_target = [](std::vector<std::uint8_t> slots) {
++    slots.insert(slots.end(), 4, 1);
++    return slots;
++  };
++  const std::vector<ImgBlock> blocks = {{1, 4, 4}, {1, 4, 4}, {1, 4, 4}};
++  Layout pos, neg;
++  std::string err;
++  Q21L_REQUIRE(build_layout(with_target(positive), {}, blocks, &pos, &err));
++  Q21L_REQUIRE(build_layout(with_target(negative), {}, blocks, &neg, &err));
++  EXPECT_TRUE(pos.prefix_len == neg.prefix_len + 7);
++  EXPECT_TRUE(pos.image_len == neg.image_len);
++  EXPECT_TRUE(pos.target_len == neg.target_len);
++  for (const auto row : neg.text_src) {
++    EXPECT_TRUE(row >= 0 && row < (int)negative.size());
++  }
++  EXPECT_TRUE(pos.text_src.back() >= (int)negative.size());
++  for (int i = 0; i < neg.target_len; ++i) {
++    const int p = pos.prefix_len + i, n = neg.prefix_len + i;
++    EXPECT_TRUE(pos.pos_h[p] == neg.pos_h[n]);
++    EXPECT_TRUE(pos.pos_w[p] == neg.pos_w[n]);
++  }
++}
+diff --git a/stages/diffusion-conditioner-stage.cc b/stages/diffusion-conditioner-stage.cc
+--- a/stages/diffusion-conditioner-stage.cc
++++ b/stages/diffusion-conditioner-stage.cc
+@@ -4056,4 +4056,4 @@
+   const bool emit_neg =
+       !_negative_prompt.empty()
+-      || (_grounded_negative && n_img > 0 && !vtok.empty());
++      || _grounded_negative;
+   if (emit_neg) {

@@ -1,6 +1,6 @@
 # Original VNCCS mannequin generator
 
-Run `./run.sh`, then open http://127.0.0.1:8770. Drag joints using the original viewer controls; orbit the camera to choose the view. Export mannequin PNG captures the current viewport at 1024 × 1024, hiding joint helpers. Save/load pose JSON preserves the original core pose representation.
+Run `./setup.sh` once to restore the pinned upstream checkout and dependency link (requires Git and installed `frontend/node_modules`). These local dependencies are intentionally ignored by Git. Then run `./run.sh`, then open http://127.0.0.1:8770. Drag joints using the original viewer controls; orbit the camera to choose the view. Export mannequin PNG captures the current viewport at 1024 × 1024, hiding joint helpers. Save/load pose JSON preserves the original core pose representation.
 
 The original source is in `upstream/`, pinned to commit `2b0f4041b368e3408cfb826f4cf09e6f8dafa164` of AHEKOT/ComfyUI_VNCCS_Utils. All upstream files are unchanged, including the MakeHuman asset, Three.js, morph worker, viewer, IK and PNG capture implementation. Licenses are retained. `upstream-manifest.json` records SHA-256 checksums.
 

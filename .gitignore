@@ -56,3 +56,11 @@ lock.mdb
 
 # Disposable MakeHuman conversion and verification outputs
 /regenerable-makehuman-output/
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+
+# Standalone generator dependencies (see mannequin-generator/setup.sh)
+/mannequin-generator/upstream/
+/mannequin-generator/source-node-modules

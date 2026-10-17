@@ -1,0 +1,88 @@
+{
+  "records": 12106,
+  "gallery": 254,
+  "frames": 11852,
+  "jointsPerRecord": 53,
+  "sourceJointsPerRecord": 47,
+  "thresholds": {
+    "rotationDegrees": 0.001,
+    "directionDegrees": 0.001,
+    "positionMetres": 0.00001,
+    "sourcePositionUnits": 0.00001
+  },
+  "failures": 0,
+  "discontinuityFailures": 0,
+  "missing": [],
+  "libraries": {
+    "1": {
+      "gallery": 120,
+      "frames": 6243
+    },
+    "2": {
+      "gallery": 134,
+      "frames": 5609
+    }
+  },
+  "maximum": {
+    "sourceRotationDegrees": {
+      "value": 7.494577417978991e-14,
+      "record": "ual2-Idle_Shield_Break/frame/8",
+      "joint": "l_finger_3.mid"
+    },
+    "sourcePositionUnits": {
+      "value": 3.62742331401871e-14,
+      "record": "ual1-Climb_Idle_Loop/frame/14",
+      "joint": "r_finger_4.tip"
+    },
+    "rotationDegrees": {
+      "value": 1.6023622569176682e-13,
+      "record": "ual2-ClimbUp_2m/frame/11",
+      "joint": "index_03_r"
+    },
+    "positionMetres": {
+      "value": 1.2412670766236366e-15,
+      "record": "ual1-Swim_Fwd_Loop/frame/22",
+      "joint": "ring_03_l"
+    },
+    "localPositionMetres": {
+      "value": 0,
+      "record": "ual1-A_TPose/gallery/0",
+      "joint": "Root"
+    },
+    "segmentDirectionDegrees": {
+      "value": 8.177629159384873e-13,
+      "record": "ual1-Idle_LookAround_Loop/frame/82",
+      "joint": "pinky_02_r"
+    },
+    "soleUpDirectionDegrees": {
+      "value": 1.8497540853030426e-13,
+      "record": "ual2-LiftAir_Fall_Loop/frame/15",
+      "joint": "foot_r"
+    },
+    "palmAcrossDirectionDegrees": {
+      "value": 3.7940552206588696e-13,
+      "record": "ual1-Drink/frame/22",
+      "joint": "hand_r"
+    },
+    "pelvisAnchorMetres": {
+      "value": 0,
+      "record": "ual1-A_TPose/gallery/0",
+      "joint": "pelvis"
+    },
+    "stepRotationErrorDegrees": {
+      "value": 1.6058682161812499e-13,
+      "record": "ual2-Farm_ScatteringSeeds/frame/10",
+      "joint": "thumb_03_l"
+    }
+  },
+  "provenance": {
+    "../../scene-builder/src/poses/blender-retarget.js": "9ccd7ef32da6db2d7a1170d970bff760c89559c0dfc896845108f0fb9a042b22",
+    "../../scene-builder/src/poses/exact-state.js": "3a2602cbfbca83d1e37fc60db66a8a59de955387aae29b6c02ef58a83b92d130",
+    "../src/poses/rig-mapping.json": "a6562d59bbdca44528d3279f589959dacfc911c61e7534d09c3616f0de8fd3e8",
+    "../src/poses/original/rig.json": "8bdd404cb58681c48ff9dcd07cd896039c1c611097d885bda0cc25c9a55bf351",
+    "../src/poses/blender-retarget.js": "d0fad9efd6a8924fb552569b834f2e4b93046bb9024d827b2bdf11a855510736",
+    "../src/poses/library-pose.js": "dc473fca879e8a624f2df9c49f57ece4cdeccfe66045f9659a2c17af368be6ac",
+    "../src/poses/original/rig.js": "515c3a48cff095cd3219e4cb8b5dd61298b9216f1a572428cb28281fdf077bd1"
+  },
+  "pass": true
+}

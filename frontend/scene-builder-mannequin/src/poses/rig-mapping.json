@@ -1,0 +1,702 @@
+{
+  "version": 1,
+  "mapped": {
+    "pelvis": {
+      "source": "body",
+      "correction": [
+        0,
+        0.7071067811865475,
+        0,
+        0.7071067811865476
+      ]
+    },
+    "spine_03": {
+      "source": "torso",
+      "correction": [
+        -0.01668783670856511,
+        0.7069098359097773,
+        0.016687836708565107,
+        0.7069098359097774
+      ],
+      "endpoint": {
+        "sourceJoint": "neck",
+        "targetJoint": "neck_01"
+      }
+    },
+    "neck_01": {
+      "source": "neck",
+      "correction": [
+        -0.05663484221122069,
+        0.704835083298008,
+        0.056634842211220636,
+        0.7048350832980083
+      ],
+      "endpoint": {
+        "sourceJoint": "head",
+        "targetJoint": "head"
+      }
+    },
+    "head": {
+      "source": "head",
+      "correction": [
+        0.012988379238776774,
+        0.7069874836266549,
+        -0.012988379238776764,
+        0.706987483626655
+      ],
+      "endpoint": {
+        "sourceWrapperPoint": [
+          0,
+          6,
+          0
+        ],
+        "targetTail": true
+      }
+    },
+    "upperarm_l": {
+      "source": "l_arm",
+      "correction": [
+        -0.2661126326835268,
+        0.6767976397007929,
+        -0.24220282124223264,
+        0.6422357939292869
+      ],
+      "endpoint": {
+        "sourceJoint": "l_elbow",
+        "targetJoint": "lowerarm_l"
+      }
+    },
+    "lowerarm_l": {
+      "source": "l_elbow",
+      "correction": [
+        -0.6212288611674994,
+        0.0740635719033747,
+        0.6021125810522546,
+        0.49603399995165387
+      ],
+      "endpoint": {
+        "sourceJoint": "l_wrist",
+        "targetJoint": "hand_l"
+      }
+    },
+    "hand_l": {
+      "source": "l_wrist",
+      "correction": [
+        -0.7131742871430268,
+        0.038175331229427345,
+        0.526058085223115,
+        0.46172282942794707
+      ],
+      "endpoint": {
+        "sourceJoint": "l_finger_2",
+        "targetJoint": "middle_01_l"
+      }
+    },
+    "upperarm_r": {
+      "source": "r_arm",
+      "correction": [
+        0.2422028212422326,
+        0.6422357939292868,
+        0.2661126326835268,
+        0.6767976397007929
+      ],
+      "endpoint": {
+        "sourceJoint": "r_elbow",
+        "targetJoint": "lowerarm_r"
+      }
+    },
+    "lowerarm_r": {
+      "source": "r_elbow",
+      "correction": [
+        0.6021125810522545,
+        -0.49603399995165387,
+        -0.6212288611674996,
+        -0.07406357190337454
+      ],
+      "endpoint": {
+        "sourceJoint": "r_wrist",
+        "targetJoint": "hand_r"
+      }
+    },
+    "hand_r": {
+      "source": "r_wrist",
+      "correction": [
+        0.5260580852231147,
+        -0.46172282942794707,
+        -0.7131742871430268,
+        -0.03817533122942729
+      ],
+      "endpoint": {
+        "sourceJoint": "r_finger_2",
+        "targetJoint": "middle_01_r"
+      }
+    },
+    "thigh_l": {
+      "source": "l_leg",
+      "correction": [
+        0.007646680348021847,
+        0.7076567891642792,
+        -0.05489481385739286,
+        0.7043791283399304
+      ],
+      "endpoint": {
+        "sourceJoint": "l_knee",
+        "targetJoint": "calf_l"
+      }
+    },
+    "calf_l": {
+      "source": "l_knee",
+      "correction": [
+        -0.7071071148665256,
+        -0.0019805774075599106,
+        -0.7034471124035779,
+        -0.07181758468048749
+      ],
+      "endpoint": {
+        "sourceJoint": "l_ankle",
+        "targetJoint": "foot_l"
+      }
+    },
+    "foot_l": {
+      "source": "l_ankle",
+      "correction": [
+        3.252606517456513e-17,
+        -0.6934396696117852,
+        -1.3292318634672284e-16,
+        -0.7205146942350992
+      ],
+      "endpoint": {
+        "sourceWrapperPoint": [
+          4,
+          0,
+          0
+        ],
+        "targetRestDirection": [
+          0.03828284921739647,
+          0,
+          0.9992669430416469
+        ],
+        "sourceWrapperUp": [
+          0,
+          1,
+          0
+        ],
+        "targetRestUp": [
+          0,
+          1,
+          0
+        ]
+      }
+    },
+    "thigh_r": {
+      "source": "r_leg",
+      "correction": [
+        0.05489481385739277,
+        0.7043791283399302,
+        -0.007646680348021927,
+        0.7076567891642794
+      ],
+      "endpoint": {
+        "sourceJoint": "r_knee",
+        "targetJoint": "calf_r"
+      }
+    },
+    "calf_r": {
+      "source": "r_knee",
+      "correction": [
+        -0.7034471124035779,
+        0.0718175846804875,
+        -0.7071071148665256,
+        0.0019805774075599123
+      ],
+      "endpoint": {
+        "sourceJoint": "r_ankle",
+        "targetJoint": "foot_r"
+      }
+    },
+    "foot_r": {
+      "source": "r_ankle",
+      "correction": [
+        -5.724587470723463e-17,
+        0.7205146942350991,
+        1.328147661294743e-17,
+        0.6934396696117853
+      ],
+      "endpoint": {
+        "sourceWrapperPoint": [
+          4,
+          0,
+          0
+        ],
+        "targetRestDirection": [
+          -0.03828284921739647,
+          0,
+          0.9992669430416469
+        ],
+        "sourceWrapperUp": [
+          0,
+          1,
+          0
+        ],
+        "targetRestUp": [
+          0,
+          1,
+          0
+        ]
+      }
+    },
+    "thumb_01_l": {
+      "source": "l_finger_0",
+      "correction": [
+        -0.5476456740594395,
+        -0.0005092499981521892,
+        -0.5756527196495527,
+        0.6072132267239366
+      ],
+      "endpoint": {
+        "sourceJoint": "l_finger_0.mid",
+        "targetJoint": "thumb_02_l"
+      }
+    },
+    "thumb_02_l": {
+      "source": "l_finger_0.mid",
+      "correction": [
+        -0.610730407081061,
+        -0.19967123602076056,
+        -0.5528941087568278,
+        0.5305166084813335
+      ],
+      "endpoint": {
+        "sourceJoint": "l_finger_0.tip",
+        "targetJoint": "thumb_03_l"
+      }
+    },
+    "thumb_03_l": {
+      "source": "l_finger_0.tip",
+      "correction": [
+        -0.6574625478339589,
+        -0.21348376717654874,
+        -0.6091293770483329,
+        0.38875323968360453
+      ],
+      "endpoint": {
+        "sourceWrapperPoint": [
+          0,
+          0.7260000000000001,
+          0
+        ],
+        "targetTail": true
+      }
+    },
+    "index_01_l": {
+      "source": "l_finger_1",
+      "correction": [
+        -0.8820456608940982,
+        -0.06517452705490838,
+        0.019186711705182814,
+        0.4662398558842914
+      ],
+      "endpoint": {
+        "sourceJoint": "l_finger_1.mid",
+        "targetJoint": "index_02_l"
+      }
+    },
+    "index_02_l": {
+      "source": "l_finger_1.mid",
+      "correction": [
+        -0.9176961633613602,
+        0.028647401995747487,
+        0.036351471742816985,
+        0.3945778105936329
+      ],
+      "endpoint": {
+        "sourceJoint": "l_finger_1.tip",
+        "targetJoint": "index_03_l"
+      }
+    },
+    "index_03_l": {
+      "source": "l_finger_1.tip",
+      "correction": [
+        -0.929243906384256,
+        0.09840478933411885,
+        0.05106619113146846,
+        0.35244078085142166
+      ],
+      "endpoint": {
+        "sourceWrapperPoint": [
+          0,
+          0.57,
+          0
+        ],
+        "targetTail": true
+      }
+    },
+    "middle_01_l": {
+      "source": "l_finger_2",
+      "correction": [
+        -0.9349667353018801,
+        -0.1108102212297646,
+        0.012005366739038487,
+        0.3367702034316814
+      ],
+      "endpoint": {
+        "sourceJoint": "l_finger_2.mid",
+        "targetJoint": "middle_02_l"
+      }
+    },
+    "middle_02_l": {
+      "source": "l_finger_2.mid",
+      "correction": [
+        -0.9384188527724358,
+        -0.036607745321340396,
+        0.03176447846340708,
+        0.34208324666914225
+      ],
+      "endpoint": {
+        "sourceJoint": "l_finger_2.tip",
+        "targetJoint": "middle_03_l"
+      }
+    },
+    "middle_03_l": {
+      "source": "l_finger_2.tip",
+      "correction": [
+        -0.9546001952063935,
+        0.02403398560663328,
+        0.040466666689754474,
+        0.2941484042703547
+      ],
+      "endpoint": {
+        "sourceWrapperPoint": [
+          0,
+          0.6,
+          0
+        ],
+        "targetTail": true
+      }
+    },
+    "ring_01_l": {
+      "source": "l_finger_3",
+      "correction": [
+        -0.9508150199353952,
+        -0.16437940059307857,
+        0.010034771946827089,
+        0.26235379524201546
+      ],
+      "endpoint": {
+        "sourceJoint": "l_finger_3.mid",
+        "targetJoint": "ring_02_l"
+      }
+    },
+    "ring_02_l": {
+      "source": "l_finger_3.mid",
+      "correction": [
+        -0.956633379570288,
+        -0.08006837428135585,
+        0.02411445068159629,
+        0.2790342735224382
+      ],
+      "endpoint": {
+        "sourceJoint": "l_finger_3.tip",
+        "targetJoint": "ring_03_l"
+      }
+    },
+    "ring_03_l": {
+      "source": "l_finger_3.tip",
+      "correction": [
+        -0.9734719933489644,
+        -0.03077507935723206,
+        0.026146048556249815,
+        0.22521446845317006
+      ],
+      "endpoint": {
+        "sourceWrapperPoint": [
+          0,
+          0.57,
+          0
+        ],
+        "targetTail": true
+      }
+    },
+    "pinky_01_l": {
+      "source": "l_finger_4",
+      "correction": [
+        -0.9690047761769847,
+        -0.1505625739386765,
+        0.004002306013710578,
+        0.19581786594109618
+      ],
+      "endpoint": {
+        "sourceJoint": "l_finger_4.mid",
+        "targetJoint": "pinky_02_l"
+      }
+    },
+    "pinky_02_l": {
+      "source": "l_finger_4.mid",
+      "correction": [
+        -0.9789955031006129,
+        -0.04975160716098925,
+        0.008510205122057368,
+        0.19753520927281928
+      ],
+      "endpoint": {
+        "sourceJoint": "l_finger_4.tip",
+        "targetJoint": "pinky_03_l"
+      }
+    },
+    "pinky_03_l": {
+      "source": "l_finger_4.tip",
+      "correction": [
+        -0.9807160986941623,
+        -0.05531561348503894,
+        0.0178328027159707,
+        0.18659610878624772
+      ],
+      "endpoint": {
+        "sourceWrapperPoint": [
+          0,
+          0.48,
+          0
+        ],
+        "targetTail": true
+      }
+    },
+    "thumb_01_r": {
+      "source": "r_finger_0",
+      "correction": [
+        -0.5756527196495528,
+        -0.6072132267239364,
+        -0.5476456740594398,
+        0.0005092499981523835
+      ],
+      "endpoint": {
+        "sourceJoint": "r_finger_0.mid",
+        "targetJoint": "thumb_02_r"
+      }
+    },
+    "thumb_02_r": {
+      "source": "r_finger_0.mid",
+      "correction": [
+        -0.552894108756828,
+        -0.5305166084813334,
+        -0.610730407081061,
+        0.1996712360207607
+      ],
+      "endpoint": {
+        "sourceJoint": "r_finger_0.tip",
+        "targetJoint": "thumb_03_r"
+      }
+    },
+    "thumb_03_r": {
+      "source": "r_finger_0.tip",
+      "correction": [
+        -0.6091293770483331,
+        -0.38875323968360453,
+        -0.6574625478339587,
+        0.21348376717654877
+      ],
+      "endpoint": {
+        "sourceWrapperPoint": [
+          0,
+          0.7260000000000001,
+          0
+        ],
+        "targetTail": true
+      }
+    },
+    "index_01_r": {
+      "source": "r_finger_1",
+      "correction": [
+        0.019186711705182595,
+        -0.4662398558842915,
+        -0.8820456608940982,
+        0.06517452705490846
+      ],
+      "endpoint": {
+        "sourceJoint": "r_finger_1.mid",
+        "targetJoint": "index_02_r"
+      }
+    },
+    "index_02_r": {
+      "source": "r_finger_1.mid",
+      "correction": [
+        0.03635147174281726,
+        -0.39457781059363284,
+        -0.9176961633613605,
+        -0.028647401995746946
+      ],
+      "endpoint": {
+        "sourceJoint": "r_finger_1.tip",
+        "targetJoint": "index_03_r"
+      }
+    },
+    "index_03_r": {
+      "source": "r_finger_1.tip",
+      "correction": [
+        0.051066191131468236,
+        -0.3524407808514218,
+        -0.9292439063842562,
+        -0.09840478933411885
+      ],
+      "endpoint": {
+        "sourceWrapperPoint": [
+          0,
+          0.57,
+          0
+        ],
+        "targetTail": true
+      }
+    },
+    "middle_01_r": {
+      "source": "r_finger_2",
+      "correction": [
+        0.012005366739038265,
+        -0.33677020343168135,
+        -0.9349667353018801,
+        0.11081022122976465
+      ],
+      "endpoint": {
+        "sourceJoint": "r_finger_2.mid",
+        "targetJoint": "middle_02_r"
+      }
+    },
+    "middle_02_r": {
+      "source": "r_finger_2.mid",
+      "correction": [
+        0.03176447846340685,
+        -0.3420832466691422,
+        -0.9384188527724359,
+        0.036607745321340424
+      ],
+      "endpoint": {
+        "sourceJoint": "r_finger_2.tip",
+        "targetJoint": "middle_03_r"
+      }
+    },
+    "middle_03_r": {
+      "source": "r_finger_2.tip",
+      "correction": [
+        0.04046666668975424,
+        -0.2941484042703547,
+        -0.9546001952063935,
+        -0.02403398560663325
+      ],
+      "endpoint": {
+        "sourceWrapperPoint": [
+          0,
+          0.6,
+          0
+        ],
+        "targetTail": true
+      }
+    },
+    "ring_01_r": {
+      "source": "r_finger_3",
+      "correction": [
+        0.010034771946826865,
+        -0.2623537952420154,
+        -0.9508150199353952,
+        0.1643794005930786
+      ],
+      "endpoint": {
+        "sourceJoint": "r_finger_3.mid",
+        "targetJoint": "ring_02_r"
+      }
+    },
+    "ring_02_r": {
+      "source": "r_finger_3.mid",
+      "correction": [
+        0.024114450681596414,
+        -0.27903427352243815,
+        -0.956633379570288,
+        0.08006837428135646
+      ],
+      "endpoint": {
+        "sourceJoint": "r_finger_3.tip",
+        "targetJoint": "ring_03_r"
+      }
+    },
+    "ring_03_r": {
+      "source": "r_finger_3.tip",
+      "correction": [
+        0.026146048556249565,
+        -0.22521446845317014,
+        -0.9734719933489645,
+        0.030775079357232116
+      ],
+      "endpoint": {
+        "sourceWrapperPoint": [
+          0,
+          0.57,
+          0
+        ],
+        "targetTail": true
+      }
+    },
+    "pinky_01_r": {
+      "source": "r_finger_4",
+      "correction": [
+        0.004002306013710363,
+        -0.1958178659410961,
+        -0.9690047761769847,
+        0.1505625739386765
+      ],
+      "endpoint": {
+        "sourceJoint": "r_finger_4.mid",
+        "targetJoint": "pinky_02_r"
+      }
+    },
+    "pinky_02_r": {
+      "source": "r_finger_4.mid",
+      "correction": [
+        0.008510205122057121,
+        -0.19753520927281945,
+        -0.978995503100613,
+        0.04975160716098928
+      ],
+      "endpoint": {
+        "sourceJoint": "r_finger_4.tip",
+        "targetJoint": "pinky_03_r"
+      }
+    },
+    "pinky_03_r": {
+      "source": "r_finger_4.tip",
+      "correction": [
+        0.017832802715970486,
+        -0.18659610878624758,
+        -0.9807160986941623,
+        0.05531561348503894
+      ],
+      "endpoint": {
+        "sourceWrapperPoint": [
+          0,
+          0.48,
+          0
+        ],
+        "targetTail": true
+      }
+    }
+  },
+  "extras": {
+    "Root": {
+      "mode": "rest"
+    },
+    "spine_01": {
+      "mode": "rest"
+    },
+    "spine_02": {
+      "mode": "rest"
+    },
+    "clavicle_l": {
+      "mode": "rest"
+    },
+    "clavicle_r": {
+      "mode": "rest"
+    },
+    "ball_l": {
+      "mode": "rest"
+    },
+    "ball_r": {
+      "mode": "rest"
+    }
+  }
+}

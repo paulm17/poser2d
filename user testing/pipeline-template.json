@@ -1,0 +1,240 @@
+{
+  "id": "user-testing-qwen21-turbo",
+  "stages": [
+    {
+      "config": {
+        "hf_dir": "SET_BY_RUNNER"
+      },
+      "id": "model-select",
+      "iports": [],
+      "type": "model-select"
+    },
+    {
+      "config": {
+        "text": "Draw character from image2"
+      },
+      "id": "text-prompt",
+      "iports": [],
+      "type": "text-prompt"
+    },
+    {
+      "config": {
+        "lora2": "SET_BY_RUNNER_VNCCS_QI2_PoseStudioV2.safetensors",
+        "lora2_scale": 1.0,
+        "use_kv_cache": true,
+        "vl_long_edge": 0,
+        "vl_max_pixels": 65536,
+        "vl_min_pixels": 1024,
+        "vl_pixel_budget": 65536
+      },
+      "id": "model-config",
+      "iports": [],
+      "type": "qwen-image-21-model-config"
+    },
+    {
+      "config": {
+        "url": "SET_BY_RUNNER_POSE_IMAGE1"
+      },
+      "id": "load-ref-0",
+      "iports": [],
+      "type": "load-image"
+    },
+    {
+      "config": {
+        "algorithm": "bilinear",
+        "fit": "stretch",
+        "height": 256,
+        "width": 256
+      },
+      "id": "ref-resample-0",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "load-ref-0"
+        }
+      ],
+      "type": "image-resample"
+    },
+    {
+      "config": {
+        "url": "SET_BY_RUNNER_AVATAR_IMAGE2"
+      },
+      "id": "load-ref-1",
+      "iports": [],
+      "type": "load-image"
+    },
+    {
+      "config": {
+        "algorithm": "bilinear",
+        "fit": "stretch",
+        "height": 256,
+        "width": 256
+      },
+      "id": "ref-resample-1",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "load-ref-1"
+        }
+      ],
+      "type": "image-resample"
+    },
+    {
+      "config": {},
+      "id": "ref-list",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "ref-resample-0"
+        },
+        {
+          "oport": 0,
+          "src": "ref-resample-1"
+        }
+      ],
+      "type": "tensor-list"
+    },
+    {
+      "config": {
+        "unload_when_idle": "always"
+      },
+      "id": "vae-encode",
+      "iports": [
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": "model-select"
+        },
+        {
+          "oport": 0,
+          "src": "ref-list"
+        }
+      ],
+      "type": "vae-encode"
+    },
+    {
+      "config": {
+        "grounded_negative": false,
+        "unload_when_idle": "always"
+      },
+      "id": "diffusion-conditioner",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "text-prompt"
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": "model-select"
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": "model-config"
+        },
+        {
+          "oport": 0,
+          "src": "ref-list"
+        }
+      ],
+      "type": "diffusion-conditioner"
+    },
+    {
+      "config": {
+        "guidance_scale": 1.0,
+        "height": 256,
+        "seed": 42,
+        "steps": 8,
+        "unload_when_idle": "always",
+        "width": 256
+      },
+      "id": "generate-image",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "diffusion-conditioner"
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": "model-select"
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": "model-config"
+        },
+        {
+          "oport": 1,
+          "src": "vae-encode"
+        }
+      ],
+      "type": "generate-image"
+    },
+    {
+      "config": {
+        "unload_when_idle": "always"
+      },
+      "id": "vae-decode",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "generate-image"
+        },
+        {
+          "oport": 0,
+          "src": "model-select"
+        }
+      ],
+      "type": "vae-decode"
+    },
+    {
+      "config": {
+        "compression": 6,
+        "format": "png",
+        "path": "SET_BY_RUNNER"
+      },
+      "id": "save-image",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "vae-decode"
+        }
+      ],
+      "type": "save-image"
+    }
+  ],
+  "subpipelines": []
+}

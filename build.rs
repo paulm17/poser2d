@@ -5,6 +5,9 @@ fn main() {
     for path in [
         "src",
         "scene-builder",
+        "scene-builder-2",
+        "scene-builder-mannequin",
+        "scene-builder-mannequin-2",
         "package.json",
         "package-lock.json",
         "vite.config.ts",

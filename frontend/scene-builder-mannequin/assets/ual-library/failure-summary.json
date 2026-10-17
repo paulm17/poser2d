@@ -1,0 +1,30 @@
+{
+  "actions": 254,
+  "verified": 254,
+  "failed": 0,
+  "verifiedFrames": 11852,
+  "footFrameComparisons": 23704,
+  "pipelineSHA256": "80eb19127c6201fc3f8665e3b8cc6f60cd78974921668677b2d15a1564c15c00",
+  "libraries": {
+    "1": {
+      "actions": 120,
+      "frames": 6243
+    },
+    "2": {
+      "actions": 134,
+      "frames": 5609
+    }
+  },
+  "maxima": {
+    "maxVertexMetres": 4.364575872183223e-06,
+    "maxBoneMetres": 3.902951386600598e-06,
+    "maxRotationDegrees": 0.00019123767362946398,
+    "maxFootClearanceErrorMetres": 5.571625610656383e-06,
+    "maxLegLengthErrorMetres": 6.73056644917569e-07,
+    "maxPelvisCorrectionMetres": 0.1641770222853934
+  },
+  "failureCauses": {},
+  "failures": [],
+  "validationStatus": "superseded",
+  "validationNote": "Predates visible triangle-only normalization, independent toe contact and whole-body clearance checks. Requires v2 re-export."
+}

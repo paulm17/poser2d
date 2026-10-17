@@ -627,9 +627,9 @@ namespace Qwen {
             const auto& control    = tensor_or_empty(extra ? extra->control_latent : nullptr);
             if (use_control && (control.dim() != 4 || control.shape()[0] != x.shape()[0] ||
                                 control.shape()[1] != x.shape()[1] || control.shape()[2] != 129 ||
-                                control.shape()[3] != 1 || !refs.empty() || !std::isfinite(extra->control_strength) ||
+                                control.shape()[3] != 1 || !std::isfinite(extra->control_strength) ||
                                 extra->control_strength < 0.f)) {
-                LOG_ERROR("Qwen Image 2.1 Union requires a control latent and no reference images");
+                LOG_ERROR("Qwen Image 2.1 Union requires a control latent matching the target canvas");
                 return {};
             }
             if (!use_control && prefix_cache_enabled && !prefix_cache_disabled && extra != nullptr && extra->prefix_id != 0 && layout.prefix_length > 0) {
@@ -688,7 +688,11 @@ namespace Qwen {
                     auto prepare              = [&]() {
                         auto graph   = new_graph_custom(QWEN_IMAGE_GRAPH_SIZE);
                         auto ctx     = get_context(graph);
-                        auto initial = model.prelude(&ctx, make_input(x), make_input(*inputs.timesteps), make_input(context), {}, layout, QwenImage21PrefixCache{});
+                        std::vector<ggml_tensor*> ref_inputs;
+                        for (const auto& ref : refs) {
+                            ref_inputs.push_back(make_input(ref));
+                        }
+                        auto initial = model.prelude(&ctx, make_input(x), make_input(*inputs.timesteps), make_input(context), ref_inputs, layout, QwenImage21PrefixCache{});
                         joint_output = initial.first;
                         mod_output   = model.modulation(&ctx, initial.second);
                         ggml_set_output(joint_output);

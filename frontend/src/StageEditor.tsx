@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useLayoutEffect, useImperativeHandle, useRef, useState } from 'react';
+import { isMessage as isMannequinMessage } from '../scene-builder-mannequin/protocol.js';
 import { CHANNEL, isMessage, targetOrigin, type SceneMessage, type SceneSnapshot } from '../scene-builder/protocol.js';
 
 export interface StageEditorHandle {
@@ -7,6 +8,7 @@ export interface StageEditorHandle {
 }
 interface Props {
   sessionId: string;
+  variant?: 2 | 'mannequin' | 'mannequin-2';
   visible: boolean;
   onCapture(sessionId: string, blob: Blob): Promise<void>;
   onBusy(busy: boolean): void;
@@ -80,7 +82,7 @@ export const StageEditor = forwardRef<StageEditorHandle, Props>(function StageEd
   }));
   useLayoutEffect(() => {
     const listener = async (event: MessageEvent) => {
-      if (event.source !== iframe.current?.contentWindow || event.origin !== location.origin || !isMessage(event.data, token.current)) return;
+      if (event.source !== iframe.current?.contentWindow || event.origin !== location.origin || !((callbacks.current.variant === 'mannequin' || callbacks.current.variant === 'mannequin-2') ? isMannequinMessage(event.data, token.current) : isMessage(event.data, token.current))) return;
       const message = event.data;
       if (message.type === 'ready') { setReady(true); return; }
       if (message.type === 'startup-error') { setError(message.error); setWorking(false); return; }
@@ -125,7 +127,7 @@ export const StageEditor = forwardRef<StageEditorHandle, Props>(function StageEd
   }, [ready]);
   return (
     <main ref={host} style={props.visible ? undefined : { width: viewport.width, height: viewport.height }} className={`stage-host${props.visible ? '' : ' stage-host-hidden'}`} aria-hidden={!props.visible} inert={!props.visible || working || !!error}>
-      <iframe ref={iframe} title="Pose scene editor" src={`./scene-builder/index.html?bridge=${token.current}`} onLoad={() => { current.current = null; setReady(false); setLoadVersion(value => value + 1); send({ type: 'connect' }); }} />
+      <iframe ref={iframe} title={props.variant === 'mannequin-2' ? "MakeHuman scene 2 editor" : props.variant === 'mannequin' ? "MakeHuman scene editor" : props.variant === 2 ? "Stage scene 2 editor" : "Pose scene editor"} src={`./scene-builder${props.variant === 'mannequin-2' ? "-mannequin-2" : props.variant === 'mannequin' ? "-mannequin" : props.variant === 2 ? "-2" : ""}/index.html?bridge=${token.current}`} onLoad={() => { current.current = null; setReady(false); setLoadVersion(value => value + 1); send({ type: 'connect' }); }} />
       {(working || error) && <div className="stage-loading" role={error ? 'alert' : 'status'}>{error || 'Preparing scene…'}</div>}
     </main>
   );

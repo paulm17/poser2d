@@ -1,0 +1,52 @@
+<!doctype html><meta charset="utf-8"><title>UAL floor repair comparison</title>
+<style>body{font:15px system-ui;background:#202024;color:#eee;margin:16px}button{padding:12px;font:inherit}iframe{width:1100px;height:800px;border:1px solid #555}pre{white-space:pre-wrap}.row{display:flex;gap:12px}img{width:256px}</style>
+<h1>Repaired UAL clips · every frame</h1><button id="run">Compare all repaired frames</button><button id="thumbs">Generate verified catalog thumbnails</button><pre id="status">Loading editor…</pre><div class="row"><img id="reference" alt="Blender"><img id="capture" alt="App"></div><iframe src="../index.html"></iframe>
+<script type="module">
+import {applyExactPose} from '../src/poses/exact-state.js';
+const iframe=document.querySelector('iframe'),status=document.querySelector('#status'),button=document.querySelector('#run'),root='../assets/ual-library/';
+const raf=()=>new Promise(resolve=>requestAnimationFrame(resolve));
+async function until(fn){const end=performance.now()+30000;while(!fn()){if(performance.now()>end)throw Error('Editor not ready');await raf();}}
+async function json(url){const r=await fetch(url);if(!r.ok)throw Error(url+': '+r.status);return r.json();}
+async function save(route,data){const r=await fetch('http://127.0.0.1:3005/'+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});if(!r.ok)throw Error(await r.text());}
+await until(()=>iframe.contentWindow.mannequinReady);status.textContent='Editor ready.';
+document.querySelector('#thumbs').onclick=async()=>{const btn=document.querySelector('#thumbs');btn.disabled=true;try{
+ const editor=iframe.contentWindow.mannequinEditor,THREE=editor.three,model=editor.selected,mesh=model.mesh,visible=new Set(mesh.geometry.index.array),point=new THREE.Vector3();
+ const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});renderer.setSize(256,256);renderer.outputColorSpace=THREE.SRGBColorSpace;const scene=new THREE.Scene();scene.background=new THREE.Color(0x666666);scene.add(new THREE.AmbientLight(0xffffff,1.5));const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(-2,4,3);scene.add(light);const camera=new THREE.OrthographicCamera(-1,1,1,-1,.01,100);
+ const catalog=await json(root+'catalog.json');
+ for(const entry of catalog){const pose=await json(root+entry.id+'/'+entry.id+'.json');applyExactPose(model,{version:1,rig:pose.rig,joints:pose.bones});model.updateMatrixWorld(true);mesh.skeleton.update();const bounds=new THREE.Box3();for(const i of visible){point.fromBufferAttribute(mesh.geometry.attributes.position,i);mesh.applyBoneTransform(i,point);bounds.expandByPoint(point);}const center=bounds.getCenter(new THREE.Vector3()),size=bounds.getSize(new THREE.Vector3()),extent=Math.max(size.x,size.y,size.z)*.75;camera.left=camera.bottom=-extent;camera.right=camera.top=extent;camera.position.copy(center).add(new THREE.Vector3(1,.25,2).normalize().multiplyScalar(5));camera.lookAt(center);camera.updateProjectionMatrix();const parent=model.parent;scene.add(model);renderer.render(scene,camera);await save('thumbnail',{id:entry.id,png:renderer.domElement.toDataURL('image/png')});parent.add(model);status.textContent='Thumbnail '+entry.id;await raf();}
+ renderer.dispose();status.textContent='Generated '+catalog.length+' fitted-model thumbnails.';
+}catch(error){status.textContent='FAILED: '+error.stack;}finally{btn.disabled=false;}};
+button.onclick=async()=>{button.disabled=true;try{
+ const w=iframe.contentWindow,doc=w.document,editor=w.mannequinEditor,THREE=editor.three,model=editor.selected,mesh=model.mesh,names=Object.keys(model.bones),visible=new Set(mesh.geometry.index.array),point=new THREE.Vector3(),expected=new THREE.Vector3(),matrix=new THREE.Matrix4(),q=new THREE.Quaternion(),actual=new THREE.Quaternion();
+ const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});renderer.setSize(256,256);renderer.setPixelRatio(1);renderer.outputColorSpace=THREE.SRGBColorSpace;
+ const scene=new THREE.Scene();scene.background=new THREE.Color(0x666666);scene.add(new THREE.AmbientLight(0xffffff,1.4));const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(-2,4,3);scene.add(light);
+ const camera=new THREE.OrthographicCamera(-2,2,2,-2,.01,1000),clips=[];
+ const repair=await json(root+'floor-repair-report.json');
+ for(const item of repair.actions){
+  if(item.status!=='verified')throw Error('Repair incomplete: '+item.id);const id=item.id,base=root+id+'/';
+  const [clip,fit,vb,wb]=await Promise.all([json(base+id+'-frames.json'),json(base+'fit-report.json'),fetch(base+'blender-vertices.f32').then(r=>r.arrayBuffer()),fetch(base+'blender-world.f64').then(r=>r.arrayBuffer())]);
+  doc.querySelector('#btn-pose2').click();await until(()=>doc.querySelector('dialog[open] .pose-thumbnail'));const choice=[...doc.querySelectorAll('dialog[open] .pose-thumbnail')].find(button=>button.getAttribute('aria-label')==='UAL'+clip.library+': '+clip.action);if(!choice)throw Error('Repaired clip missing from gallery: '+id);choice.click();await until(()=>!doc.querySelector('dialog[open]')&&model.userData.poseFrame?.id===id);const frameInput=doc.querySelector('#animation-frame-panel input[type=number]');
+  let framing;const end=performance.now()+300000;while(!framing){const response=await fetch('../docs/ual-fit/floor-repair/'+id+'/framing.json');if(response.ok)framing=await response.json();else{if(performance.now()>end)throw Error('Blender framing unavailable: '+id);status.textContent='Waiting for Blender framing: '+id;const next=performance.now()+1000;while(performance.now()<next)await raf();}}
+  const vertices=new Float32Array(vb),worlds=new Float64Array(wb),half=framing.orthoScale/2;camera.left=camera.bottom=-half;camera.right=camera.top=half;camera.updateProjectionMatrix();
+  let maxVertex=0,maxBone=0,maxRotation=0,maxPenetration=0,maxProjectionError=0,minimumBefore=Infinity;const records=[];
+  const grid=new THREE.GridHelper(framing.orthoScale*2,12,0x268080,0x268080);scene.add(grid);
+  for(let index=0;index<clip.frames.length;index++){
+   const frame=clip.frames[index];frameInput.value=String(frame.frame);frameInput.dispatchEvent(new w.Event('input',{bubbles:true}));frameInput.dispatchEvent(new w.Event('blur'));await raf();await raf();if(model.userData.poseFrame?.frame!==frame.frame)throw Error('Frame control failed: '+id+' '+frame.frame);model.updateMatrixWorld(true);mesh.skeleton.update();let minimum=Infinity,frameError=0;
+   for(let v=0;v<mesh.geometry.attributes.position.count;v++){
+    point.fromBufferAttribute(mesh.geometry.attributes.position,v);mesh.applyBoneTransform(v,point);if(visible.has(v))minimum=Math.min(minimum,point.y);expected.fromArray(vertices,index*mesh.geometry.attributes.position.count*3+v*3);frameError=Math.max(frameError,point.distanceTo(expected));
+   }
+   maxVertex=Math.max(maxVertex,frameError);maxPenetration=Math.max(maxPenetration,-minimum);
+   for(let b=0;b<names.length;b++){const offset=(index*names.length+b)*16;matrix.set(...worlds.subarray(offset,offset+16));matrix.decompose(expected,q,new THREE.Vector3());q.normalize();model.bones[names[b]].getWorldPosition(point);maxBone=Math.max(maxBone,point.distanceTo(expected));model.bones[names[b]].getWorldQuaternion(actual).normalize();maxRotation=Math.max(maxRotation,THREE.MathUtils.radToDeg(q.angleTo(actual)));}
+   const lift=fit.corrections[index].rootFloorLiftMetres||0,before=minimum-lift,required=before<-.00001?-before+.000002:0;minimumBefore=Math.min(minimumBefore,before);if(fit.floorSafetyVersion<3)maxProjectionError=Math.max(maxProjectionError,Math.abs(lift-required));
+   records.push({frame:frame.frame,minimumVisibleSkinYMetres:minimum,maxVertexMetres:frameError,rootFloorLiftMetres:lift});
+   const parent=model.parent;scene.add(model);
+   for(const view of ['front','side']){camera.position.fromArray(framing.center);camera.position[view==='front'?'z':'x']+=framing.distance;camera.lookAt(...framing.center);renderer.render(scene,camera);const png=renderer.domElement.toDataURL('image/png');await save('frame',{id,view,frame:frame.frame,png});if(index===Math.floor(clip.frames.length/2)){document.querySelector('#reference').src='../docs/ual-fit/floor-repair/'+id+'/blender/'+view+'/'+String(frame.frame).padStart(3,'0')+'.png';document.querySelector('#capture').src=png;}}
+   parent.add(model);status.textContent=id+' · frame '+frame.frame+' / '+clip.end;await raf();
+  }
+  scene.remove(grid);grid.geometry.dispose();grid.material.dispose();
+  if(fit.floorSafetyVersion>=3){const required=fit.floorPolicy==='ground-support'?0:minimumBefore<-.00001?-minimumBefore+.000002:0;maxProjectionError=Math.max(...records.map(record=>Math.abs(record.rootFloorLiftMetres-required)));}
+  const report={id,frames:clip.frames.length,maxVertexMetres:maxVertex,maxBoneMetres:maxBone,maxRotationDegrees:maxRotation,maxBodyPenetrationMetres:maxPenetration,maxRootProjectionErrorMetres:maxProjectionError,pass:maxVertex<.0001&&maxBone<.0001&&maxRotation<.01&&maxPenetration<.0001&&maxProjectionError<.00001,records};await save('report',report);clips.push({...report,records:undefined});if(!report.pass)throw Error('Comparison failed: '+id);
+ }
+ renderer.dispose();const summary={method:'Actual editor gallery and frame controls, every repaired frame',clips,frames:clips.reduce((sum,clip)=>sum+clip.frames,0),pass:clips.every(clip=>clip.pass)};await save('summary',summary);status.textContent=JSON.stringify(summary,null,2);
+}catch(error){status.textContent='FAILED: '+error.stack;}finally{button.disabled=false;}};
+</script>

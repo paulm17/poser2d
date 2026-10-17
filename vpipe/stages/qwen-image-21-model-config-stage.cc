@@ -14,6 +14,10 @@ namespace vpipe {
 namespace {
 
 const ConfigKey kAttrs[] = {
+  {.key = "controlnet", .type = ConfigType::String, .required = false,
+   .doc = "Qwen Image 2.1 Fun Union ControlNet checkpoint", .is_path = true, .path_filter = "weights"},
+  {.key = "control_context_scale", .type = ConfigType::Real, .required = false,
+   .doc = "Union control residual strength; zero bypasses control", .def_real = 1.0},
   {.key = "use_kv_cache", .type = ConfigType::Bool, .required = false,
    .doc = "reuse the text + condition-image prefix's attention keys and "
           "values across denoising steps. Sound only because this model "
@@ -197,7 +201,7 @@ QwenImage21ModelConfigStage::resolved_config() const
         if (in.contains(k)) { o.insert_or_assign(k, in.at(k)); }
       }
     }
-    for (const char* k : {"sigmas", "shift_terminal"}) {
+    for (const char* k : {"sigmas", "shift_terminal", "controlnet", "control_context_scale"}) {
       if (in.contains(k)) { o.insert_or_assign(k, in.at(k)); }
     }
   }

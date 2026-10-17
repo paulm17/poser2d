@@ -1,0 +1,60 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Select Pose conversion review</title><style>body{background:#202126;color:white;font-family:sans-serif}canvas{max-width:100%;display:block;margin:20px 0}</style></head><body><h1>Select Pose conversion review</h1><p id="status">Loading…</p><button id="run">Render and validate all 254 poses</button><div id="sheets"></div><script type="module">
+import * as THREE from 'three';
+import { Male,createStage,getStage } from 'mannequin-js/src/mannequin.js';
+import {convertBlenderPose,BONE_MAP,calibratedWorldRotation} from '../src/poses/blender-retarget.js';
+import {captureExactPose,applyExactPose,jointNodes} from '../src/poses/exact-state.js';
+import manifest from '../src/poses/manifest2.json';
+createStage();const stage=getStage();stage.renderer.setAnimationLoop(null);stage.renderer.domElement.remove();stage.renderer.setSize(160,160);stage.renderer.shadowMap.enabled=false;
+for(const obj of [...stage.scene.children])if(!obj.isLight)stage.scene.remove(obj);
+stage.scene.background=new THREE.Color('#454b54');
+const camera=new THREE.OrthographicCamera(-1,1,1,-1,.01,10000);
+const m=new Male();m.position.set(0,0,0);m.scale.setScalar(1);m.rotation.set(0,0,0);stage.scene.add(m);
+const reference={};for(const n of [1,2])reference[n]=await fetch(`/poses2/ual${n}-reference.json`).then(r=>r.json());
+const initial=captureExactPose(m);
+function renderTarget(){
+ m.updateWorldMatrix(true,true);const box=new THREE.Box3().setFromObject(m);const center=box.getCenter(new THREE.Vector3());camera.position.copy(center).add(new THREE.Vector3(.35,.18,1).normalize().multiplyScalar(250));camera.lookAt(center);camera.updateMatrixWorld(true);
+ const inv=camera.matrixWorldInverse,vertices=[];m.traverse(o=>{if(!o.isMesh||!o.geometry.attributes.position)return;const a=o.geometry.attributes.position;for(let i=0;i<a.count;i++)vertices.push(new THREE.Vector3().fromBufferAttribute(a,i).applyMatrix4(o.matrixWorld).applyMatrix4(inv));});
+ const width=Math.max(...vertices.map(v=>v.x))-Math.min(...vertices.map(v=>v.x)),height=Math.max(...vertices.map(v=>v.y))-Math.min(...vertices.map(v=>v.y));const span=Math.max(width,height)*1.18;camera.left=camera.bottom=-span/2;camera.right=camera.top=span/2;camera.updateProjectionMatrix();stage.renderer.render(stage.scene,camera);return stage.renderer.domElement;
+}
+async function output(name,data){await fetch('/__pose2-review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,data})});}
+document.querySelector('#run').onclick=async()=>{
+ const report={count:0,failures:[],poses:[],maximumDirectionError:0,exactRoundTrip:true,sceneTransformPreserved:true};
+ let sheet,ctx;
+ for(let index=0;index<manifest.length;index++){
+  const entry=manifest[index];document.querySelector('#status').textContent=`Reviewing ${index+1}/254: ${entry.id}`;
+  if(index%24===0){sheet=document.createElement('canvas');sheet.width=960;sheet.height=1152;ctx=sheet.getContext('2d');ctx.fillStyle='#202126';ctx.fillRect(0,0,960,1152);document.querySelector('#sheets').append(sheet);}
+  const col=index%3,row=Math.floor((index%24)/3),x=col*320,y=row*144;
+  ctx.fillStyle='white';ctx.font='11px sans-serif';ctx.fillText(entry.id,x+4,y+12);
+  try{
+   const record=await fetch('/'+entry.data).then(r=>r.json());applyExactPose(m,initial);const state=convertBlenderPose(record,reference[entry.library],m);applyExactPose(m,state);
+   const outputState=captureExactPose(m);const roundTrip=JSON.parse(JSON.stringify(outputState));m.posture=m.posture;applyExactPose(m,roundTrip);if(JSON.stringify(captureExactPose(m))!==JSON.stringify(outputState))report.exactRoundTrip=false;
+   const errors=[];
+   for(const [a,b,source] of [['l_arm','l_elbow','upperarm_l'],['l_elbow','l_wrist','lowerarm_l'],['r_arm','r_elbow','upperarm_r'],['r_elbow','r_wrist','lowerarm_r'],['l_leg','l_knee','thigh_l'],['l_knee','l_ankle','calf_l'],['r_leg','r_knee','thigh_r'],['r_knee','r_ankle','calf_r']]){
+    const target=m[b].getWorldPosition(new THREE.Vector3()).sub(m[a].getWorldPosition(new THREE.Vector3())).normalize();const bone=record.bones[source];const direction=new THREE.Vector3(...bone.tail).sub(new THREE.Vector3(...bone.position)).normalize();errors.push(target.angleTo(direction));
+   }
+   const error=Math.max(...errors);report.maximumDirectionError=Math.max(error,report.maximumDirectionError);
+   if(error>.005)report.failures.push({id:entry.id,error});
+   ctx.drawImage(renderTarget(),x+160,y+16,128,128);
+   const img=new Image();img.src='/'+entry.thumbnail;await img.decode();ctx.drawImage(img,x,y+16,128,128);
+   report.poses.push({id:entry.id,error});report.count++;
+   const clip=await fetch(`/poses2/${entry.id}-frames.json`).then(r=>{if(!r.ok)throw Error('Frame asset missing');return r.json();});
+   for(const frameNumber of [...new Set([clip.start,entry.frame,clip.end])]){
+    applyExactPose(m,initial);const frame=clip.frames[frameNumber-clip.start];
+    const exact=convertBlenderPose({version:1,bones:frame.bones},reference[entry.library],m);applyExactPose(m,exact);
+    for(const [a,b,boneName] of [['l_arm','l_elbow','upperarm_l'],['l_elbow','l_wrist','lowerarm_l'],['r_arm','r_elbow','upperarm_r'],['r_elbow','r_wrist','lowerarm_r'],['l_leg','l_knee','thigh_l'],['l_knee','l_ankle','calf_l'],['r_leg','r_knee','thigh_r'],['r_knee','r_ankle','calf_r']]){
+     const target=m[b].getWorldPosition(new THREE.Vector3()).sub(m[a].getWorldPosition(new THREE.Vector3())).normalize();
+     const bone=frame.bones[boneName],direction=new THREE.Vector3(...bone.tail).sub(new THREE.Vector3(...bone.position)).normalize();
+     const angle=target.angleTo(direction);report.maximumDirectionError=Math.max(report.maximumDirectionError,angle);if(angle>.005)report.failures.push({id:entry.id,frame:frameNumber,error:angle});
+    }
+    report.sampledFrames=(report.sampledFrames||0)+1;
+   }
+  }catch(error){report.failures.push({id:entry.id,message:error.message});ctx.fillStyle='red';ctx.fillText(error.message,x,y+50);}
+  if(index%24===23||index===manifest.length-1)await output(`comparison-${Math.floor(index/24)}.png`,sheet.toDataURL());
+  await new Promise(requestAnimationFrame);
+ }
+ // Applying exact data must not touch the root object's placement.
+ m.position.set(5,2,-3);m.rotation.set(.2,.5,-.1);m.scale.setScalar(.04);const rootBefore=[...m.position.toArray(),...m.rotation.toArray(),...m.scale.toArray()];applyExactPose(m,initial);report.sceneTransformPreserved=JSON.stringify(rootBefore)===JSON.stringify([...m.position.toArray(),...m.rotation.toArray(),...m.scale.toArray()]);
+ await output('report.json',report);document.querySelector('#status').textContent=JSON.stringify(report,null,2);
+};
+document.querySelector('#status').textContent='Ready: 254 poses';
+</script></body></html>

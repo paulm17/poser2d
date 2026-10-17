@@ -1,0 +1,201 @@
+{
+  "reference": "Original Blender-evaluated UAL motion",
+  "id": "ual2-LiftAir_Fall_Impact",
+  "frames": 21,
+  "sourceRelativeDiagnostics": {
+    "world": {
+      "degrees": 4.01327801011875,
+      "frame": 16,
+      "bone": "calf_l"
+    },
+    "local": {
+      "degrees": 6.405966922857198,
+      "frame": 19,
+      "bone": "calf_l"
+    }
+  },
+  "controlledArmAndFootMaximumDegrees": 8,
+  "controlled": {
+    "arms": {
+      "degrees": 0.000053672424419448395,
+      "bone": "clavicle_l",
+      "mode": "parentLocal"
+    },
+    "legs": {
+      "degrees": 6.405966922857198,
+      "frame": 19,
+      "bone": "calf_l"
+    },
+    "feet": {
+      "degrees": 0.00004676310850554372,
+      "frame": 4,
+      "bone": "ball_l"
+    }
+  },
+  "armModes": {
+    "clavicle_l": {
+      "worldFixed": 0.00006978000181101706,
+      "parentLocal": 0.000053672424419448395,
+      "selected": "parentLocal"
+    },
+    "upperarm_l": {
+      "worldFixed": 0.00005114097014383975,
+      "parentLocal": 0.00005833217483867356,
+      "selected": "worldFixed"
+    },
+    "clavicle_r": {
+      "worldFixed": 0.000042586106235672334,
+      "parentLocal": 0.0000442317376367534,
+      "selected": "worldFixed"
+    },
+    "upperarm_r": {
+      "worldFixed": 0.00004895630700474638,
+      "parentLocal": 0.00006845113902711211,
+      "selected": "worldFixed"
+    }
+  },
+  "kneeAndReachParameterBounds": [
+    4,
+    4,
+    4,
+    0.005,
+    6,
+    6,
+    6,
+    6,
+    4,
+    4
+  ],
+  "maximumParameterSteps": [
+    0.000001051237278331696,
+    6.097233408043801e-7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "parameterUnits": [
+    "degrees",
+    "degrees",
+    "millimetres",
+    "metres",
+    "millimetres",
+    "millimetres",
+    "millimetres",
+    "millimetres",
+    "millimetres",
+    "millimetres"
+  ],
+  "pass": true,
+  "records": [
+    {
+      "frame": 0,
+      "world": 0,
+      "local": 0
+    },
+    {
+      "frame": 1,
+      "world": 0.00004823632209648387,
+      "local": 0.00004406663165691147
+    },
+    {
+      "frame": 2,
+      "world": 0.00008500087411140417,
+      "local": 0.00004442905491796329
+    },
+    {
+      "frame": 3,
+      "world": 0.00014166469325657517,
+      "local": 0.00004648168302994245
+    },
+    {
+      "frame": 4,
+      "world": 0.00007731249187600222,
+      "local": 0.00005624547773293869
+    },
+    {
+      "frame": 5,
+      "world": 0.00005151022382093544,
+      "local": 0.00003686087999978983
+    },
+    {
+      "frame": 6,
+      "world": 0.00005198913694164542,
+      "local": 0.00002805786510332611
+    },
+    {
+      "frame": 7,
+      "world": 0.0000556199293352595,
+      "local": 0.000032443398557560674
+    },
+    {
+      "frame": 8,
+      "world": 0.000045563044700372294,
+      "local": 0.000031531884733425465
+    },
+    {
+      "frame": 9,
+      "world": 0.00008978841571001015,
+      "local": 0.000039199276236725885
+    },
+    {
+      "frame": 10,
+      "world": 0.00010192498400838516,
+      "local": 0.000043967270466990636
+    },
+    {
+      "frame": 11,
+      "world": 0.18699094275735778,
+      "local": 0.225208485744825
+    },
+    {
+      "frame": 12,
+      "world": 0.681226840554608,
+      "local": 0.6814156776340504
+    },
+    {
+      "frame": 13,
+      "world": 2.8156211814479266,
+      "local": 2.7630174452682557
+    },
+    {
+      "frame": 14,
+      "world": 2.705278976139207,
+      "local": 2.5095530042664387
+    },
+    {
+      "frame": 15,
+      "world": 3.976195077720724,
+      "local": 3.976197746143614
+    },
+    {
+      "frame": 16,
+      "world": 4.01327801011875,
+      "local": 4.005507232886779
+    },
+    {
+      "frame": 17,
+      "world": 0.889915269556383,
+      "local": 1.2257827129894703
+    },
+    {
+      "frame": 18,
+      "world": 2.9010611654646397,
+      "local": 4.851184048972316
+    },
+    {
+      "frame": 19,
+      "world": 3.5874760572535243,
+      "local": 6.405966922857198
+    },
+    {
+      "frame": 20,
+      "world": 0.40669701442711326,
+      "local": 0.40669682412575875
+    }
+  ]
+}

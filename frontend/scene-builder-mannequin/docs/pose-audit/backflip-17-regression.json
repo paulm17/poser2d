@@ -1,0 +1,17 @@
+{
+  "record": "ual1-BackFlip/frame/17",
+  "before": {
+    "torsoSegmentDirectionErrorDegrees": 13.938,
+    "lowestSkinYMetres": 1.0481143682355614
+  },
+  "after": {
+    "lowestSkinYMetres": 0.1619470786814321,
+    "pelvisWorldPositionMetres": [
+      0,
+      0.9147809028705703,
+      0.011179511252709693
+    ],
+    "pelvisAnchorUnchanged": true
+  },
+  "note": "The complete per-joint orientation and position metrics are in records.ndjson.gz. Skin contact is not made identical by moving the pelvis: the original pelvis-anchor preservation rule takes priority, and the bodies have different proportions."
+}

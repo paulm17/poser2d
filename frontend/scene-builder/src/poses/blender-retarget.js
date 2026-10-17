@@ -47,6 +47,11 @@ export function convertBlenderPose(record,referenceRecord,scratch){
  for(const name of names){
   const bone=BONE_MAP[name];
   const desired=calibratedWorldRotation(record.bones[bone].quaternion,reference[bone].quaternion,baseline[name]);
+  // Apply the measured shoulder rotation to the complete arm chain.
+  const side=name.startsWith('l_')?'l':name.startsWith('r_')?'r':null;
+  if(record.limbBoneCorrections?.[bone])desired.premultiply(q(record.limbBoneCorrections[bone])).normalize();
+  else if(side&&record.limbClearance?.[side]&&(/_(arm|elbow|wrist|finger_)/.test(name)))desired.premultiply(q(record.limbClearance[side])).normalize();
+  if(side&&record.legacyArmClearance?.[side]&&(/_(arm|elbow|wrist|finger_)/.test(name)))desired.premultiply(q(record.legacyArmClearance[side])).normalize();
   const parent=nodes[name].parent.getWorldQuaternion(new THREE.Quaternion());
   nodes[name].quaternion.copy(parent.invert().multiply(desired));nodes[name].updateWorldMatrix(true,true);
  }

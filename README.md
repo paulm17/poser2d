@@ -2,6 +2,67 @@
 
 Rust desktop app using the local `../rust-cef` library, with the existing React + TypeScript Studio UI.
 
+## Model inventory
+
+The desktop model catalog and runtime paths are defined in `src/engine.rs`.
+The four selectable image-model configurations are:
+
+| Catalog ID | Model | Prepared weights |
+| --- | --- | --- |
+| `turbo-4` | `Qwen/Qwen-Image-2.1-Turbo` | 4-bit transformer |
+| `turbo-8` | `Qwen/Qwen-Image-2.1-Turbo` | 8-bit transformer |
+| `base-4` | `Qwen/Qwen-Image-2.1` (Non-Turbo) | 4-bit transformer |
+| `base-8` | `Qwen/Qwen-Image-2.1` (Non-Turbo) | 8-bit transformer |
+
+These are two base models with two precision choices each. Studio also uses the
+following components, enhancers, adapters, and image-to-3D models:
+
+| Model / weights | Role and usage |
+| --- | --- |
+| Qwen3-VL text encoder and vision components from the Qwen Image 2.1 checkpoints | Shared image-generation conditioning; the language encoder is prepared at 4-bit, with vision components retained at source precision. |
+| Qwen Image 2.1 VAE | Encodes image references and decodes generated images; retained at source precision. |
+| `Qwen/Qwen-Image-2.1-PE-T2I` | Optional text-to-image prompt enhancer, prepared at 4-bit and run through vpipe's Qwen3.5 backend. |
+| `Qwen/Qwen-Image-2.1-PE-I2I` | Optional prompt enhancer for edits with references, prepared at 4-bit with its vision tower. |
+| `lightx2v/Qwen-Image-2.1-Lightning` | Optional Non-Turbo acceleration LoRA; uses a normalized runtime copy of `pytorch_lora_weights.safetensors` and four sampling steps. |
+| `MIUProject/VNCCS_PoseStudio_QI2.1` — `VNCCS_QI2_PoseStudioV2.safetensors` | Optional PoseStudio V2 LoRA for image edits; default strength 0.7. |
+| `lilylilith/QI_2.1_AnyAngle` — `QI2.1_AnyAngle.safetensors` | Optional camera-angle LoRA; selecting it sets CFG to 3. |
+| `VAST-AI/TripoSplat` — `diffusion_models/triposplat_fp16.safetensors` | Generates a Gaussian splat from a completed image via the TripoSplat bridge. |
+| TripoSplat `clip_vision/dino_v3_vit_h.safetensors` | DINOv3 vision encoder for splat generation. |
+| TripoSplat `vae/flux2-vae.safetensors` | FLUX.2 VAE used by the splat pipeline. |
+| TripoSplat `vae/triposplat_vae_decoder_fp16.safetensors` | Decodes the generated splat representation. |
+
+The separate CLI experiments add `alibaba-pai/Qwen-Image-2.1-Fun-Controlnet-Union`
+(`scripts/qwen-union-control.py`), the Qwen 2.1 VAE from
+`Comfy-Org/Qwen-Image-2.1`, and the Q4_K_M text encoder from
+`unsloth/Qwen3-VL-8B-Instruct-GGUF`. The PoseStudio comparison script
+(`scripts/run-posestudio-v2.py`) additionally uses
+`unsloth/Qwen-Image-2.1-Turbo-GGUF` (`qwen-image-2.1-turbo-Q4_K_M.gguf`) and
+`mmproj-F16.gguf` from the same Qwen3-VL repository. These CLI paths are separate
+from Studio's prepared Safetensors/vpipe runtime.
+
+## Four scene applications
+
+The Studio toolbar opens four bundled scene editors. Each is a separate Vite
+HTML entry, embedded through `frontend/src/StageEditor.tsx`.
+
+| Toolbar label | Application entry | 3D model / rig | Main distinction |
+| --- | --- | --- | --- |
+| **Stage scene** | `frontend/scene-builder/index.html` | Procedural `mannequin-js` 5.2.3 `Male` figure | Original pose-toolkit fork with a fitted, locked camera and horizontal orbit; character transforms are edited in Properties. |
+| **Stage scene 2** | `frontend/scene-builder-2/index.html` | Same `mannequin-js` figure | Free camera orbit, camera XYZ position/rotation controls, six torso-relative view presets, and viewport transform handles. |
+| **MakeHuman scene** | `frontend/scene-builder-mannequin/index.html` | MakeHuman mesh fitted to the 65-bone UAL skeleton, rig ID `makehuman-ual65-v2` | MakeHuman body and finger posing with the fitted/locked camera workflow. Rig data loads from `assets/ual-fit/model.json`. |
+| **MakeHuman scene 2** | `frontend/scene-builder-mannequin-2/index.html` | Same MakeHuman UAL65 model and shared rig/assets | Free orbit, camera XYZ position/rotation, six torso-relative presets, and Move arrows; joint rotation uses Properties. |
+
+The editors support pose galleries, lighting, imported GLB/glTF models, project
+save/load, and reference-image capture through **Export → Send to Studio**.
+Each editor keeps its own per-session scene snapshots in memory. The two
+MakeHuman editors share a project format; their rig-specific projects reject
+legacy mannequin-js projects. Save projects to JSON to retain them across app
+restarts. Imported models are user-supplied assets rather than additional bundled
+AI models.
+
+`mannequin-generator/` is a separate standalone VNCCS mannequin viewer and pose
+transfer experiment. It is not a fifth Studio scene application.
+
 ## Build and launch on macOS
 
 ```bash
@@ -14,7 +75,7 @@ cargo run
 
 - `src/`: Rust desktop entrypoint.
 - `frontend/`: Vite project, source, and built assets in `dist/`.
-- `stable-diffusion.cpp/`: separate inference engine checkout, not yet connected.
+- `stable-diffusion.cpp/`: inference engine checkout used by the separate CLI experiments.
 - `xtask/`: macOS development bundle command.
 
 ## Frontend development
@@ -27,7 +88,7 @@ npm --prefix frontend run build
 
 The desktop app loads built assets through `app://`; rebuild its bundle after frontend changes.
 
-Generate submits to the Rust engine queue and bundled stable-diffusion.cpp executable. Stage scene opens the bundled pose-toolkit editor. Load demo take previews the gallery and image actions. Session settings persist in browser local storage; references and demo takes remain in memory. The engine connection is implemented in `frontend/src/engine.ts`.
+Generate submits to the Rust engine queue and bundled vpipe executable. Stage scene opens the bundled pose-toolkit editor. Load demo take previews the gallery and image actions. Session settings persist in browser local storage; references and demo takes remain in memory. The engine connection is implemented in `frontend/src/engine.ts`.
 
 ## Known runtime limitation
 
@@ -51,7 +112,7 @@ In Stage scene, open **Export**, frame the scene, then choose **Send to Studio**
 The PNG is added to that session's reference list and Studio opens. Captures use
 the same naming, image decoding, ten-reference limit, prompt mentions, and request
 pipeline as uploaded images. **Download image** still exports a local PNG/JPEG.
-Generation is connected through `frontend/src/engine.ts` to the Rust queue and bundled `sd-cli`.
+Generation is connected through `frontend/src/engine.ts` to the Rust queue and bundled vpipe executable.
 
 ```bash
 npm --prefix frontend test
@@ -92,9 +153,31 @@ cargo bundle
 
 Apply the patch once to the supplied vpipe checkout (`068c343d5bd1f591d816b8a6fe272183e7eb5c78`). If the ignored checkout is absent, clone `https://github.com/tgo-app-dev/vpipe` into `vpipe` and check out that revision first. It pins portable shaders to Metal 3.1 for macOS 15 and uses compile-time compatibility guards for tensor APIs unavailable in SDK 26.1. Newer SDK builds retain the M5 paths. This Mac uses the existing M1 SIMDgroup kernels. The patch also adds PoseStudio fused gate/up adapter support, with a regression test that verifies row order and shared factors. Vpipe is an ignored nested repository; the patch is tracked here so the build is reproducible.
 
-### Prepare models
+### Union ControlNet trial pipeline
 
-All source and prepared model files live under `/Volumes/Data/Users/paul/.cache/huggingface/hub`. No GGUF weights are used.
+`scripts/qwen-union-control.py` wires the
+[Qwen Image 2.1 Fun ControlNet Union](https://huggingface.co/alibaba-pai/Qwen-Image-2.1-Fun-Controlnet-Union)
+adapter to the native `stable-diffusion.cpp/build/bin/sd-cli` engine, using the
+cached non-Turbo Qwen 2.1 transformer shards, Qwen 2.1 VAE, and Qwen3-VL text
+encoder. It is a separate pipeline: Studio's vpipe engine does not currently
+implement ControlNet, and the adapter cannot be loaded as a pose LoRA.
+
+```sh
+python3 scripts/qwen-union-control.py --download
+```
+
+This downloads only the adapter, validates the cached components, and prints the
+wired command without starting inference. The base components must already be
+cached. To inspect a planned pose run, pass `--control-image pose.png` and
+`--prompt "your prompt"`; inference requires the explicit `--run` flag.
+Supply a prepared RGB pose skeleton or other supported control map, with the same
+aspect ratio as the output. The defaults use the non-Turbo base, 40 Euler steps,
+CFG 1, and control strength 1. References and pose LoRAs are not added to this
+structural control pipeline.
+
+### Prepare vpipe models
+
+Source and prepared Studio model files live in the Hugging Face hub cache (`HF_HUB_CACHE`, or `~/.cache/huggingface/hub` by default), with runtime weights under `vpipe-prepared`. Studio uses Safetensors; the separate CLI experiments also use GGUF weights.
 
 ```sh
 python3 scripts/prepare-vpipe-models.py
@@ -109,7 +192,7 @@ The script downloads `Qwen/Qwen-Image-2.1-Turbo`, `Qwen/Qwen-Image-2.1`, `Qwen/Q
 
 Preparation recipes, logs, and source snapshot revisions are retained in `vpipe-prepared`. Base Qwen components add approximately 33 GB to the Turbo and enhancer downloads; prepared weights need additional disk space. Component copies use vpipe's hard-link support. Original source files remain unchanged. Use `--skip-download` to prepare already-cached sources.
 
-The model catalog detects these prepared directories and the existing PoseStudio V1.1 adapter. Saved precision and pose preferences migrate automatically; generation resolves model paths internally.
+The model catalog detects these prepared directories and the PoseStudio V2 adapter (`VNCCS_QI2_PoseStudioV2.safetensors`). Saved precision and pose preferences migrate automatically; generation resolves model paths internally.
 
 ### Generation and enhancement
 

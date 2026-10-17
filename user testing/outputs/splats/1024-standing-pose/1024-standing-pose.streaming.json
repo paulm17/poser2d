@@ -1,0 +1,132 @@
+{
+  "backend": "mps",
+  "cpu_fallback": false,
+  "stages": {
+    "background": {
+      "slot_bytes": 56879744,
+      "host_slot_bytes": 113759488,
+      "metal_slot_bytes": 113759488,
+      "resident_weight_bytes": 62442004,
+      "bytes_read": 826331620,
+      "prefetched_bytes": 761765688,
+      "metal_bytes_copied": 763890688,
+      "units_started": 48,
+      "units_completed": 48,
+      "max_active_units": 1,
+      "max_conversion_tensor_bytes": 0,
+      "max_observed_metal_allocated_bytes": 293289728,
+      "closed": true,
+      "elapsed_seconds": 2.5023872499587014
+    },
+    "dino": {
+      "slot_bytes": 52474880,
+      "host_slot_bytes": 104949760,
+      "metal_slot_bytes": 104949760,
+      "resident_weight_bytes": 1986560,
+      "bytes_read": 1681182720,
+      "prefetched_bytes": 1626721280,
+      "metal_bytes_copied": 1679196160,
+      "units_started": 32,
+      "units_completed": 32,
+      "max_active_units": 1,
+      "max_conversion_tensor_bytes": 0,
+      "max_observed_metal_allocated_bytes": 150360320,
+      "closed": true,
+      "elapsed_seconds": 4.516038584057242
+    },
+    "vae": {
+      "slot_bytes": 18886656,
+      "host_slot_bytes": 37773312,
+      "metal_slot_bytes": 37773312,
+      "resident_weight_bytes": 608008,
+      "bytes_read": 137704456,
+      "prefetched_bytes": 135305728,
+      "metal_bytes_copied": 136488448,
+      "units_started": 14,
+      "units_completed": 14,
+      "max_active_units": 1,
+      "max_conversion_tensor_bytes": 4718592,
+      "max_observed_metal_allocated_bytes": 610355456,
+      "closed": true,
+      "elapsed_seconds": 1.5553269169759005
+    },
+    "flow": {
+      "slot_bytes": 25200640,
+      "host_slot_bytes": 50401280,
+      "metal_slot_bytes": 50401280,
+      "resident_weight_bytes": 20301866,
+      "bytes_read": 28850315306,
+      "prefetched_bytes": 28808384000,
+      "metal_bytes_copied": 28830156800,
+      "units_started": 2240,
+      "units_completed": 2240,
+      "max_active_units": 1,
+      "max_conversion_tensor_bytes": 0,
+      "max_observed_metal_allocated_bytes": 262639360,
+      "closed": true,
+      "elapsed_seconds": 316.95864137494937
+    },
+    "decoder": {
+      "slot_bytes": 29464576,
+      "host_slot_bytes": 58929152,
+      "metal_slot_bytes": 58929152,
+      "resident_weight_bytes": 20436114,
+      "bytes_read": 1372028050,
+      "prefetched_bytes": 1183115264,
+      "metal_bytes_copied": 1145339904,
+      "units_started": 48,
+      "units_completed": 48,
+      "max_active_units": 1,
+      "max_conversion_tensor_bytes": 0,
+      "max_observed_metal_allocated_bytes": 87780608,
+      "closed": true,
+      "elapsed_seconds": 1.6258329580305144
+    }
+  },
+  "status": "complete",
+  "seed": 42,
+  "steps": 20,
+  "guidance": 3.0,
+  "num_gaussians": 32768,
+  "background_removal": true,
+  "checkpoints": {
+    "dino": "/Volumes/Data/Users/paul/.cache/huggingface/hub/models--VAST-AI--TripoSplat/snapshots/56a96e603204ec410c4da60c13ea4fa09a2169a9/clip_vision/dino_v3_vit_h.safetensors",
+    "vae": "/Volumes/Data/Users/paul/.cache/huggingface/hub/models--VAST-AI--TripoSplat/snapshots/56a96e603204ec410c4da60c13ea4fa09a2169a9/vae/flux2-vae.safetensors",
+    "flow": "/Volumes/Data/Users/paul/.cache/huggingface/hub/models--VAST-AI--TripoSplat/snapshots/56a96e603204ec410c4da60c13ea4fa09a2169a9/diffusion_models/triposplat_fp16.safetensors",
+    "decoder": "/Volumes/Data/Users/paul/.cache/huggingface/hub/models--VAST-AI--TripoSplat/snapshots/56a96e603204ec410c4da60c13ea4fa09a2169a9/vae/triposplat_vae_decoder_fp16.safetensors",
+    "background": "/Volumes/Data/Users/paul/.cache/huggingface/hub/models--VAST-AI--TripoSplat/snapshots/56a96e603204ec410c4da60c13ea4fa09a2169a9/background_removal/birefnet.safetensors"
+  },
+  "gaussian_shapes": {
+    "position": [
+      32768,
+      3
+    ],
+    "colour": [
+      32768,
+      1,
+      3
+    ],
+    "opacity": [
+      32768,
+      1
+    ],
+    "scale": [
+      32768,
+      3
+    ],
+    "rotation": [
+      32768,
+      4
+    ]
+  },
+  "exports": {
+    "ply_count": 32768,
+    "splat_count": 32768,
+    "ply_bytes": 2228639,
+    "splat_bytes": 1048576
+  },
+  "elapsed_seconds": 327.56735391705297,
+  "process_peak_rss_bytes": 825065472,
+  "metal_allocated_bytes_after_export": 1770496,
+  "metal_driver_bytes_after_export": 12189696
+}

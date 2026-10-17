@@ -1,0 +1,23 @@
+{
+  "references": [
+    "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/anyangle-pair-512/image1-coarse.png",
+    "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/anyangle-pair-512/image2-appearance.png"
+  ],
+  "fit": "contain",
+  "model": "/Volumes/Data/Users/paul/.cache/huggingface/hub/vpipe-prepared/Qwen-Image-2.1-Turbo-8bit",
+  "anyangle": null,
+  "strength": null,
+  "cfg": 3.0,
+  "width": 512,
+  "height": 384,
+  "steps": 8,
+  "seed": 42,
+  "prompt": "Change the camera angle from <image2> to <image1>.",
+  "command": [
+    "/Volumes/Data/Users/paul/development/src/github/theapp/vpipe/build/apps/vpipe/vpipe",
+    "--launch",
+    "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-diagnosis/no-anyangle-cfg3/pipeline.json",
+    "--config",
+    "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-diagnosis/no-anyangle-cfg3/config.json"
+  ]
+}

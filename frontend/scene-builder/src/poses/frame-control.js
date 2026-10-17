@@ -37,7 +37,7 @@ export function initFrameControl({getSelected,createScratch,onPreview,onCommit})
    let scratch;
    try{
     if(dirtyTarget&&(dirtyTarget!==selected||dirtyId!==selection.id))commit();
-    scratch=createScratch(selected);const record={version:1,bones:asset.frames[frame-asset.start].bones};
+    scratch=createScratch(selected);const sample=asset.frames[frame-asset.start];const record={version:1,bones:sample.bones,limbClearance:sample.limbClearance,limbBoneCorrections:sample.limbBoneCorrections,legacyArmClearance:sample.legacyArmClearance};
     const pose=convertBlenderPose(record,reference,scratch);pose.joints.body.position=selected.body.position.toArray();applyExactPose(selected,pose);
     selected.userData.poseFrame={id:selection.id,frame};dirtyTarget=selected;dirtyId=selection.id;onPreview();
    }catch(error){status.textContent=error.message;return;}

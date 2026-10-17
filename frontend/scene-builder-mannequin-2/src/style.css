@@ -1,0 +1,9 @@
+@import '../../scene-builder-mannequin/src/style.css';
+
+/* Leave room for every camera axis below the editor toolbar. */
+#camera-hud { width: 320px; box-sizing: border-box; }
+#camera-hud input[type="range"] { min-width: 0; width: 100%; }
+#camera-hud .btn-small { flex-shrink: 0; }
+@media (max-width: 1100px) {
+  #camera-hud { width: 290px; }
+}

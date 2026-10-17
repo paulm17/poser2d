@@ -1,0 +1,57 @@
+{
+  "layout": "/Volumes/Data/Users/paul/development/src/github/theapp/artifacts/splat-scene/scene-corrected.png",
+  "registration": "/Volumes/Data/Users/paul/development/src/github/theapp/artifacts/splat-scene/editor-camera.json",
+  "width": 512,
+  "height": 364,
+  "placements": [
+    {
+      "name": "standing",
+      "source": "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/vpipe/512-standing-pose.png",
+      "source_crop": [
+        138,
+        59,
+        428,
+        471
+      ],
+      "position": [
+        202,
+        155
+      ],
+      "size": [
+        89,
+        127
+      ],
+      "target_pixels": {
+        "x0": 610,
+        "y0": 432,
+        "x1": 761,
+        "y1": 784
+      }
+    },
+    {
+      "name": "lying",
+      "source": "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/vpipe/512-lying-pose.png",
+      "source_crop": [
+        111,
+        211,
+        418,
+        335
+      ],
+      "position": [
+        95,
+        274
+      ],
+      "size": [
+        129,
+        52
+      ],
+      "target_pixels": {
+        "x0": 263,
+        "y0": 775,
+        "x1": 622,
+        "y1": 893
+      }
+    }
+  ],
+  "appearance_method": "Composite original posed-avatar pixels; no full-scene appearance generation or enlarged previous scene output"
+}

@@ -1,0 +1,1044 @@
+{
+  "scope": "MakeHuman only",
+  "baseline": "Fitted MakeHuman after floor/foot solve, before limb-clearance corrections. Source angles are independently evaluated original UAL bone motion.",
+  "clips": 14,
+  "checkedFrames": 698,
+  "reviews": [
+    {
+      "id": "ual1-Death02",
+      "action": "Death02",
+      "fps": 30,
+      "checkedFrames": 75,
+      "worldFlag": {
+        "id": "ual1-Death02",
+        "maxCorrectionStepDegrees": 11.845120646352955,
+        "where": {
+          "frame": 30,
+          "bone": "lowerarm_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 0.00002372200512043724,
+        "sourceClosureDegrees": 86.81896897287331
+      },
+      "peakLocalCorrection": {
+        "bone": "clavicle_r",
+        "finalStepChangeDegrees": 0.5399411834285227,
+        "baselineStepChangeDegrees": 0.000006830189170012753,
+        "sourceStepChangeDegrees": 0.000025095717469822522,
+        "correctionStepDegrees": 2.9453240905292075,
+        "finalStepDegrees": 2.945326576036628,
+        "baselineStepDegrees": 0.000009956626120759429,
+        "sourceStepDegrees": 0.000013872179782028061,
+        "frame": 35
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 4,
+        "metres": 0.0432034720625043,
+        "vertex": 2316,
+        "joints": [
+          {
+            "bone": "clavicle_r",
+            "finalStepChangeDegrees": 0.4271001453610412,
+            "baselineStepChangeDegrees": 0.000011066171232981565,
+            "sourceStepChangeDegrees": 0.000038258205833255786,
+            "correctionStepDegrees": 1.8503261893722007,
+            "finalStepDegrees": 1.8503250124899622,
+            "baselineStepDegrees": 0.00001183023466776879,
+            "sourceStepDegrees": 0.00001790890709046331
+          },
+          {
+            "bone": "index_02_l",
+            "finalStepChangeDegrees": 2.5686479974796645,
+            "baselineStepChangeDegrees": 2.5687556658799835,
+            "sourceStepChangeDegrees": 2.5686772825418074,
+            "correctionStepDegrees": 0.00008065337137365915,
+            "finalStepDegrees": 12.773546712017499,
+            "baselineStepDegrees": 12.773521857818782,
+            "sourceStepDegrees": 12.773554054004205
+          },
+          {
+            "bone": "thumb_04_leaf_l",
+            "finalStepChangeDegrees": 0.00012944740223159922,
+            "baselineStepChangeDegrees": 0.00004475598394030398,
+            "sourceStepChangeDegrees": 0.000003818191820832845,
+            "correctionStepDegrees": 0.00006535691633437002,
+            "finalStepDegrees": 0.00006868501531940222,
+            "baselineStepDegrees": 0.000007443026089337883,
+            "sourceStepDegrees": 0.0000024148365394514667
+          },
+          {
+            "bone": "ring_02_r",
+            "finalStepChangeDegrees": 1.6529649758591753,
+            "baselineStepChangeDegrees": 1.6529525244303462,
+            "sourceStepChangeDegrees": 1.653060893987896,
+            "correctionStepDegrees": 0.000058631316158544496,
+            "finalStepDegrees": 13.820307915639063,
+            "baselineStepDegrees": 13.820302038797912,
+            "sourceStepDegrees": 13.820269213109203
+          }
+        ]
+      }
+    },
+    {
+      "id": "ual1-Idle_Tired_Loop",
+      "action": "Idle_Tired_Loop",
+      "fps": 30,
+      "checkedFrames": 70,
+      "worldFlag": {
+        "id": "ual1-Idle_Tired_Loop",
+        "maxCorrectionStepDegrees": 9.842173432582054,
+        "where": {
+          "frame": 18,
+          "bone": "thumb_04_leaf_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 0.3118855226835999,
+        "sourceClosureDegrees": 0.00031159346200072634
+      },
+      "peakLocalCorrection": {
+        "bone": "thumb_04_leaf_l",
+        "finalStepChangeDegrees": 0.00004343350536416956,
+        "baselineStepChangeDegrees": 0.00015157788730005075,
+        "sourceStepChangeDegrees": 0,
+        "correctionStepDegrees": 0.00012978482760782751,
+        "finalStepDegrees": 0.0000354907040033065,
+        "baselineStepDegrees": 0.00009528664697954697,
+        "sourceStepDegrees": 0,
+        "frame": 30
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 62,
+        "metres": 0.0014575140934860239,
+        "vertex": 9265,
+        "joints": [
+          {
+            "bone": "middle_01_r",
+            "finalStepChangeDegrees": 0.00760335031833257,
+            "baselineStepChangeDegrees": 0.007521150970130866,
+            "sourceStepChangeDegrees": 0.007563359986583318,
+            "correctionStepDegrees": 0.00009899357240937532,
+            "finalStepDegrees": 0.21946157084633447,
+            "baselineStepDegrees": 0.2195046986748593,
+            "sourceStepDegrees": 0.21947253201061714
+          },
+          {
+            "bone": "thumb_04_leaf_r",
+            "finalStepChangeDegrees": 0.00003856184715011519,
+            "baselineStepChangeDegrees": 0.0001269685137097851,
+            "sourceStepChangeDegrees": 0,
+            "correctionStepDegrees": 0.00008786820026747886,
+            "finalStepDegrees": 0.000022909150924997106,
+            "baselineStepDegrees": 0.00006692191325286089,
+            "sourceStepDegrees": 0
+          },
+          {
+            "bone": "middle_03_r",
+            "finalStepChangeDegrees": 0.007593328993864002,
+            "baselineStepChangeDegrees": 0.007638737004801381,
+            "sourceStepChangeDegrees": 0.0076350376118316556,
+            "correctionStepDegrees": 0.00008176637948948065,
+            "finalStepDegrees": 0.2194339516387767,
+            "baselineStepDegrees": 0.2194063495924948,
+            "sourceStepDegrees": 0.21940965939151072
+          },
+          {
+            "bone": "thumb_04_leaf_l",
+            "finalStepChangeDegrees": 0.00004844742298294805,
+            "baselineStepChangeDegrees": 0.00014915403608120346,
+            "sourceStepChangeDegrees": 0.0000029575586669421963,
+            "correctionStepDegrees": 0.00006868501531940222,
+            "finalStepDegrees": 0.000034910886870207484,
+            "baselineStepDegrees": 0.00008708491191766468,
+            "sourceStepDegrees": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "ual1-Pistol_Reload",
+      "action": "Pistol_Reload",
+      "fps": 30,
+      "checkedFrames": 51,
+      "worldFlag": {
+        "id": "ual1-Pistol_Reload",
+        "maxCorrectionStepDegrees": 12.109016572242592,
+        "where": {
+          "frame": 43,
+          "bone": "pinky_02_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 4.7521480840978025,
+        "sourceClosureDegrees": 0.007993311396949147
+      },
+      "peakLocalCorrection": {
+        "bone": "upperarm_l",
+        "finalStepChangeDegrees": 3.681114860599165,
+        "baselineStepChangeDegrees": 3.6787474058292684,
+        "sourceStepChangeDegrees": 3.6787772817459845,
+        "correctionStepDegrees": 0.19061815481738376,
+        "finalStepDegrees": 12.757446415179318,
+        "baselineStepDegrees": 12.662376678190777,
+        "sourceStepDegrees": 12.66231857606079,
+        "frame": 17
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 19,
+        "metres": 0.02134533505325398,
+        "vertex": 9036,
+        "joints": [
+          {
+            "bone": "upperarm_l",
+            "finalStepChangeDegrees": 1.1247967532946255,
+            "baselineStepChangeDegrees": 1.1685025606421156,
+            "sourceStepChangeDegrees": 1.168520154631172,
+            "correctionStepDegrees": 0.12714574973640497,
+            "finalStepDegrees": 7.373519992339494,
+            "baselineStepDegrees": 7.316504899518792,
+            "sourceStepDegrees": 7.316536878357009
+          },
+          {
+            "bone": "ring_03_l",
+            "finalStepChangeDegrees": 0.0005154530675148715,
+            "baselineStepChangeDegrees": 0.000660597945142442,
+            "sourceStepChangeDegrees": 0.0005130291669378915,
+            "correctionStepDegrees": 0.0000967292007588074,
+            "finalStepDegrees": 0.00018672480533627462,
+            "baselineStepDegrees": 0.0002659720740968464,
+            "sourceStepDegrees": 0.00019959321557127667
+          },
+          {
+            "bone": "ring_01_l",
+            "finalStepChangeDegrees": 0.00018411446068365304,
+            "baselineStepChangeDegrees": 0.00025067817830885455,
+            "sourceStepChangeDegrees": 0.00020117197233999505,
+            "correctionStepDegrees": 0.00009253898124449428,
+            "finalStepDegrees": 0.00011858544066553954,
+            "baselineStepDegrees": 0.00017418656369061968,
+            "sourceStepDegrees": 0.00012290782601013131
+          },
+          {
+            "bone": "ring_04_leaf_l",
+            "finalStepChangeDegrees": 0.00007376129969671113,
+            "baselineStepChangeDegrees": 0.00018560497107766852,
+            "sourceStepChangeDegrees": 0.0000024148365394514667,
+            "correctionStepDegrees": 0.0000793779948789834,
+            "finalStepDegrees": 0.000039789882402205,
+            "baselineStepDegrees": 0.0001140866515565584,
+            "sourceStepDegrees": 0.0000024148365394514667
+          }
+        ]
+      }
+    },
+    {
+      "id": "ual1-Roll",
+      "action": "Roll",
+      "fps": 30,
+      "checkedFrames": 45,
+      "worldFlag": {
+        "id": "ual1-Roll",
+        "maxCorrectionStepDegrees": 26.00016901630455,
+        "where": {
+          "frame": 16,
+          "bone": "pinky_02_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 9.000010114737258,
+        "sourceClosureDegrees": 120.08103925105424
+      },
+      "peakLocalCorrection": {
+        "bone": "pinky_04_leaf_l",
+        "finalStepChangeDegrees": 0.0015025368324489091,
+        "baselineStepChangeDegrees": 0.00004040794406345859,
+        "sourceStepChangeDegrees": 0.0000017075472925031877,
+        "correctionStepDegrees": 0.0009518714685944478,
+        "finalStepDegrees": 0.0009629446465124622,
+        "baselineStepDegrees": 0.000013976876963794275,
+        "sourceStepDegrees": 0.0000017075472925031877,
+        "frame": 4
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 2,
+        "metres": 0.3065662578586088,
+        "vertex": 2124,
+        "joints": [
+          {
+            "bone": "pinky_04_leaf_l",
+            "finalStepChangeDegrees": 0.00010749413689854774,
+            "baselineStepChangeDegrees": 0.000027052636780725834,
+            "sourceStepChangeDegrees": 0,
+            "correctionStepDegrees": 0.00013301344046459727,
+            "finalStepDegrees": 0.00012720940824699535,
+            "baselineStepDegrees": 0.0000101019860158646,
+            "sourceStepDegrees": 0
+          },
+          {
+            "bone": "ring_02_r",
+            "finalStepChangeDegrees": 12.81567563445178,
+            "baselineStepChangeDegrees": 12.815531321127093,
+            "sourceStepChangeDegrees": 12.815475529583058,
+            "correctionStepDegrees": 0.00011054308262375623,
+            "finalStepDegrees": 27.76705358321673,
+            "baselineStepDegrees": 27.766963497347295,
+            "sourceStepDegrees": 27.766967998924535
+          },
+          {
+            "bone": "index_01_r",
+            "finalStepChangeDegrees": 17.34233115112834,
+            "baselineStepChangeDegrees": 17.342462857558292,
+            "sourceStepChangeDegrees": 17.342412603264762,
+            "correctionStepDegrees": 0.00010491346209810383,
+            "finalStepDegrees": 35.43141285672232,
+            "baselineStepDegrees": 35.431510886212315,
+            "sourceStepDegrees": 35.43147583373895
+          },
+          {
+            "bone": "pinky_04_leaf_r",
+            "finalStepChangeDegrees": 0.0001805726215871722,
+            "baselineStepChangeDegrees": 0.000028978038473417675,
+            "sourceStepChangeDegrees": 0.0000024148365394514667,
+            "correctionStepDegrees": 0.00010344411131145193,
+            "finalStepDegrees": 0.00010304874607604047,
+            "baselineStepDegrees": 0.00000980911239371096,
+            "sourceStepDegrees": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "ual1-Sitting_Exit",
+      "action": "Sitting_Exit",
+      "fps": 30,
+      "checkedFrames": 32,
+      "worldFlag": {
+        "id": "ual1-Sitting_Exit",
+        "maxCorrectionStepDegrees": 12.99991901909507,
+        "where": {
+          "frame": 19,
+          "bone": "ring_01_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 20.00000080503478,
+        "sourceClosureDegrees": 89.9973862732472
+      },
+      "peakLocalCorrection": {
+        "bone": "index_01_r",
+        "finalStepChangeDegrees": 0.5942160324770607,
+        "baselineStepChangeDegrees": 0.5943707566484709,
+        "sourceStepChangeDegrees": 0.5942914926634999,
+        "correctionStepDegrees": 0.00015022534883463536,
+        "finalStepDegrees": 2.1213487302707468,
+        "baselineStepDegrees": 2.1212502075302675,
+        "sourceStepDegrees": 2.121293219523534,
+        "frame": 29
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 4,
+        "metres": 0.038620945357549286,
+        "vertex": 8900,
+        "joints": [
+          {
+            "bone": "thumb_02_l",
+            "finalStepChangeDegrees": 0.5926905644855284,
+            "baselineStepChangeDegrees": 0.5927147298207958,
+            "sourceStepChangeDegrees": 0.5926465322876782,
+            "correctionStepDegrees": 0.00006306376946685154,
+            "finalStepDegrees": 4.920468674342019,
+            "baselineStepDegrees": 4.920456956519442,
+            "sourceStepDegrees": 4.920438462004922
+          },
+          {
+            "bone": "thumb_03_l",
+            "finalStepChangeDegrees": 0.2753172146351262,
+            "baselineStepChangeDegrees": 0.27525621466900346,
+            "sourceStepChangeDegrees": 0.275296434466667,
+            "correctionStepDegrees": 0.00004416576931124734,
+            "finalStepDegrees": 2.1478460572291804,
+            "baselineStepDegrees": 2.1478072411834956,
+            "sourceStepDegrees": 2.1478371030949543
+          },
+          {
+            "bone": "index_03_l",
+            "finalStepChangeDegrees": 0.15298844695751734,
+            "baselineStepChangeDegrees": 0.15304200259804493,
+            "sourceStepChangeDegrees": 0.1530110451388105,
+            "correctionStepDegrees": 0.00004140582133719097,
+            "finalStepDegrees": 1.189929091643347,
+            "baselineStepDegrees": 1.1899598901696615,
+            "sourceStepDegrees": 1.1899501576421925
+          },
+          {
+            "bone": "middle_01_l",
+            "finalStepChangeDegrees": 0.6689501596959947,
+            "baselineStepChangeDegrees": 0.6690054219242163,
+            "sourceStepChangeDegrees": 0.6689299930633502,
+            "correctionStepDegrees": 0.00004101669349533058,
+            "finalStepDegrees": 5.355520076207282,
+            "baselineStepDegrees": 5.35555988342296,
+            "sourceStepDegrees": 5.3555015771244685
+          }
+        ]
+      }
+    },
+    {
+      "id": "ual2-JogToFlip",
+      "action": "JogToFlip",
+      "fps": 30,
+      "checkedFrames": 37,
+      "worldFlag": {
+        "id": "ual2-JogToFlip",
+        "maxCorrectionStepDegrees": 24.000067281577586,
+        "where": {
+          "frame": 13,
+          "bone": "middle_04_leaf_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 0.0000101019860158646,
+        "sourceClosureDegrees": 0.34213770413364497
+      },
+      "peakLocalCorrection": {
+        "bone": "clavicle_l",
+        "finalStepChangeDegrees": 54.512388930225704,
+        "baselineStepChangeDegrees": 3.9741240550811545,
+        "sourceStepChangeDegrees": 3.974079158297521,
+        "correctionStepDegrees": 38.76298303164394,
+        "finalStepDegrees": 37.54472931093163,
+        "baselineStepDegrees": 3.9741143801436434,
+        "sourceStepDegrees": 3.9740832839201667,
+        "frame": 4
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 4,
+        "metres": 0.2612093894113761,
+        "vertex": 2368,
+        "joints": [
+          {
+            "bone": "clavicle_l",
+            "finalStepChangeDegrees": 54.512388930225704,
+            "baselineStepChangeDegrees": 3.9741240550811545,
+            "sourceStepChangeDegrees": 3.974079158297521,
+            "correctionStepDegrees": 38.76298303164394,
+            "finalStepDegrees": 37.54472931093163,
+            "baselineStepDegrees": 3.9741143801436434,
+            "sourceStepDegrees": 3.9740832839201667
+          },
+          {
+            "bone": "upperarm_l",
+            "finalStepChangeDegrees": 45.28967139434425,
+            "baselineStepChangeDegrees": 18.580686830021094,
+            "sourceStepChangeDegrees": 18.580723690982833,
+            "correctionStepDegrees": 36.295612283440924,
+            "finalStepDegrees": 28.702980994993784,
+            "baselineStepDegrees": 30.353712401323513,
+            "sourceStepDegrees": 30.35375990590185
+          },
+          {
+            "bone": "upperarm_r",
+            "finalStepChangeDegrees": 89.95071983132996,
+            "baselineStepChangeDegrees": 78.99301399355636,
+            "sourceStepChangeDegrees": 78.99304689115071,
+            "correctionStepDegrees": 11.456644892913678,
+            "finalStepDegrees": 77.25540756726963,
+            "baselineStepDegrees": 68.46509407810761,
+            "sourceStepDegrees": 68.46511646002494
+          },
+          {
+            "bone": "pinky_03_r",
+            "finalStepChangeDegrees": 38.56064651643946,
+            "baselineStepChangeDegrees": 38.560700621738725,
+            "sourceStepChangeDegrees": 38.5607095349758,
+            "correctionStepDegrees": 0.00007276636204415663,
+            "finalStepDegrees": 38.56068492112333,
+            "baselineStepDegrees": 38.560701183892995,
+            "sourceStepDegrees": 38.56069706013359
+          }
+        ]
+      }
+    },
+    {
+      "id": "ual2-KipUp",
+      "action": "KipUp",
+      "fps": 30,
+      "checkedFrames": 36,
+      "worldFlag": {
+        "id": "ual2-KipUp",
+        "maxCorrectionStepDegrees": 11.00000939706979,
+        "where": {
+          "frame": 11,
+          "bone": "thigh_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 0.00001546249837520016,
+        "sourceClosureDegrees": 65.70910646328694
+      },
+      "peakLocalCorrection": {
+        "bone": "foot_r",
+        "finalStepChangeDegrees": 18.739495073908582,
+        "baselineStepChangeDegrees": 18.739584235448206,
+        "sourceStepChangeDegrees": 18.41354680805638,
+        "correctionStepDegrees": 0.00016973569791995695,
+        "finalStepDegrees": 39.93069056466477,
+        "baselineStepDegrees": 39.93069434733688,
+        "sourceStepDegrees": 41.574209809831785,
+        "frame": 16
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 20,
+        "metres": 0.0000016478420657418015,
+        "vertex": 3585,
+        "joints": [
+          {
+            "bone": "lowerarm_l",
+            "finalStepChangeDegrees": 11.649150346369593,
+            "baselineStepChangeDegrees": 11.649221376464732,
+            "sourceStepChangeDegrees": 11.649305797210577,
+            "correctionStepDegrees": 0.00005128330543201934,
+            "finalStepDegrees": 6.691734280962043,
+            "baselineStepDegrees": 6.6916926474221565,
+            "sourceStepDegrees": 6.691758335567669
+          },
+          {
+            "bone": "upperarm_l",
+            "finalStepChangeDegrees": 23.859782411072,
+            "baselineStepChangeDegrees": 23.859774656509938,
+            "sourceStepChangeDegrees": 23.860157818636075,
+            "correctionStepDegrees": 0.0000402271469862694,
+            "finalStepDegrees": 5.197909538383669,
+            "baselineStepDegrees": 5.197932283626813,
+            "sourceStepDegrees": 5.197999473404535
+          },
+          {
+            "bone": "calf_r",
+            "finalStepChangeDegrees": 1.7884326181665504,
+            "baselineStepChangeDegrees": 1.7884752159617678,
+            "sourceStepChangeDegrees": 2.0051149462762816,
+            "correctionStepDegrees": 0.00003837235289695137,
+            "finalStepDegrees": 4.599501251139802,
+            "baselineStepDegrees": 4.599537472462407,
+            "sourceStepDegrees": 4.820113949203704
+          },
+          {
+            "bone": "spine_03",
+            "finalStepChangeDegrees": 0.2595597760540407,
+            "baselineStepChangeDegrees": 0.25956331412402833,
+            "sourceStepChangeDegrees": 0.25956411096495596,
+            "correctionStepDegrees": 0.000036622809392810054,
+            "finalStepDegrees": 4.985829754472654,
+            "baselineStepDegrees": 4.985859556937603,
+            "sourceStepDegrees": 4.985835651988084
+          }
+        ]
+      }
+    },
+    {
+      "id": "ual2-LiftAir_Fall",
+      "action": "LiftAir_Fall",
+      "fps": 30,
+      "checkedFrames": 29,
+      "worldFlag": {
+        "id": "ual2-LiftAir_Fall",
+        "maxCorrectionStepDegrees": 26.17805995415144,
+        "where": {
+          "frame": 14,
+          "bone": "calf_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 0.00003397976208612202,
+        "sourceClosureDegrees": 94.50156763835972
+      },
+      "peakLocalCorrection": {
+        "bone": "calf_l",
+        "finalStepChangeDegrees": 18.752541644740223,
+        "baselineStepChangeDegrees": 22.672901836003312,
+        "sourceStepChangeDegrees": 8.766740530193255,
+        "correctionStepDegrees": 3.9361998124521587,
+        "finalStepDegrees": 3.9579837226681405,
+        "baselineStepDegrees": 0.3744212792868855,
+        "sourceStepDegrees": 8.09398430724963,
+        "frame": 27
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 27,
+        "metres": 0.01695685723019436,
+        "vertex": 11250,
+        "joints": [
+          {
+            "bone": "calf_l",
+            "finalStepChangeDegrees": 18.752541644740223,
+            "baselineStepChangeDegrees": 22.672901836003312,
+            "sourceStepChangeDegrees": 8.766740530193255,
+            "correctionStepDegrees": 3.9361998124521587,
+            "finalStepDegrees": 3.9579837226681405,
+            "baselineStepDegrees": 0.3744212792868855,
+            "sourceStepDegrees": 8.09398430724963
+          },
+          {
+            "bone": "foot_l",
+            "finalStepChangeDegrees": 9.344356015772345,
+            "baselineStepChangeDegrees": 11.271111016410345,
+            "sourceStepChangeDegrees": 4.230106203773008,
+            "correctionStepDegrees": 2.2927680592407462,
+            "finalStepDegrees": 2.632831442435553,
+            "baselineStepDegrees": 0.3466047682849584,
+            "sourceStepDegrees": 3.92147011012561
+          },
+          {
+            "bone": "thigh_l",
+            "finalStepChangeDegrees": 9.422266946687628,
+            "baselineStepChangeDegrees": 11.405487056652838,
+            "sourceStepChangeDegrees": 4.544194724487858,
+            "correctionStepDegrees": 1.6437734275646714,
+            "finalStepDegrees": 1.361350332565098,
+            "baselineStepDegrees": 0.5096573303189983,
+            "sourceStepDegrees": 4.181925472980365
+          },
+          {
+            "bone": "thigh_r",
+            "finalStepChangeDegrees": 5.2513526489613085,
+            "baselineStepChangeDegrees": 5.233355986644755,
+            "sourceStepChangeDegrees": 4.288090135569377,
+            "correctionStepDegrees": 0.5168811547229903,
+            "finalStepDegrees": 1.811952320840294,
+            "baselineStepDegrees": 1.2953120986956794,
+            "sourceStepDegrees": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "ual2-LiftAir_Fall_Impact",
+      "action": "LiftAir_Fall_Impact",
+      "fps": 30,
+      "checkedFrames": 21,
+      "worldFlag": {
+        "id": "ual2-LiftAir_Fall_Impact",
+        "maxCorrectionStepDegrees": 30.118374629252557,
+        "where": {
+          "frame": 8,
+          "bone": "thigh_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 0.00002996733336300671,
+        "sourceClosureDegrees": 131.33313120385094
+      },
+      "peakLocalCorrection": {
+        "bone": "thumb_04_leaf_r",
+        "finalStepChangeDegrees": 0.00004910497514838649,
+        "baselineStepChangeDegrees": 0.00011112184617451489,
+        "sourceStepChangeDegrees": 0.0000034150945850063755,
+        "correctionStepDegrees": 0.00008915293939755615,
+        "finalStepDegrees": 0.000033721357103364706,
+        "baselineStepDegrees": 0.0000958510649371295,
+        "sourceStepDegrees": 0.0000024148365394514667,
+        "frame": 10
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 11,
+        "metres": 0.0000012406503138839393,
+        "vertex": 1988,
+        "joints": [
+          {
+            "bone": "ring_03_r",
+            "finalStepChangeDegrees": 0.00008908750603872452,
+            "baselineStepChangeDegrees": 0.00015484168401532414,
+            "sourceStepChangeDegrees": 0.00010758903053683803,
+            "correctionStepDegrees": 0.00008462270858976215,
+            "finalStepDegrees": 0.00005729832627056432,
+            "baselineStepDegrees": 0.00009499550755292714,
+            "sourceStepDegrees": 0.00009006401499804401
+          },
+          {
+            "bone": "thumb_04_leaf_r",
+            "finalStepChangeDegrees": 0.00005329079746518632,
+            "baselineStepChangeDegrees": 0.00018679505985885945,
+            "sourceStepChangeDegrees": 0.000003818191820832845,
+            "correctionStepDegrees": 0.00008450202828793434,
+            "finalStepDegrees": 0.00001954377205284798,
+            "baselineStepDegrees": 0.00009109408726125178,
+            "sourceStepDegrees": 0
+          },
+          {
+            "bone": "pinky_03_r",
+            "finalStepChangeDegrees": 0.000059764155237612254,
+            "baselineStepChangeDegrees": 0.00017730558041599673,
+            "sourceStepChangeDegrees": 0.000052185059013381464,
+            "correctionStepDegrees": 0.00008384387580522336,
+            "finalStepDegrees": 0.00000887267600082659,
+            "baselineStepDegrees": 0.00007548054382082797,
+            "sourceStepDegrees": 0.00001707547292503189
+          },
+          {
+            "bone": "thumb_03_r",
+            "finalStepChangeDegrees": 0.00004210411376255389,
+            "baselineStepChangeDegrees": 0.00014959322771549203,
+            "sourceStepChangeDegrees": 0.00008834804147899201,
+            "correctionStepDegrees": 0.00008090603415396946,
+            "finalStepDegrees": 0.00001846994795519987,
+            "baselineStepDegrees": 0.00009798703266735365,
+            "sourceStepDegrees": 0.00007372175999958062
+          }
+        ]
+      }
+    },
+    {
+      "id": "ual2-Sword_Regular_C",
+      "action": "Sword_Regular_C",
+      "fps": 30,
+      "checkedFrames": 61,
+      "worldFlag": {
+        "id": "ual2-Sword_Regular_C",
+        "maxCorrectionStepDegrees": 8.989628559845565,
+        "where": {
+          "frame": 12,
+          "bone": "calf_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 0.00001601821346280157,
+        "sourceClosureDegrees": 109.2632134193884
+      },
+      "peakLocalCorrection": {
+        "bone": "upperarm_r",
+        "finalStepChangeDegrees": 35.06088267431992,
+        "baselineStepChangeDegrees": 41.19977719690007,
+        "sourceStepChangeDegrees": 41.19980664652111,
+        "correctionStepDegrees": 7.45200020417644,
+        "finalStepDegrees": 53.461227853450886,
+        "baselineStepDegrees": 51.869849548421946,
+        "sourceStepDegrees": 51.8698590146659,
+        "frame": 20
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 20,
+        "metres": 0.13075857887042006,
+        "vertex": 2814,
+        "joints": [
+          {
+            "bone": "upperarm_r",
+            "finalStepChangeDegrees": 35.06088267431992,
+            "baselineStepChangeDegrees": 41.19977719690007,
+            "sourceStepChangeDegrees": 41.19980664652111,
+            "correctionStepDegrees": 7.45200020417644,
+            "finalStepDegrees": 53.461227853450886,
+            "baselineStepDegrees": 51.869849548421946,
+            "sourceStepDegrees": 51.8698590146659
+          },
+          {
+            "bone": "thumb_04_leaf_l",
+            "finalStepChangeDegrees": 0.00011808032143349985,
+            "baselineStepChangeDegrees": 0.00007727476926244838,
+            "sourceStepChangeDegrees": 0.000006830189170012753,
+            "correctionStepDegrees": 0.00011377955368712041,
+            "finalStepDegrees": 0.00008312791999106062,
+            "baselineStepDegrees": 0.00004048003679528797,
+            "sourceStepDegrees": 0.0000024148365394514667
+          },
+          {
+            "bone": "pinky_01_r",
+            "finalStepChangeDegrees": 0.0002850223291629523,
+            "baselineStepChangeDegrees": 0.0002551112228709577,
+            "sourceStepChangeDegrees": 0.00017001889846228086,
+            "correctionStepDegrees": 0.00009548533616966831,
+            "finalStepDegrees": 0.00015316613550607537,
+            "baselineStepDegrees": 0.00012550182197339872,
+            "sourceStepDegrees": 0.00009618509468840165
+          },
+          {
+            "bone": "index_04_leaf_l",
+            "finalStepChangeDegrees": 0.000013976876963794275,
+            "baselineStepChangeDegrees": 0.00007768871060327629,
+            "sourceStepChangeDegrees": 0.0000024148365394514667,
+            "correctionStepDegrees": 0.0000928378246574931,
+            "finalStepDegrees": 0.0000153679256325287,
+            "baselineStepDegrees": 0.0000793779948789834,
+            "sourceStepDegrees": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "ual2-Sword_Regular_Combo",
+      "action": "Sword_Regular_Combo",
+      "fps": 30,
+      "checkedFrames": 91,
+      "worldFlag": {
+        "id": "ual2-Sword_Regular_Combo",
+        "maxCorrectionStepDegrees": 8.233888204420316,
+        "where": {
+          "frame": 42,
+          "bone": "calf_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 0.000010933637455190003,
+        "sourceClosureDegrees": 19.618839639725174
+      },
+      "peakLocalCorrection": {
+        "bone": "ring_04_leaf_l",
+        "finalStepChangeDegrees": 0.000028005857894381846,
+        "baselineStepChangeDegrees": 0.00023038603697424638,
+        "sourceStepChangeDegrees": 0.0000017075472925031877,
+        "correctionStepDegrees": 0.0001389213296360919,
+        "finalStepDegrees": 0.000018860476299618384,
+        "baselineStepDegrees": 0.00013713635377635201,
+        "sourceStepDegrees": 0,
+        "frame": 86
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 67,
+        "metres": 0.000004381555894082539,
+        "vertex": 2933,
+        "joints": [
+          {
+            "bone": "index_02_l",
+            "finalStepChangeDegrees": 0.28681871692144384,
+            "baselineStepChangeDegrees": 0.2867764059759749,
+            "sourceStepChangeDegrees": 0.2869559144803309,
+            "correctionStepDegrees": 0.00004978313060379752,
+            "finalStepDegrees": 5.473374744991591,
+            "baselineStepDegrees": 5.47335083554845,
+            "sourceStepDegrees": 5.473418869099616
+          },
+          {
+            "bone": "upperarm_r",
+            "finalStepChangeDegrees": 1.187488275818833,
+            "baselineStepChangeDegrees": 1.1874847349400113,
+            "sourceStepChangeDegrees": 1.1875124828842876,
+            "correctionStepDegrees": 0.0000454348783573103,
+            "finalStepDegrees": 6.796686844646437,
+            "baselineStepDegrees": 6.796702514423767,
+            "sourceStepDegrees": 6.796721832504543
+          },
+          {
+            "bone": "lowerarm_r",
+            "finalStepChangeDegrees": 0.8035126249263217,
+            "baselineStepChangeDegrees": 0.8035834798318079,
+            "sourceStepChangeDegrees": 0.8035881737107765,
+            "correctionStepDegrees": 0.00004329903598458984,
+            "finalStepDegrees": 3.7027617905765973,
+            "baselineStepDegrees": 3.7027709164069704,
+            "sourceStepDegrees": 3.7027688090075666
+          },
+          {
+            "bone": "pinky_02_r",
+            "finalStepChangeDegrees": 0.0004997661597451647,
+            "baselineStepChangeDegrees": 0.0005184902051474634,
+            "sourceStepChangeDegrees": 0.0004778753457716079,
+            "correctionStepDegrees": 0.00004224238708636883,
+            "finalStepDegrees": 0.000272780345949996,
+            "baselineStepDegrees": 0.00027370869921536557,
+            "sourceStepDegrees": 0.0002640466681947155
+          }
+        ]
+      }
+    },
+    {
+      "id": "ual2-Zombie_Run_R_Loop",
+      "action": "Zombie_Run_R_Loop",
+      "fps": 30,
+      "checkedFrames": 23,
+      "worldFlag": {
+        "id": "ual2-Zombie_Run_R_Loop",
+        "maxCorrectionStepDegrees": 20.000006695330825,
+        "where": {
+          "frame": 22,
+          "bone": "calf_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 0.0000323984319405831,
+        "sourceClosureDegrees": 0.00030826313011817033
+      },
+      "peakLocalCorrection": {
+        "bone": "pinky_02_l",
+        "finalStepChangeDegrees": 0.00013114808059381595,
+        "baselineStepChangeDegrees": 0.00004224238708636883,
+        "sourceStepChangeDegrees": 0.00004285909689161743,
+        "correctionStepDegrees": 0.0001886974966392725,
+        "finalStepDegrees": 0.00015876517250893162,
+        "baselineStepDegrees": 0.00003248830293691662,
+        "sourceStepDegrees": 0.000025896236867758322,
+        "frame": 5
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 7,
+        "metres": 0.0000017700774772824105,
+        "vertex": 2271,
+        "joints": [
+          {
+            "bone": "ring_01_r",
+            "finalStepChangeDegrees": 0.09930502507901072,
+            "baselineStepChangeDegrees": 0.09946925310436593,
+            "sourceStepChangeDegrees": 0.09939691697743451,
+            "correctionStepDegrees": 0.0001196014686849599,
+            "finalStepDegrees": 2.739390262612665,
+            "baselineStepDegrees": 2.73929314931071,
+            "sourceStepDegrees": 2.739321527325141
+          },
+          {
+            "bone": "pinky_01_l",
+            "finalStepChangeDegrees": 0.00003886311616015792,
+            "baselineStepChangeDegrees": 0.00010259503447851622,
+            "sourceStepChangeDegrees": 0.000014787793334710992,
+            "correctionStepDegrees": 0.00010779209274431359,
+            "finalStepDegrees": 0.00007678268882310077,
+            "baselineStepDegrees": 0.000042994942230332055,
+            "sourceStepDegrees": 0.000009507220963046143
+          },
+          {
+            "bone": "pinky_02_l",
+            "finalStepChangeDegrees": 0.00009420957939442963,
+            "baselineStepChangeDegrees": 0.0000879345409339829,
+            "sourceStepChangeDegrees": 0.00007765117075541966,
+            "correctionStepDegrees": 0.00010478832506345853,
+            "finalStepDegrees": 0.00009947836983144979,
+            "baselineStepDegrees": 0.000035035941193763164,
+            "sourceStepDegrees": 0.000037058103879442906
+          },
+          {
+            "bone": "thumb_02_r",
+            "finalStepChangeDegrees": 0.00010690937098332353,
+            "baselineStepChangeDegrees": 0.00009871336657719492,
+            "sourceStepChangeDegrees": 0.00015218260786628492,
+            "correctionStepDegrees": 0.00008805051682734893,
+            "finalStepDegrees": 0.00006929781485988168,
+            "baselineStepDegrees": 0.00006499903867473487,
+            "sourceStepDegrees": 0.00005688977684355846
+          }
+        ]
+      }
+    },
+    {
+      "id": "ual2-Zombie_Spawn",
+      "action": "Zombie_Spawn",
+      "fps": 30,
+      "checkedFrames": 86,
+      "worldFlag": {
+        "id": "ual2-Zombie_Spawn",
+        "maxCorrectionStepDegrees": 11.499198703357154,
+        "where": {
+          "frame": 69,
+          "bone": "lowerarm_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 2.9999823826869423,
+        "sourceClosureDegrees": 138.8920865047472
+      },
+      "peakLocalCorrection": {
+        "bone": "clavicle_l",
+        "finalStepChangeDegrees": 0.5237801835458188,
+        "baselineStepChangeDegrees": 0.0002097991307098906,
+        "sourceStepChangeDegrees": 0.00019915448434999885,
+        "correctionStepDegrees": 3.560984346553147,
+        "finalStepDegrees": 3.506947914558508,
+        "baselineStepDegrees": 0.10817708767399056,
+        "sourceStepDegrees": 0.10817913689255602,
+        "frame": 45
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 67,
+        "metres": 0.04795950974732244,
+        "vertex": 3004,
+        "joints": [
+          {
+            "bone": "clavicle_l",
+            "finalStepChangeDegrees": 0.1668310019740082,
+            "baselineStepChangeDegrees": 0.0028209415136550083,
+            "sourceStepChangeDegrees": 0.0028250259176152374,
+            "correctionStepDegrees": 1.1985430785072066,
+            "finalStepDegrees": 1.1853473857322028,
+            "baselineStepDegrees": 0.07391185332997231,
+            "sourceStepDegrees": 0.0739045158644454
+          },
+          {
+            "bone": "calf_r",
+            "finalStepChangeDegrees": 1.5195546051940594,
+            "baselineStepChangeDegrees": 1.5196489580127028,
+            "sourceStepChangeDegrees": 1.5195390641023205,
+            "correctionStepDegrees": 0.00008587112556188883,
+            "finalStepDegrees": 6.790651175353865,
+            "baselineStepDegrees": 6.79062657824937,
+            "sourceStepDegrees": 6.790681004375112
+          },
+          {
+            "bone": "middle_03_l",
+            "finalStepChangeDegrees": 0.17255893430774355,
+            "baselineStepChangeDegrees": 0.17258538028384665,
+            "sourceStepChangeDegrees": 0.17245660668466145,
+            "correctionStepDegrees": 0.00006517822313233739,
+            "finalStepDegrees": 1.288785973606996,
+            "baselineStepDegrees": 1.2887715310311423,
+            "sourceStepDegrees": 1.288885078764314
+          },
+          {
+            "bone": "ring_02_r",
+            "finalStepChangeDegrees": 3.9725358433445987,
+            "baselineStepChangeDegrees": 3.972561608505927,
+            "sourceStepChangeDegrees": 3.9723569912374788,
+            "correctionStepDegrees": 0.0000643906099460475,
+            "finalStepDegrees": 4.631774670811011,
+            "baselineStepDegrees": 4.63176047152656,
+            "sourceStepDegrees": 4.631849148071434
+          }
+        ]
+      }
+    },
+    {
+      "id": "ual2-Zombie_Walk_Fwd_R_Loop",
+      "action": "Zombie_Walk_Fwd_R_Loop",
+      "fps": 30,
+      "checkedFrames": 41,
+      "worldFlag": {
+        "id": "ual2-Zombie_Walk_Fwd_R_Loop",
+        "maxCorrectionStepDegrees": 9.177852322904082,
+        "where": {
+          "frame": 14,
+          "bone": "ring_01_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 0.000017827317112193638,
+        "sourceClosureDegrees": 0.00024199626264054694
+      },
+      "peakLocalCorrection": {
+        "bone": "upperarm_r",
+        "finalStepChangeDegrees": 1.1897930564565806,
+        "baselineStepChangeDegrees": 1.0975003759256383,
+        "sourceStepChangeDegrees": 1.0975066223307488,
+        "correctionStepDegrees": 1.0337688498946642,
+        "finalStepDegrees": 2.409578962265812,
+        "baselineStepDegrees": 1.6139542006002696,
+        "sourceStepDegrees": 1.6139619459852175,
+        "frame": 4
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 37,
+        "metres": 0.022105361506114075,
+        "vertex": 2143,
+        "joints": [
+          {
+            "bone": "upperarm_r",
+            "finalStepChangeDegrees": 0.29648513612169447,
+            "baselineStepChangeDegrees": 0.310137396811647,
+            "sourceStepChangeDegrees": 0.310143257425053,
+            "correctionStepDegrees": 0.9321714188785518,
+            "finalStepDegrees": 3.3660744401295943,
+            "baselineStepDegrees": 2.537181830268169,
+            "sourceStepDegrees": 2.5371533469571736
+          },
+          {
+            "bone": "pinky_03_r",
+            "finalStepChangeDegrees": 0.0003083009619386568,
+            "baselineStepChangeDegrees": 0.00038796661934385437,
+            "sourceStepChangeDegrees": 0.00047408352377426954,
+            "correctionStepDegrees": 0.00008201561353427564,
+            "finalStepDegrees": 0.00014414369472932388,
+            "baselineStepDegrees": 0.00013542475654802218,
+            "sourceStepDegrees": 0.00022745658017493325
+          },
+          {
+            "bone": "middle_01_l",
+            "finalStepChangeDegrees": 0.000036383181022077855,
+            "baselineStepChangeDegrees": 0.00010188206521189667,
+            "sourceStepChangeDegrees": 0.00026228504482390616,
+            "correctionStepDegrees": 0.00006780919481475191,
+            "finalStepDegrees": 0.000011326587362040635,
+            "baselineStepDegrees": 0.0000580314915225859,
+            "sourceStepDegrees": 0.00013768804178428798
+          },
+          {
+            "bone": "thumb_04_leaf_l",
+            "finalStepChangeDegrees": 0.00003916206761302329,
+            "baselineStepChangeDegrees": 0.00007187942587327288,
+            "sourceStepChangeDegrees": 0.000004517745487845101,
+            "correctionStepDegrees": 0.00006423192839181373,
+            "finalStepDegrees": 0.000018151476701449168,
+            "baselineStepDegrees": 0.00004744401024087473,
+            "sourceStepDegrees": 0.0000034150945850063755
+          }
+        ]
+      }
+    }
+  ]
+}

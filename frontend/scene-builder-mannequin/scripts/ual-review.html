@@ -1,0 +1,77 @@
+<!doctype html><meta charset="utf-8"><title>UAL MakeHuman frame comparison</title>
+<style>body{font:15px system-ui;background:#202024;color:#eee;margin:16px}button{padding:12px;font:inherit}iframe{width:1100px;height:800px;border:1px solid #555}pre{white-space:pre-wrap}.row{display:flex;gap:12px}img{width:256px}</style>
+<h1>MakeHuman / UAL frame comparison</h1>
+<p>Uses the actual editor's gallery and frame controls, then compares every bone and skin vertex with Blender. Saves front/side captures of every frame to the local comparison sink.</p>
+<button id="run">Compare all 61 frames</button><pre id="status">Waiting for editor…</pre>
+<div class="row"><div><h3>Blender</h3><img id="reference"></div><div><h3>App</h3><img id="capture"></div></div>
+<iframe src="../index.html"></iframe>
+<script type="module">
+const frame=document.querySelector('iframe'),status=document.querySelector('#status'),button=document.querySelector('#run');
+const crawl=new URLSearchParams(location.search).get('action')==='Crawl_Bwd_Loop',action=crawl?'Crawl_Bwd_Loop':'Crouch_Fwd_Loop',id='ual1-'+action;
+const base=crawl?'../assets/ual-crawl-bwd/':'../assets/ual-fit/';
+button.textContent='Compare all '+(crawl?76:61)+' frames';
+const raf=()=>new Promise(r=>requestAnimationFrame(r));
+async function until(fn){const end=performance.now()+30000;while(!fn()){if(performance.now()>end)throw Error('Editor did not become ready');await raf();}}
+async function save(route,data){const response=await fetch('http://127.0.0.1:3004/'+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...data,id})});if(!response.ok)throw Error(await response.text());}
+await until(()=>frame.contentWindow.mannequinReady);status.textContent='Editor ready. Start comparison.';
+button.onclick=async()=>{
+ button.disabled=true;
+ try{
+  const w=frame.contentWindow,doc=w.document,editor=w.mannequinEditor,THREE=editor.three;
+  doc.querySelector('#btn-pose2').click();await until(()=>doc.querySelector('dialog[open] .pose-thumbnail'));
+  doc.querySelector('dialog[open] .pose-thumbnail[aria-label="UAL1: '+action+'"]').click();await until(()=>!doc.querySelector('dialog[open]')&&editor.selected?.userData.poseFrame);
+  const model=editor.selected,mesh=model.mesh,names=Object.keys(model.bones);
+  const [vb,wb,clip]=await Promise.all([fetch(base+'blender-vertices.f32').then(r=>r.arrayBuffer()),fetch(base+'blender-world.f64').then(r=>r.arrayBuffer()),fetch(base+id+'-frames.json').then(r=>r.json())]);
+  const sourceFeet=await fetch(base+'all-frame-foot-inspection.json').then(r=>r.json()),fit=await fetch(base+'fit-report.json').then(r=>r.json());
+  const visibleVertices=new Set(mesh.geometry.index.array);
+  const footSets=Object.fromEntries(['l','r'].map(side=>{const indices=names.flatMap((n,i)=>['foot_'+side,'ball_'+side,'ball_leaf_'+side].includes(n)?[i]:[]);const ids=new Set();for(let v=0;v<mesh.geometry.attributes.position.count;v++){let weight=0;for(let j=0;j<4;j++)if(indices.includes(mesh.geometry.attributes.skinIndex.getComponent(v,j)))weight+=mesh.geometry.attributes.skinWeight.getComponent(v,j);if(visibleVertices.has(v)&&weight>.5)ids.add(v)}return [side,ids]}));
+  const toeSets=Object.fromEntries(['l','r'].map(side=>{const indices=names.flatMap((n,i)=>['ball_'+side,'ball_leaf_'+side].includes(n)?[i]:[]),ids=new Set();for(const v of visibleVertices){let weight=0;for(let j=0;j<4;j++)if(indices.includes(mesh.geometry.attributes.skinIndex.getComponent(v,j)))weight+=mesh.geometry.attributes.skinWeight.getComponent(v,j);if(weight>.5)ids.add(v)}return [side,ids]}));
+  let maxBodyPenetration=0,maxToeContactError=0;let maxFootClearanceError=0;
+  const vertices=new Float32Array(vb),worlds=new Float64Array(wb);
+  const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});renderer.setSize(crawl?512:256,crawl?512:256);renderer.setPixelRatio(1);renderer.outputColorSpace=THREE.SRGBColorSpace;
+  const scene=new THREE.Scene();scene.background=new THREE.Color(0x666666);scene.add(new THREE.AmbientLight(0xffffff,1.4));const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(-2,4,3);scene.add(light);
+  const camera=new THREE.OrthographicCamera(crawl?-1.9:-1.5,crawl?1.9:1.5,crawl?1.9:1.5,crawl?-1.9:-1.5,.01,100);
+  const point=new THREE.Vector3(),expected=new THREE.Vector3(),matrix=new THREE.Matrix4(),q=new THREE.Quaternion(),q2=new THREE.Quaternion();
+  let maxVertex=0,maxBone=0,maxRotation=0;const records=[];
+  const input=doc.querySelector('#animation-frame-panel input[type=number]');
+  for(let i=0;i<clip.frames.length;i++){
+   const f=clip.frames[i].frame;input.value=String(f);input.dispatchEvent(new w.Event('input',{bubbles:true}));input.dispatchEvent(new w.Event('blur'));await raf();await raf();
+   if(model.userData.poseFrame.frame!==f)throw Error('Frame control did not apply frame '+f);
+   model.updateMatrixWorld(true);mesh.skeleton.update();let frameVertex=0;const soles={l:Infinity,r:Infinity},toes={l:Infinity,r:Infinity};let bodyMinimum=Infinity;
+   for(let v=0;v<mesh.geometry.attributes.position.count;v++){
+    point.fromBufferAttribute(mesh.geometry.attributes.position,v);mesh.applyBoneTransform(v,point);const k=i*mesh.geometry.attributes.position.count*3+v*3;
+    if(visibleVertices.has(v))bodyMinimum=Math.min(bodyMinimum,point.y);for(const side of ['l','r']){if(footSets[side].has(v))soles[side]=Math.min(soles[side],point.y);if(toeSets[side].has(v))toes[side]=Math.min(toes[side],point.y);}
+    expected.fromArray(vertices,k);const err=point.distanceTo(expected);frameVertex=Math.max(frameVertex,err);maxVertex=Math.max(maxVertex,err);
+   }
+   for(let b=0;b<names.length;b++){
+    const k=(i*names.length+b)*16;matrix.set(...worlds.subarray(k,k+16));
+    matrix.decompose(expected,q,new THREE.Vector3());q.normalize();model.bones[names[b]].getWorldPosition(point);maxBone=Math.max(maxBone,point.distanceTo(expected));model.bones[names[b]].getWorldQuaternion(q2).normalize();maxRotation=Math.max(maxRotation,THREE.MathUtils.radToDeg(q.angleTo(q2)));
+   }
+   const feet={};for(const side of ['l','r']){const source=sourceFeet.frames[i].feet[side].soleMin,expected=source>=-.10&&source<=.002?0:source*fit.heightRatio,error=Math.abs(soles[side]-expected);maxFootClearanceError=Math.max(maxFootClearanceError,error);feet[side]={sourceMetres:source,expectedMetres:expected,actualMetres:soles[side],errorMetres:error};}
+   const src=sourceFeet.frames[i],grounded=src.bodyMinimum>=-.10&&src.bodyMinimum<=.03&&src.pelvisHeight>=0;if(grounded)maxBodyPenetration=Math.max(maxBodyPenetration,-bodyMinimum);for(const side of ['l','r']){const ref=src.feet[side].toeMinimum,contact=grounded&&ref>=-.10&&ref<=.002;feet[side].toeMinimumMetres=toes[side];feet[side].toeContact=contact;if(contact)maxToeContactError=Math.max(maxToeContactError,Math.abs(toes[side]));}
+   records.push({frame:f,maxVertexMetres:frameVertex,bodyMinimumMetres:bodyMinimum,feet});
+   // Render the very same posed object, with one fixed camera for the full clip.
+   const parent=model.parent;scene.add(model);
+   for(const view of ['front','side']){
+    camera.position.set(...(crawl?(view==='front'?[0,.4,3.5]:[4,.4,-.5]):(view==='front'?[0,.8,4.7]:[4,.8,.7])));camera.lookAt(0,crawl?.4:.8,crawl?-.5:.7);camera.updateProjectionMatrix();renderer.render(scene,camera);
+    const png=renderer.domElement.toDataURL('image/png');await save('frame',{view,frame:f,png});
+    if([0,15,30,45,60].includes(f)){document.querySelector('#reference').src=`../docs/ual-fit/${crawl?'crawl-audit/corrected/':''}blender/${view}/${String(f).padStart(3,'0')}.png`;document.querySelector('#capture').src=png;}
+   }
+   parent.add(model);status.textContent=`Compared and captured frame ${f} / ${clip.end}`;
+  }
+  renderer.dispose();
+  // Exercise exact serialization, restore, history and manual joint controls.
+  const snapshot=editor.snapshot(),saved=JSON.parse(JSON.stringify(snapshot.project));await editor.restore(saved);
+  const restored=editor.snapshot().project;
+  const saveLoad=JSON.stringify(saved.mannequins)===JSON.stringify(restored.mannequins);
+  doc.querySelector('#body-part-select').value='Joint_lowerarm_l';doc.querySelector('#body-part-select').dispatchEvent(new w.Event('change'));
+  const before=editor.selected.bones.lowerarm_l.quaternion.toArray(),control=doc.querySelector('#num-rot-bend');control.value=String(Number(control.value)+5);control.dispatchEvent(new w.Event('input'));control.dispatchEvent(new w.Event('change'));
+  const edited=editor.selected.bones.lowerarm_l.quaternion.toArray();const manualEdit=JSON.stringify(before)!==JSON.stringify(edited);
+  doc.querySelector('#btn-undo').click();await until(()=>JSON.stringify(editor.selected.bones.lowerarm_l.quaternion.toArray())===JSON.stringify(before));
+  const undo=true;
+  doc.querySelector('#body-part-select').value='Root';doc.querySelector('#body-part-select').dispatchEvent(new w.Event('change'));
+  const report={maxBodyPenetrationMetres:maxBodyPenetration,maxToeContactErrorMetres:maxToeContactError,maxFootClearanceErrorMetres:maxFootClearanceError,frames:clip.frames.length,bones:names.length,vertices:mesh.geometry.attributes.position.count,maxVertexMetres:maxVertex,maxBoneMetres:maxBone,maxRotationDegrees:maxRotation,saveLoad,manualEdit,undo,pass:maxBodyPenetration<.0001&&maxToeContactError<.0001&&maxFootClearanceError<.0001&&maxVertex<.0001&&maxBone<.0001&&maxRotation<.01&&saveLoad&&manualEdit&&undo,records};
+  await save('report',report);status.textContent=JSON.stringify(report,null,2);window.comparisonResult=report;
+ }catch(error){status.textContent=String(error.message).slice(0,500);console.error(error);}finally{button.disabled=false;}
+};
+</script>

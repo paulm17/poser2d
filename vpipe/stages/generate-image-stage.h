@@ -551,6 +551,10 @@ private:
   // qwen-image-21-model-config's `use_kv_cache`. Defaults ON, matching
   // the reference; an unset key is "no opinion", not `false`.
   bool _qi21_use_kv_cache = true;
+  std::string _qi21_controlnet;
+  float _qi21_control_scale = 1.0f;
+  RefLatent _qi21_control;
+  GenerationInput _control_in;
   // A few-step adapter's own schedule, off qwen-image-21-model-config:
   // raw sigma nodes (empty = the checkpoint's grid) and the terminal
   // stretch (< 0 = the checkpoint's). Reset between runs.

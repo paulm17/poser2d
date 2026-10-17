@@ -1,3 +1,4 @@
+#include "generative-models/qwen-image/qwen-image21-control.h"
 #include "stages/generate-image-stage.h"
 #include "generative-models/gen-input.h"
 #include "common/beat-keys.h"
@@ -469,6 +470,8 @@ const PortSpec kIports[] = {
           "references; one that takes fewer uses the first ones and says so",
    .type = &typeid(TensorListPayload),
    .tags = "latent-list", .clock_group = 0},
+  {.name = "control_latent", .doc = "Qwen 2.1 Union control map encoded by vae-encode, f32 [64,H/16,W/16]",
+   .type = &typeid(TensorBeatPayload), .tags = "latent", .clock_group = 0},
 };
 
 // The model iport (a model-select source) overrides hf_dir. Inserted after the
@@ -635,6 +638,7 @@ GenerateImageStage::GenerateImageStage(const SessionContextIntf* s,
     }
     for (GenerationInput& in : _ref_port_in) { in.set_mode(_ref_mode); }
     _ref_list_in.set_mode(_ref_mode);
+    _control_in.set_mode(_ref_mode);
   }
   _init_latents = attr_str("init_latents");
   _height = (int)attr_int("height");
@@ -1266,6 +1270,10 @@ krea2_vae_dec_base_(const std::string& root)
 void
 GenerateImageStage::reset_run_state()
 {
+  if (!_qi21_controlnet.empty()) {
+    _qi21_dit.reset();
+    _load_attempted = false;
+  }
   // If a previous run left the weights UNLOADED (the idle-unload
   // policy drops them between beats), let this launch load them again:
   // ensure_loaded_'s once-only guard is per-Stage, not per-launch, so
@@ -1317,6 +1325,10 @@ GenerateImageStage::reset_run_state()
   _ref_port_in[1].reset();
   _ref_list.clear();
   _ref_list_in.reset();
+  _control_in.reset();
+  _qi21_control = RefLatent{};
+  _qi21_controlnet.clear();
+  _qi21_control_scale = 1.0f;
   _ref.clear();
   // ...AND THE VALUES PARSED OUT OF IT. `_model_cfg` going empty is not
   // enough: the parsed derivatives live in their own members, and an
@@ -1846,6 +1858,19 @@ GenerateImageStage::apply_model_config_()
     // default (on) stands rather than being replaced by a false.
     if (_model_cfg.is_object()) {
       auto o = _model_cfg.as_object();
+      if (o.contains("controlnet")) {
+        const std::string path(o.at("controlnet").as_string(""));
+        if (_qi21_dit && path != _qi21_controlnet) {
+          throw std::runtime_error("ControlNet is a load-time option; restart the pipeline to change it");
+        }
+        _qi21_controlnet = path;
+      }
+      if (o.contains("control_context_scale")) {
+        _qi21_control_scale = (float)o.at("control_context_scale").as_real(1.0);
+        if (!std::isfinite(_qi21_control_scale) || _qi21_control_scale < 0) {
+          throw std::runtime_error("ControlNet strength must be finite and nonnegative");
+        }
+      }
       if (o.contains("use_kv_cache")) {
         _qi21_use_kv_cache = o.at("use_kv_cache").as_bool(true);
       }
@@ -2858,6 +2883,14 @@ GenerateImageStage::load_qwen_image21_dit_()
   _qi21_dit = genai::MetalQwenImage21Transformer::load(
       weight_set_(_qi21_dit_dir), mc, cfg, _qi21_stream,
       lora_specs_<genai::MetalQwenImage21Transformer::LoraSpec>());
+  if (_qi21_dit && !_qi21_controlnet.empty()) {
+    std::string error;
+    if (!_qi21_dit->load_controlnet(weight_set_(_qi21_controlnet), &error)) {
+      session()->warn(fmt("GenerateImageStage('{}'): {}", this->id(), error));
+      _qi21_dit.reset();
+      return false;
+    }
+  }
   if (_qi21_dit && _qi21_stream) {
     session()->info(fmt(
         "GenerateImageStage('{}'): Qwen-Image-2.1 DiT streaming {} blocks; "
@@ -4111,7 +4144,12 @@ GenerateImageStage::generate_qwen_image21_(
     // the decode and the reserve has to cover it.
     const bool decode_runs_beside_us =
         mb.recommended == 0 || (mb.fits(peak) && mb.fits_physical(peak));
-    _qi21_dit->set_residency_reserve(decode_runs_beside_us ? peak : 0);
+    const std::size_t control_reserve = !_qi21_controlnet.empty() && _qi21_control_scale != 0.0f
+        ? (std::size_t)dcfg.hidden * dcfg.hidden * 15 * 2 +
+          (std::size_t)lay.joint_len * dcfg.hidden * 19 * 2 +
+          (std::size_t)lay.image_len * 129 * 2
+        : 0;
+    _qi21_dit->set_residency_reserve((decode_runs_beside_us ? peak : 0) + control_reserve);
     session()->log_debug(fmt(
         "GenerateImageStage('{}'): Qwen-Image-2.1 residency reserve {} MB "
         "-- the {}x{} vae-decode wants {} MB and {}",
@@ -4134,7 +4172,23 @@ GenerateImageStage::generate_qwen_image21_(
   // The cache is on unless the graph's model-config turned it off. It
   // is exact rather than approximate, so there is no quality reason to
   // want it off -- the key exists for A/B and for the equivalence test.
-  const bool use_kv = _qi21_use_kv_cache && lay.prefix_len > 0;
+  SharedBuffer controlbuf;
+  if (!_qi21_controlnet.empty() && _qi21_control_scale != 0.0f) {
+    if (_qi21_control.c != 64 || _qi21_control.h != lh || _qi21_control.w != lw ||
+        _qi21_control.chw.size() != (std::size_t)64 * img_seq) {
+      session()->warn(fmt("Union ControlNet requires a 64-channel control latent matching the output canvas"));
+      return {};
+    }
+    controlbuf = mc->make_shared_buffer((std::size_t)lay.image_len * 129 * 2);
+    if (controlbuf.empty()) { return {}; }
+    std::vector<std::uint16_t> packed_control;
+    if (!genai::qi21::pack_control_context(_qi21_control.chw, img_seq, lay.image_len - img_seq, &packed_control)) {
+      session()->warn(fmt("Union ControlNet: invalid control latent values"));
+      return {};
+    }
+    std::memcpy(controlbuf.contents(), packed_control.data(), controlbuf.byte_size());
+  }
+  const bool use_kv = controlbuf.empty() && _qi21_use_kv_cache && lay.prefix_len > 0;
   int step_i = 0;
 
   auto run = [&](const SharedBuffer& txt, const genai::qi21::Layout& layout,
@@ -4145,6 +4199,8 @@ GenerateImageStage::generate_qwen_image21_(
     req.txt = &txt;
     req.layout = &layout;
     req.timestep = sigma;
+    req.control = controlbuf.empty() ? nullptr : &controlbuf;
+    req.control_scale = _qi21_control_scale;
     if (use_kv) {
       req.kv = kv;
       req.kv_mode = step_i == 0
@@ -5232,6 +5288,23 @@ GenerateImageStage::process(RuntimeContext& ctx)
           "GenerateImageStage('{}'): ref_latents must be a list of f32 "
           "[C,H,W] latents; got {}, ignoring", this->id(), rb->describe()));
     }
+  }
+  if (ctx.num_iports() > 9 && ctx.iport_connected(9) && _control_in.wants()) {
+    auto cb = co_await ctx.read(9);
+    const Took took = _control_in.took(cb != nullptr);
+    if (round.note(took)) { ctx.signal_done(); co_return; }
+    if (took == Took::kFresh) {
+      _qi21_control = RefLatent{};
+      const auto* tb = cb ? dynamic_cast<const TensorBeatPayload*>(cb.get()) : nullptr;
+      if (!tb || !take_latent(*tb, _qi21_control, "control_latent")) {
+        session()->warn(fmt("Union ControlNet requires an f32 control latent"));
+        ctx.signal_done(); co_return;
+      }
+    }
+  }
+  if (!_qi21_control.empty() && (_family != "qwen-image-21" || _qi21_controlnet.empty())) {
+    session()->warn(fmt("control_latent requires Qwen Image 2.1 and a Union controlnet checkpoint"));
+    ctx.signal_done(); co_return;
   }
   if (refs_changed) {
     _ref.clear();

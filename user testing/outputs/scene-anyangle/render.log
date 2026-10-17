@@ -1,0 +1,57 @@
+[NORMAL] libavutil: using '/opt/homebrew/lib/libavutil.dylib'
+[NORMAL] libavcodec: using '/opt/homebrew/lib/libavcodec.dylib'
+[NORMAL] libswresample: using '/opt/homebrew/lib/libswresample.dylib'
+[NORMAL] libswscale: using '/opt/homebrew/lib/libswscale.dylib'
+[NORMAL] libavformat: using '/opt/homebrew/lib/libavformat.dylib'
+[NORMAL] libavdevice: using '/opt/homebrew/lib/libavdevice.dylib'
+[NORMAL] libavfilter: using '/opt/homebrew/lib/libavfilter.dylib'
+[NORMAL] libavutil: using '/opt/homebrew/lib/libavutil.dylib'
+[INFO] PipelineRuntime: pipeline 'scene-edit' has 2 clock domains; domain 0 = {save-image, vae-decode, diffusion-conditioner, vae-encode, ref-list, ref-resample-2, load-ref-2, ref-resample-1, load-ref-1, ref-resample-0, load-ref-0, model-config, text-prompt, model-select}; domain 1 = {}; crossers = {generate-image}
+[INFO] memory landscape at launch: 32768 MB RAM -- 762 MB idle, 11857 MB file cache, 3288 MB wired system-wide, 1692 MB compressed, 6605 MB swap; this process holds 9 MB
+[INFO] memory landscape: wired pool 21845 MB of 21845 MB the GPU can keep resident, 0 MB of it already in use -- and the box is ALREADY paging, so growth will be refused until that clears
+[INFO] resource-plan: 1 activation arena(s) declared, 1188 MB; peak across phases 1188 MB
+[INFO] resource-plan: 15175 MB of model weights declared before init (30350 MB of claims, before shared checkpoints are counted once)
+[INFO] resource-plan: 15175 MB preloaded / 5025 MB if every streamable component streams
+[INFO] resource-plan: 7200 MB of that is phase-limited; peak across phases 15175 MB
+[INFO] resource-plan: peak 5025 MB in phase 'condition' (condition 5025 MB, denoise 1345 MB, decode-audio 1345 MB, decode 2533 MB)
+[INFO] memory-plan (declared): peak 8545 MB at 'vae-encode' streaming, 15175 MB at 'vae-encode' preloaded, over 15 stages in running order (load-ref-2 7901 MB, ref-resample-2 7901 MB, load-ref-1 7901 MB, ref-resample-1 7901 MB, load-ref-0 7901 MB, ref-resample-0 7901 MB, ref-list 7901 MB, model-config 7901 MB, text-prompt 7901 MB, model-select 7901 MB, diffusion-conditioner 7901 MB, vae-encode 8545 MB, generate-image 8545 MB, vae-decode 8545 MB, save-image 7901 MB)
+vpipe: launched pipeline '/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-anyangle/pipeline.json'
+[INFO] SaveImageStage('save-image'): writing png to '/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-anyangle/output.png' (quality 90, compression 6)
+[INFO] ImageResampleStage('ref-resample-2'): -> 704x512, fit=2, bilinear on the GPU (a u8 RGBA beat takes the CPU)
+[INFO] ImageResampleStage('ref-resample-1'): -> 704x512, fit=2, bilinear on the GPU (a u8 RGBA beat takes the CPU)
+[INFO] ImageResampleStage('ref-resample-0'): -> 704x512, fit=2, bilinear on the GPU (a u8 RGBA beat takes the CPU)
+[INFO] ModelSelectStage('model-select'): model = '/Volumes/Data/Users/paul/.cache/huggingface/hub/vpipe-prepared/Qwen-Image-2.1-Turbo-8bit'
+[INFO] qwen-image-21-model-config('model-config'): qwen-image-21 model config -> {"model_family":"qwen-image-21","vl_long_edge":0,"vl_pixel_budget":360448,"vl_min_pixels":1024,"vl_max_pixels":360448,"use_kv_cache":true,"lora3":"/Volumes/Data/Users/paul/.cache/huggingface/hub/models--lilylilith--QI_2.1_AnyAngle/snapshots/35b746e4121e1e9fc6a3e334fd8036ba1a9560d0/QI2.1_AnyAngle.safetensors","lora3_scale":1}
+[INFO] GenerateImageStage('generate-image'): loading Qwen-Image-2.1 single-stream DiT from '/Volumes/Data/Users/paul/.cache/huggingface/hub/vpipe-prepared/Qwen-Image-2.1-Turbo-8bit/transformer'
+[INFO] GenerateImageStage('generate-image'): Qwen-Image-2.1 schedule from the checkpoint: 8 sigma nodes (sample_sigmas), static shift 1, no terminal stretch
+[INFO] GenerateImageStage('generate-image'): runtime LoRA '/Volumes/Data/Users/paul/.cache/huggingface/hub/models--lilylilith--QI_2.1_AnyAngle/snapshots/35b746e4121e1e9fc6a3e334fd8036ba1a9560d0/QI2.1_AnyAngle.safetensors'
+[INFO] VaeEncodeStage('vae-encode'): loading Qwen-Image VAE encoder from '/Volumes/Data/Users/paul/.cache/huggingface/hub/vpipe-prepared/Qwen-Image-2.1-Turbo-8bit/vae'
+[INFO] DiffusionConditionerStage('diffusion-conditioner'): text encoder streams its layers -- ~one layer resident instead of the stack, rebuilt inside each prefill
+[NORMAL] MetalQwenImage21Transformer: runtime LoRA '/Volumes/Data/Users/paul/.cache/huggingface/hub/models--lilylilith--QI_2.1_AnyAngle/snapshots/35b746e4121e1e9fc6a3e334fd8036ba1a9560d0/QI2.1_AnyAngle.safetensors' -- 192 modules at scale 1, rank <= 24
+[NORMAL] MetalQwenImage21Transformer: 32 blocks, hidden 4096, 32 heads x 128, ffn 12288, w8 g64
+[INFO] DiffusionConditionerStage('diffusion-conditioner'): family qwen-image-21 encoder (Qwen3-VL), hidden 4096
+[INFO] DiffusionConditionerStage('diffusion-conditioner'): memory-bounded -- the encoder is dropped after each conditioning and reloaded on the next prompt
+[INFO] DiffusionConditionerStage('diffusion-conditioner'): reference 0 -> 352 vision tokens (grid 32x44), 3 deepstack
+[INFO] DiffusionConditionerStage('diffusion-conditioner'): reference 1 -> 352 vision tokens (grid 32x44), 3 deepstack
+[INFO] DiffusionConditionerStage('diffusion-conditioner'): reference 2 -> 352 vision tokens (grid 32x44), 3 deepstack
+[INFO] GenerateImageStage('generate-image'): 3 reference latents
+[INFO] GenerateImageStage('generate-image'): generation 1, seed 42
+[INFO] GenerateImageStage('generate-image'): true CFG 3, positive 1229 rows, negative 1082 rows, independent layouts
+[PROGRESS] 0% of 'denoise' completed at 11:15:30 (0/512)
+[PROGRESS] 10% of 'denoise' completed at 11:16:45 (53/512)
+[PROGRESS] 20% of 'denoise' completed at 11:17:16 (103/512)
+[PROGRESS] 30% of 'denoise' completed at 11:17:35 (154/512)
+[PROGRESS] 40% of 'denoise' completed at 11:17:55 (205/512)
+[PROGRESS] 50% of 'denoise' completed at 11:18:14 (256/512)
+[PROGRESS] 60% of 'denoise' completed at 11:18:34 (309/512)
+[PROGRESS] 70% of 'denoise' completed at 11:18:53 (359/512)
+[PROGRESS] 80% of 'denoise' completed at 11:19:13 (410/512)
+[PROGRESS] 90% of 'denoise' completed at 11:19:32 (461/512)
+[INFO] GenerateImageStage('generate-image'): Qwen-Image-2.1 latent generated in 261.91s (8 steps, joint 5805, prefix 4397, prefix KV cached)
+[PROGRESS] 100% of 'denoise' completed at 11:19:51 (512/512)
+[INFO] GenerateImageStage('generate-image'): Qwen-Image-2.1 latent [64, 32, 44] (8 steps @ 512x704)
+[INFO] memory-plan (generate-image): peak 15175 MB at 'vae-encode' streaming, 15175 MB at 'vae-encode' preloaded, over 15 stages in running order (load-ref-2 14531 MB, ref-resample-2 14531 MB, load-ref-1 14531 MB, ref-resample-1 14531 MB, load-ref-0 14531 MB, ref-resample-0 14531 MB, ref-list 14531 MB, model-config 14531 MB, text-prompt 14531 MB, model-select 14531 MB, diffusion-conditioner 14531 MB, vae-encode 15175 MB, generate-image 15175 MB, vae-decode 15175 MB, save-image 14531 MB)
+[INFO] VaeDecodeStage('vae-decode'): loading Qwen-Image VAE from '/Volumes/Data/Users/paul/.cache/huggingface/hub/vpipe-prepared/Qwen-Image-2.1-Turbo-8bit/vae'
+[INFO] memory-plan (vae-decode): peak 16363 MB at 'vae-decode' streaming, 16363 MB at 'vae-decode' preloaded, over 15 stages in running order (load-ref-2 14531 MB, ref-resample-2 14531 MB, load-ref-1 14531 MB, ref-resample-1 14531 MB, load-ref-0 14531 MB, ref-resample-0 14531 MB, ref-list 14531 MB, model-config 14531 MB, text-prompt 14531 MB, model-select 14531 MB, diffusion-conditioner 14531 MB, vae-encode 15175 MB, generate-image 15175 MB, vae-decode 16363 MB, save-image 14531 MB)
+[NORMAL] Krea-2 VAE decode: TILED 704x512 from 2 windows of 32 latent cells (overlap 8) -- per-window attention, cross-faded seams
+[INFO] PipelineRuntime: pipeline 'scene-edit' ran for 4 m 58 s

@@ -1,0 +1,4 @@
+<!doctype html><meta charset="utf-8"><title>Original VNCCS mannequin generator</title>
+<style>body{margin:0;background:#171724;color:#eee;font:15px system-ui}header{padding:12px;display:flex;gap:12px;align-items:center}canvas{display:block;width:100%;height:calc(100vh - 70px)}button,input{font:inherit}#status{margin-left:auto}</style>
+<header><button id="capture" disabled>Export mannequin PNG</button><button id="save" disabled>Save pose JSON</button><label>Load pose <input type="file" id="load" accept=".json"></label><button id="reset" disabled>Reset pose</button><span id="status">Loading original VNCCS assets…</span></header>
+<canvas id="viewer" width="1000" height="850"></canvas><script type="importmap">{"imports":{"three":"./upstream/web/vendor/three/three.module.js","three/addons/":"./source-node-modules/three/examples/jsm/"}}</script><script type="module" src="./launcher.js"></script><script type="module" src="./project-transfer.js"></script>

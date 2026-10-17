@@ -181,6 +181,8 @@ class MetalQwenImage21Transformer {
     // per joint row): [enc_len, txt_dim].
     const metal_compute::SharedBuffer* txt = nullptr;
     const qi21::Layout* layout = nullptr;
+    const metal_compute::SharedBuffer* control = nullptr; // [image_len, 129] bf16
+    float control_scale = 1.0f;
     float timestep = 0.0f;      // sigma in [0, 1], NOT scaled by 1000
     KvCache* kv = nullptr;
     KvMode kv_mode = KvMode::kOff;
@@ -249,6 +251,9 @@ class MetalQwenImage21Transformer {
   // slices the same rows off its joint output. Empty on failure.
   metal_compute::SharedBuffer forward(const Request& req,
                                       std::string* err = nullptr);
+
+  bool load_controlnet(std::shared_ptr<WeightSet> ws, std::string* err);
+  static bool validate_controlnet(const WeightSet& ws, const Config& cfg, std::string* err);
 
   const Config& config() const { return _cfg; }
 
@@ -339,10 +344,15 @@ class MetalQwenImage21Transformer {
     QWeight gate_w, proj_w, out_w;                // SwiGLU: gate, up, down
   };
 
+  std::shared_ptr<WeightSet> _control_ws;
+  QWeight _control_in;
+  metal_compute::SharedBuffer _control_bias;
+  metal_compute::ComputeFunction _fn_control_add;
+
   QWeight load_qw_(WeightSet& ws, const std::string& name, Retain r);
   metal_compute::SharedBuffer to_elt_(WeightSet& ws, const std::string& name,
                                       Retain r);
-  bool load_block_(WeightSet& ws, int L, Block& b, Retain r);
+  bool load_block_(WeightSet& ws, int L, Block& b, Retain r, const std::string& prefix = "");
   bool load_fixed_(WeightSet& ws);
 
   // BlockSlots' four callbacks; see shared/block-slots.h.

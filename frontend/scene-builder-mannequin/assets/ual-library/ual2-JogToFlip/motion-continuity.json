@@ -1,0 +1,281 @@
+{
+  "reference": "Original Blender-evaluated UAL motion",
+  "id": "ual2-JogToFlip",
+  "frames": 37,
+  "sourceRelativeDiagnostics": {
+    "world": {
+      "degrees": 38.762978193781876,
+      "frame": 4,
+      "bone": "clavicle_l"
+    },
+    "local": {
+      "degrees": 38.76297568166936,
+      "frame": 4,
+      "bone": "clavicle_l"
+    }
+  },
+  "controlledArmAndFootMaximumDegrees": 8,
+  "controlled": {
+    "arms": {
+      "degrees": 0.0000994343950102493,
+      "bone": "upperarm_r",
+      "mode": "worldFixed"
+    },
+    "legs": {
+      "degrees": 0.00005551498597887529,
+      "frame": 27,
+      "bone": "thigh_r"
+    },
+    "feet": {
+      "degrees": 0.00005833217483867356,
+      "frame": 28,
+      "bone": "foot_l"
+    }
+  },
+  "armModes": {
+    "clavicle_l": {
+      "worldFixed": 0.00007405717452948136,
+      "parentLocal": 38.76297568166936,
+      "selected": "worldFixed"
+    },
+    "upperarm_l": {
+      "worldFixed": 0.00007272628142307983,
+      "parentLocal": 36.295620071105404,
+      "selected": "worldFixed"
+    },
+    "clavicle_r": {
+      "worldFixed": 0.00009150924213225718,
+      "parentLocal": 0.00006012894492345132,
+      "selected": "parentLocal"
+    },
+    "upperarm_r": {
+      "worldFixed": 0.0000994343950102493,
+      "parentLocal": 11.456637023407518,
+      "selected": "worldFixed"
+    }
+  },
+  "kneeAndReachParameterBounds": [
+    4,
+    4,
+    4,
+    0.005,
+    6,
+    6,
+    6,
+    6,
+    4,
+    4
+  ],
+  "maximumParameterSteps": [
+    8.260860113452377e-7,
+    8.288333061470095e-7,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "parameterUnits": [
+    "degrees",
+    "degrees",
+    "millimetres",
+    "metres",
+    "millimetres",
+    "millimetres",
+    "millimetres",
+    "millimetres",
+    "millimetres",
+    "millimetres"
+  ],
+  "pass": true,
+  "records": [
+    {
+      "frame": 0,
+      "world": 0,
+      "local": 0
+    },
+    {
+      "frame": 1,
+      "world": 15.10194989692427,
+      "local": 15.101980788656453
+    },
+    {
+      "frame": 2,
+      "world": 28.791922376709692,
+      "local": 28.791943182779114
+    },
+    {
+      "frame": 3,
+      "world": 22.925806860845046,
+      "local": 22.925785272345472
+    },
+    {
+      "frame": 4,
+      "world": 38.762978193781876,
+      "local": 38.76297568166936
+    },
+    {
+      "frame": 5,
+      "world": 18.139738515926688,
+      "local": 18.13974181067324
+    },
+    {
+      "frame": 6,
+      "world": 9.983858090258813,
+      "local": 14.071061856658702
+    },
+    {
+      "frame": 7,
+      "world": 19.965910143363025,
+      "local": 21.396911473923414
+    },
+    {
+      "frame": 8,
+      "world": 25.477242449988562,
+      "local": 25.47725010735787
+    },
+    {
+      "frame": 9,
+      "world": 28.509257544075712,
+      "local": 28.50921961411013
+    },
+    {
+      "frame": 10,
+      "world": 29.494035791935932,
+      "local": 29.494044379731903
+    },
+    {
+      "frame": 11,
+      "world": 28.10136979157692,
+      "local": 28.10137092524671
+    },
+    {
+      "frame": 12,
+      "world": 25.835964054580554,
+      "local": 25.835959873305356
+    },
+    {
+      "frame": 13,
+      "world": 27.45025087738074,
+      "local": 27.45024927159165
+    },
+    {
+      "frame": 14,
+      "world": 29.680672449766025,
+      "local": 29.680724307037288
+    },
+    {
+      "frame": 15,
+      "world": 31.167579929209815,
+      "local": 31.167583817469446
+    },
+    {
+      "frame": 16,
+      "world": 31.90513372796611,
+      "local": 31.905141745339453
+    },
+    {
+      "frame": 17,
+      "world": 31.889537135685895,
+      "local": 31.88960832600104
+    },
+    {
+      "frame": 18,
+      "world": 31.117552407313564,
+      "local": 31.117554034315674
+    },
+    {
+      "frame": 19,
+      "world": 29.58807589485361,
+      "local": 29.588072434470362
+    },
+    {
+      "frame": 20,
+      "world": 21.778519852222004,
+      "local": 21.778534733893185
+    },
+    {
+      "frame": 21,
+      "world": 11.405799134047138,
+      "local": 11.405794062982741
+    },
+    {
+      "frame": 22,
+      "world": 6.512455569673935,
+      "local": 6.51246680093112
+    },
+    {
+      "frame": 23,
+      "world": 5.165399550142975,
+      "local": 5.165439186029264
+    },
+    {
+      "frame": 24,
+      "world": 5.532261018278967,
+      "local": 5.53226081043943
+    },
+    {
+      "frame": 25,
+      "world": 6.687014680497886,
+      "local": 6.687012203175696
+    },
+    {
+      "frame": 26,
+      "world": 3.9510683804694264,
+      "local": 3.9510731751812407
+    },
+    {
+      "frame": 27,
+      "world": 3.108521325029513,
+      "local": 3.1085320719845955
+    },
+    {
+      "frame": 28,
+      "world": 3.812402289076215,
+      "local": 3.812404879882494
+    },
+    {
+      "frame": 29,
+      "world": 4.390912764388877,
+      "local": 4.390915272038953
+    },
+    {
+      "frame": 30,
+      "world": 4.808593735283782,
+      "local": 4.808596455992559
+    },
+    {
+      "frame": 31,
+      "world": 4.977265654605017,
+      "local": 4.977274465131972
+    },
+    {
+      "frame": 32,
+      "world": 4.84859792289135,
+      "local": 4.848616487459442
+    },
+    {
+      "frame": 33,
+      "world": 4.416715846625762,
+      "local": 4.4167036675453994
+    },
+    {
+      "frame": 34,
+      "world": 3.7339020278083788,
+      "local": 3.733945519730486
+    },
+    {
+      "frame": 35,
+      "world": 2.996543423851266,
+      "local": 2.9965449158713304
+    },
+    {
+      "frame": 36,
+      "world": 2.877078709957416,
+      "local": 2.8770665195207203
+    }
+  ]
+}

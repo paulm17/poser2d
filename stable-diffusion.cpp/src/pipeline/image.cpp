@@ -819,9 +819,9 @@ namespace sd::pipeline {
                 LOG_ERROR("Qwen Image 2.1 control requires both a Union adapter and a control image");
                 return false;
             }
-            if (sd_img_gen_params->init_image.data != nullptr || sd_img_gen_params->ref_images_count > 0 ||
+            if (sd_img_gen_params->init_image.data != nullptr ||
                 sd_img_gen_params->mask_image.data != nullptr || sd_img_gen_params->hires.enabled) {
-                LOG_ERROR("Qwen Image 2.1 Union currently supports structural text-to-image control only; init images, references, masks and highres fix are unsupported");
+                LOG_ERROR("Qwen Image 2.1 Union supports structural control with references; init images, masks and highres fix are unsupported");
                 return false;
             }
             if (!std::isfinite(sd_img_gen_params->control_strength) || sd_img_gen_params->control_strength < 0.f ||

@@ -3269,3 +3269,42 @@ TEST(qwen_image_21_dit, eight_adapters_ride_one_dit)
   }
   fs::remove_all(dir, ec);
 }
+
+TEST(qwen_image_21_union, validates_downloaded_checkpoint_without_loading_weights) {
+  const char* path = std::getenv("VPIPE_QWEN_IMAGE21_CONTROLNET_PATH");
+  if (!path || !*path) { return; }
+  auto ws = WeightSet::open(path, nullptr);
+  Q21D_REQUIRE(ws != nullptr);
+  MetalQwenImage21Transformer::Config cfg;
+  std::string err;
+  EXPECT_TRUE(MetalQwenImage21Transformer::validate_controlnet(*ws, cfg, &err));
+  EXPECT_TRUE(err.empty());
+  cfg.hidden = 2048;
+  EXPECT_TRUE(!MetalQwenImage21Transformer::validate_controlnet(*ws, cfg, &err));
+  cfg = MetalQwenImage21Transformer::Config{}; cfg.n_layers = 31;
+  EXPECT_TRUE(!MetalQwenImage21Transformer::validate_controlnet(*ws, cfg, &err));
+}
+TEST(qwen_image_21_union, metal_projection_bias_and_scaled_residual) {
+  Session sess;
+  auto* mc = sess.metal_compute();
+  Q21D_REQUIRE(mc != nullptr);
+  auto lib = mc->load_library("llm_elementwise_bf16");
+  auto fn = lib.function("qwen_union_add_f16");
+  Q21D_REQUIRE(fn.valid());
+  auto a = mc->make_shared_buffer(16), b = mc->make_shared_buffer(16), bias = mc->make_shared_buffer(8), out = mc->make_shared_buffer(16);
+  Q21D_REQUIRE(!a.empty() && !b.empty() && !bias.empty() && !out.empty());
+  auto* av = static_cast<std::uint16_t*>(a.contents());
+  auto* bv = static_cast<std::uint16_t*>(b.contents());
+  auto* bi = static_cast<std::uint16_t*>(bias.contents());
+  for (int i = 0; i < 8; ++i) { av[i] = 0x3f80; bv[i] = 0x4000; }
+  for (int i = 0; i < 4; ++i) { bi[i] = 0x3f00; }
+  for (float scale : {1.0f, 0.0f}) {
+    auto st = mc->make_command_stream(); auto enc = st.begin_compute();
+    enc.set_function(fn); enc.set_buffer(0,a); enc.set_buffer(1,b); enc.set_buffer(2,bias); enc.set_buffer(3,out);
+    enc.set_constant(4,4); enc.set_constant(5,8); enc.set_constant(6,scale);
+    enc.dispatch({8,1,1},{8,1,1}); enc.end();
+    std::string err; Q21D_REQUIRE(st.commit().wait_ok(&err));
+    auto* result = static_cast<const std::uint16_t*>(out.contents());
+    for (int i = 0; i < 8; ++i) { EXPECT_TRUE(result[i] == (scale == 1 ? 0x4060 : 0x3fc0)); }
+  }
+}

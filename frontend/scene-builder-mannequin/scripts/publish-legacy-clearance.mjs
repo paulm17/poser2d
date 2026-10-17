@@ -1,0 +1,14 @@
+/** Publish geometry-measured renderer-specific arm corrections, no pose edits. */
+import {readFileSync,writeFileSync,existsSync} from 'node:fs';import {createHash} from 'node:crypto';import * as THREE from 'three';
+const assets=new URL('../assets/ual-library/',import.meta.url),docs=new URL('../docs/ual-fit/limb-clearance/batch-app/',import.meta.url),source=new URL('../../scene-builder/public/poses2/',import.meta.url),batch=JSON.parse(readFileSync(new URL('limb-repair-batch.json',assets)));let clips=0;
+for(const row of batch.actions){const reportFile=new URL(row.id+'/legacy/comparison.json',docs);if(!existsSync(reportFile))continue;const check=JSON.parse(readFileSync(reportFile)),proposals=check.legacyRepairProposals;if(!proposals||!Object.keys(proposals).length)continue;const fitFile=new URL(row.id+'/fit-report.json',assets),fit=JSON.parse(readFileSync(fitFile)),clipFile=new URL(row.id+'-frames.json',source),clip=JSON.parse(readFileSync(clipFile));const extras=new Map();
+for(const [frame,value]of Object.entries(proposals)){
+ if(value.baseClipSHA256!==fit.limbClearance.clipSHA256)throw Error('Stale legacy geometry proposal '+row.id);
+ const corrections={};for(const side of ['l','r']){const q=new THREE.Quaternion().fromArray(value.corrections[side]).normalize();if(THREE.MathUtils.radToDeg(q.angleTo(new THREE.Quaternion()))>20.01)throw Error('Correction too large');corrections[side]=q;}
+ extras.set(Number(frame),corrections);
+}
+const expanded=new Map(extras);for(const [frame,qs]of extras)for(const offset of [-2,-1,1,2]){const f=frame+offset;if(f<clip.start||f>clip.end||expanded.has(f))continue;expanded.set(f,Object.fromEntries(['l','r'].map(side=>[side,new THREE.Quaternion().slerp(qs[side],Math.abs(offset)===1?.5:.25)])));}
+for(const [frame,qs]of expanded){const sample=clip.frames[frame-clip.start];const old=sample.legacyArmClearance;sample.legacyArmClearance=Object.fromEntries(['l','r'].map(side=>[side,qs[side].clone().multiply(new THREE.Quaternion().fromArray(old?.[side]||[0,0,0,1])).normalize().toArray()]));}
+clip.legacyClearanceBaseSHA256=fit.limbClearance.clipSHA256;writeFileSync(clipFile,JSON.stringify(clip));const selectedFile=new URL(row.id+'.json',source),selected=JSON.parse(readFileSync(selectedFile));selected.legacyArmClearance=clip.frames[selected.frame-clip.start].legacyArmClearance;writeFileSync(selectedFile,JSON.stringify(selected));fit.legacyClearanceSHA256=createHash('sha256').update(readFileSync(clipFile)).digest('hex');writeFileSync(fitFile,JSON.stringify(fit,null,2));writeFileSync(new URL(row.id+'/legacy/additional-corrections-published.json',docs),JSON.stringify({sourceHash:fit.legacyClearanceSHA256,proposals},null,2));delete check.legacyRepairProposals;check.additionalCorrectionPublished=true;check.pass=false;writeFileSync(reportFile,JSON.stringify(check,null,2));clips++;
+}
+console.log('Published measured wooden-mannequin corrections: '+clips);

@@ -1,0 +1,23 @@
+{
+  "references": [
+    "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-repaired/image1-layout.png",
+    "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-repaired/image2-appearance.png"
+  ],
+  "fit": "contain",
+  "model": "/Volumes/Data/Users/paul/.cache/huggingface/hub/vpipe-prepared/Qwen-Image-2.1-Turbo-8bit",
+  "anyangle": "/Volumes/Data/Users/paul/.cache/huggingface/hub/models--lilylilith--QI_2.1_AnyAngle/snapshots/35b746e4121e1e9fc6a3e334fd8036ba1a9560d0/QI2.1_AnyAngle.safetensors",
+  "strength": 1.0,
+  "cfg": 3.0,
+  "width": 512,
+  "height": 384,
+  "steps": 8,
+  "seed": 42,
+  "prompt": "Change the camera angle from <image2> to <image1>.",
+  "command": [
+    "/Volumes/Data/Users/paul/development/src/github/theapp/vpipe/build/apps/vpipe/vpipe",
+    "--launch",
+    "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-repaired/generation/pipeline.json",
+    "--config",
+    "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-repaired/generation/config.json"
+  ]
+}

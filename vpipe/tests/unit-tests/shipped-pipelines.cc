@@ -1,3 +1,4 @@
+#include <cstdlib>
 // THE SHIPPED EXAMPLE PIPELINES ARE STRUCTURALLY VALID.
 //
 // docs/pipelines/*.vpipeline are documentation: the docs link to them,
@@ -303,4 +304,42 @@ TEST(shipped_pipelines, every_example_is_structurally_valid)
   printf("[pipelines] %zu shipped pipelines: %d stages, %d config keys, "
          "%d edges checked\n", files.size(), n_stages, n_keys, n_edges);
 #endif
+}
+
+TEST(qwen_image_21_union, trial_pipeline_matches_registered_stage_schemas) {
+  const char* path = std::getenv("VPIPE_QWEN_IMAGE21_CONTROL_PIPELINE");
+  if (!path || !*path) { return; }
+  FlexData doc = FlexData::from_json(read_file(path));
+  EXPECT_TRUE(doc.is_object());
+  const auto& reg = StageRegistry::get();
+  FlexData stage_data = doc.as_object().at("stages");
+  auto stages = stage_data.as_array();
+  for (const FlexData& stage : stages) {
+    auto o = stage.as_object();
+    const auto* spec = reg.spec(o.at("type").as_string(""));
+    EXPECT_TRUE(spec != nullptr);
+    if (!spec) { continue; }
+    FlexData edge_data = o.at("iports");
+    FlexData config_data = o.at("config");
+    auto edges = edge_data.as_array();
+    EXPECT_TRUE(edges.size() <= spec->iports.size());
+    for (const auto& [key, value] : config_data.as_object()) {
+      const auto* attr = find_key(*spec, key);
+      if (!attr) { printf("[union] unknown config key %s on %s\n", std::string(key).c_str(), std::string(o.at("id").as_string("")).c_str()); }
+      EXPECT_TRUE(attr != nullptr);
+      if (attr) { EXPECT_TRUE(value_fits(value, attr->type)); }
+    }
+    for (const FlexData& edge : edges) {
+      auto e = edge.as_object();
+      const std::string src(e.at("src").as_string(""));
+      if (src.empty()) { continue; }
+      const StageSpec* source = nullptr;
+      for (const auto& st : stages) {
+        auto so = st.as_object();
+        if (so.at("id").as_string("") == src) { source = reg.spec(so.at("type").as_string("")); break; }
+      }
+      EXPECT_TRUE(source != nullptr);
+      if (source) { EXPECT_TRUE(e.at("oport").as_uint() < source->oports.size()); }
+    }
+  }
 }

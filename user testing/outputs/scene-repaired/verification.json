@@ -1,0 +1,19 @@
+{
+  "changes": [
+    "Appearance reference assembled directly from detailed pose outputs at measured scene positions",
+    "Pose and scene workflows share build_vpipe_pipeline in run.py",
+    "VAE tile override is optional, not forced"
+  ],
+  "verification": [
+    "Original pose preparation passes",
+    "Shared builder reproduces tested scene graph exactly",
+    "Final scene image dimensions 512 x 364",
+    "Both detailed posed-character sources exist and are independently preserved"
+  ],
+  "result": "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-repaired/final.png",
+  "limits": [
+    "Matte extraction assumes black or transparent posed-character backgrounds",
+    "Scene assembly assumes a plain floor and backdrop",
+    "No claim of an underlying vpipe resolution bug; output dimensions and latent sizes were correct"
+  ]
+}

@@ -1,0 +1,135 @@
+{
+  "scope": "Automated pipeline exercised on one action per library; not a full-library completion report",
+  "runs": [
+    {
+      "pipelineSHA256": "571a8cc5a4cc1aa54c391d558a1e1c634b48af701874bed9a513f6768f0e5f25",
+      "started": "2026-10-15T14:59:51.105Z",
+      "actions": [
+        {
+          "library": 1,
+          "source": "/Volumes/Data/Users/paul/development/src/github/elderforge/assets/animations/source/universal_animation_library_1/UAL1.blend",
+          "sourceSHA256": "7f37b87e27a55705d32f8e5f186e5855781e97626db7abb85ce6936ecfff08ae",
+          "name": "Crouch_Fwd_Loop",
+          "start": 0,
+          "end": 60,
+          "frames": 61,
+          "id": "ual1-Crouch_Fwd_Loop",
+          "directory": "/private/tmp/ual-batch-proof/ual1-Crouch_Fwd_Loop",
+          "status": "verified",
+          "comparison": {
+            "footWhere": {
+              "frame": 55,
+              "side": "l"
+            },
+            "maxFootClearanceErrorMetres": 7.813186629866686e-07,
+            "frames": 61,
+            "bones": 65,
+            "vertices": 19158,
+            "maxVertexMetres": 1.456508365566164e-06,
+            "maxBoneMetres": 1.1181430930479585e-06,
+            "maxRotationDegrees": 5.645245351138942e-05,
+            "vertexWhere": {
+              "frame": 34,
+              "vertex": 6590
+            },
+            "boneWhere": {
+              "frame": 52,
+              "bone": "ring_04_leaf_l"
+            },
+            "thresholds": {
+              "metres": 0.0001,
+              "degrees": 0.01,
+              "footClearanceMetres": 0.0001,
+              "sourceContactToleranceMetres": 0.002
+            },
+            "pass": true
+          },
+          "artifactSHA256": {
+            "all-frame-foot-inspection.json": "6fd93b4aae2fc46d8dfa7dfdc0b85a9608befbb3a34942cdbb6345f705c0618d",
+            "baked-action-comparison.json": "f7b09b1a304c169df13acbf0985c901caba6c481408c505028c0948124c123fa",
+            "binding.json": "2b794ed8f144fd3c7d0250500650ecb18f4dc4fff3bd6bd25929de4a8f9b699b",
+            "blender-vertices.f32": "59f697a6e9ab31108b2464eaaf632879fc511068f092be68c831fcaaa697c8d7",
+            "blender-world.f64": "35c7ae37f57760ad74e98e4f8d814d47b4dfaa09f108d1fcd15b051d94100f69",
+            "comparison.blend": "1e03f9f0331aec604e5232ddbf8e5a3dbba1b4e134aa683864878d6efdb30478",
+            "fit-report.json": "1814ed8d3bd90badb3fcc453d861debf4ba9cfb8715152a9a1071a3f8e4bd026",
+            "makehuman-input.json": "638e4c1695f8131eb5e34ca06ab247c00748e9d344c5ff450d4f0bf3a11a7c3a",
+            "makehuman-ual.glb": "3a5b97054f530735724319ba7523d309080a5fcb409e70c59abc0e2628e5a09a",
+            "manifest.json": "28617770871e486595431606c25d1728ed9a58efb43b0bce7306c5ec279aed74",
+            "model.json": "dabc210243967b6aa0e8b9c3793392cea1c44fa5f06a717ca082bcf81e5199f8",
+            "numerical-comparison.json": "14fe1f214f634886fca9393cd168b36b4c78fd3498e8b011fa3cafb69be2960e",
+            "ual1-Crouch_Fwd_Loop-frames.json": "e9fad50504a865a6a557ac266a126c97645104dee53e10ef1c6051857f37166b",
+            "ual1-Crouch_Fwd_Loop.json": "b87aa3f5d1c2ba315525570e4887676063d666923a670dfd872725a07121ebaa"
+          }
+        }
+      ],
+      "finished": "2026-10-15T15:00:00.487Z",
+      "verified": 1,
+      "failed": 0
+    },
+    {
+      "pipelineSHA256": "571a8cc5a4cc1aa54c391d558a1e1c634b48af701874bed9a513f6768f0e5f25",
+      "started": "2026-10-15T15:00:40.288Z",
+      "actions": [
+        {
+          "library": 2,
+          "source": "/Volumes/Data/Users/paul/development/src/github/elderforge/assets/animations/source/universal_animation_library_2/UAL2.blend",
+          "sourceSHA256": "556d5f0b9a55e2a588d51f4952cd5c1e3d8a13c74a82318a983dc88fd757dc66",
+          "name": "Bandage_Loop",
+          "start": 0,
+          "end": 20,
+          "frames": 21,
+          "id": "ual2-Bandage_Loop",
+          "directory": "/private/tmp/ual-batch-proof-ual2/ual2-Bandage_Loop",
+          "status": "verified",
+          "comparison": {
+            "footWhere": {
+              "frame": 13,
+              "side": "l"
+            },
+            "maxFootClearanceErrorMetres": 4.7531796432478957e-07,
+            "frames": 21,
+            "bones": 65,
+            "vertices": 19158,
+            "maxVertexMetres": 1.4342269897240884e-06,
+            "maxBoneMetres": 1.1453203924521304e-06,
+            "maxRotationDegrees": 5.772924211577992e-05,
+            "vertexWhere": {
+              "frame": 9,
+              "vertex": 15500
+            },
+            "boneWhere": {
+              "frame": 7,
+              "bone": "ball_leaf_r"
+            },
+            "thresholds": {
+              "metres": 0.0001,
+              "degrees": 0.01,
+              "footClearanceMetres": 0.0001,
+              "sourceContactToleranceMetres": 0.002
+            },
+            "pass": true
+          },
+          "artifactSHA256": {
+            "all-frame-foot-inspection.json": "8c172082892de7182fbf0f8d85749cf5b08a02bdc766597623b011ed8fed6f3c",
+            "baked-action-comparison.json": "b9db6f82e25083ed47cba01c9897169683672896135d5b670d6a37efc0b40378",
+            "binding.json": "2b794ed8f144fd3c7d0250500650ecb18f4dc4fff3bd6bd25929de4a8f9b699b",
+            "blender-vertices.f32": "bdbc522d72048adb43bd210b067866e2836c704a457196669187c3f2fc92a34b",
+            "blender-world.f64": "3ee6074cbe6c77be6f73ee520e7e351b565fea1fb7a6506d08cd39dbfb7fa074",
+            "comparison.blend": "df2215f48bcb2c0cae05fc56fcfa5fa408d348e0e50ac3487567977fc85abe91",
+            "fit-report.json": "a6d181b1cb3f5eb77d47066e3d1779b9bc47ef065a9183eaa44ab2b7a9951d0f",
+            "makehuman-input.json": "638e4c1695f8131eb5e34ca06ab247c00748e9d344c5ff450d4f0bf3a11a7c3a",
+            "makehuman-ual.glb": "e1ce467169251eae3cc45a29c3ed5d9202e916cd27210383daea49c87b22567f",
+            "manifest.json": "222f3cf85d5ffb1b5d430969c460f50494f3e782f16272d6f0f3bea24fbf3c5c",
+            "model.json": "dabc210243967b6aa0e8b9c3793392cea1c44fa5f06a717ca082bcf81e5199f8",
+            "numerical-comparison.json": "5c74d48a7faa76b59d8d4305e26e81c59b4d5a88ba1cd43735747d4844fd5e0c",
+            "ual2-Bandage_Loop-frames.json": "8f7df38972d2a5e9c2c2585df9d869397fc21a4f6e2006dbb06409683fdad875",
+            "ual2-Bandage_Loop.json": "bb87a850011a5744e1f762c8a3d5e6f45f05820d286fd564511c44277c8d9ce2"
+          }
+        }
+      ],
+      "finished": "2026-10-15T15:00:47.072Z",
+      "verified": 1,
+      "failed": 0
+    }
+  ]
+}

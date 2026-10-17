@@ -1,0 +1,64 @@
+{
+  "validationStatus": "motion-and-floor-acceptance-complete",
+  "rig": "makehuman-ual65-v2",
+  "actions": 254,
+  "frames": 11852,
+  "conversionFailures": 0,
+  "commonModelSHA256": [
+    "b76de107fd8431eb4afe250c7f57859042fe7d362ecb2a6de6822aeebdbd5b8c"
+  ],
+  "sameModelForBothLibraries": true,
+  "floorSupport": {
+    "version": 1,
+    "positionToleranceMetres": 0.0001,
+    "numericallyReproducedActions": 254,
+    "numericallyReproducedFrames": 11852,
+    "floorReadyActions": 254,
+    "requiresSceneContextActions": 0,
+    "conversionFailures": [],
+    "contexts": []
+  },
+  "pipelineSHA256": "b79bb782646d28b63e36f4f31039ebe7c1d6acee8de0dbf38ee67f646b7d5065",
+  "supportAuditSHA256": "eea78642751b074044e5c6d7bfa7cc8e14de1c5ad0828e44e58beaa50799e571",
+  "maxima": {
+    "maxVertexMetres": 5.024273640475028e-06,
+    "maxBoneMetres": 3.969111796736103e-06,
+    "maxRotationDegrees": 0.0001068138735359642,
+    "maxFootClearanceErrorMetres": 5.28844769735117e-06,
+    "maxToeContactErrorMetres": 3.82792693100209e-06,
+    "maxBodyPenetrationMetres": 5.28844769735117e-06
+  },
+  "visualReview": "Crawl Bwd: all 76 native frames; all 76 Blender/app front/side captures. Crouch: all 61 Blender/app front/side captures. Other clips numerically compared at every frame, not manually reviewed in the GUI.",
+  "existingTestSuitesRun": false,
+  "limitations": "Floor acceptance is checked across all stored frames. All 591 repaired frames were re-exported and checked through the actual app gallery/frame controls; the previously accepted 240 exports were retained. Free-space clips have a measured constant placement offset.",
+  "floorRepair": {
+    "rig": "makehuman-ual65-v2",
+    "toolVersion": 3,
+    "manualFrameEdits": 0,
+    "animationNameExceptions": 0,
+    "repairedActions": 14,
+    "repairedFrames": 591,
+    "repairFailures": 0,
+    "catalogActions": 254,
+    "remainingFloorExclusions": 0,
+    "galleryEntries": 254,
+    "appVerificationMethod": "Actual editor gallery and frame controls, every repaired frame",
+    "appComparedFrames": 591,
+    "appPass": true,
+    "maxima": {
+      "maxBodyPenetrationMetres": 3.82792693100209e-06,
+      "maxToeContactErrorMetres": 3.82792693100209e-06,
+      "maxFootClearanceErrorMetres": 1.963056000764407e-05,
+      "maxRootProjectionErrorMetres": 6.221414814988613e-07,
+      "maxIndependentSourceBoneErrorMetres": 3.207936789852208e-05,
+      "maxIndependentSourceRotationErrorDegrees": 0.0056822722712550075,
+      "maxVertexMetres": 2.1412041184231174e-06,
+      "maxBoneMetres": 1.8485450197075079e-06,
+      "maxRotationDegrees": 7.87325596531904e-05
+    },
+    "existingTestSuitesRun": false,
+    "placement": "Ground support is inferred from source stability/pelvis measurements. Free-space clips use one fixed clip-level clearance translation; original vertical motion and articulation are retained. No per-frame grounding or recentering.",
+    "nativeVerification": "Rebuilt desktop gallery showed 254 clips; Slide Start frames 0 and 8 inspected in the native app. Cached CEF assets were backed up and refreshed during verification."
+  },
+  "galleryEntries": 254
+}

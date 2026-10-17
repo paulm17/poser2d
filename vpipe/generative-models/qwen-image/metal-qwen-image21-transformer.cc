@@ -1,3 +1,4 @@
+#include "generative-models/qwen-image/qwen-image21-control.h"
 #include "generative-models/qwen-image/metal-qwen-image21-transformer.h"
 
 #include "common/flex-data.h"
@@ -513,9 +514,9 @@ MetalQwenImage21Transformer::fp8_dense_(ComputeEncoder& enc, const QWeight& w,
 
 bool
 MetalQwenImage21Transformer::load_block_(WeightSet& ws, int L, Block& b,
-                                         Retain r)
+                                         Retain r, const std::string& prefix)
 {
-  const std::string p = block_pre_(L);
+  const std::string p = prefix.empty() ? block_pre_(L) : prefix;
   b.qw = load_qw_(ws, p + "attn.to_q", r);
   b.kw = load_qw_(ws, p + "attn.to_k", r);
   b.vw = load_qw_(ws, p + "attn.to_v", r);
@@ -532,6 +533,59 @@ MetalQwenImage21Transformer::load_block_(WeightSet& ws, int L, Block& b,
   return !b.qw.empty() && !b.kw.empty() && !b.vw.empty() && !b.ow.empty() &&
          !b.nq.empty() && !b.nk.empty() && !b.gate_w.empty() &&
          !b.proj_w.empty() && !b.out_w.empty();
+}
+
+bool
+MetalQwenImage21Transformer::validate_controlnet(const WeightSet& ws, const Config& cfg, std::string* err)
+{
+  auto shape = [&](const std::string& name, std::vector<std::int64_t> dims) {
+    const auto* info = ws.src().info(name);
+    if (!info || info->shape != dims || (info->dtype != "BF16" && info->dtype != "F16" && info->dtype != "F32")) {
+      if (err) { *err = "Union ControlNet: incompatible tensor " + name; }
+      return false;
+    }
+    return true;
+  };
+  const int H = cfg.hidden, F = H * cfg.mlp_ratio;
+  if (cfg.n_layers != 32 || cfg.in_channels != 64 || cfg.out_channels != 64) {
+    if (err) { *err = "Union ControlNet requires a 32-block Qwen Image 2.1 model"; }
+    return false;
+  }
+  if (!shape("control_img_in.weight", {H, 129}) || !shape("control_img_in.bias", {H})) { return false; }
+  for (int i = 0; i < 16; ++i) {
+    const std::string p = "control_blocks." + std::to_string(i) + ".";
+    for (const char* k : {"attn.to_q", "attn.to_k", "attn.to_v", "attn.to_out.0", "after_proj"}) {
+      if (!shape(p + k + ".weight", {H, H})) { return false; }
+    }
+    for (const char* k : {"attn.norm_q.weight", "attn.norm_k.weight"}) {
+      if (!shape(p + k, {cfg.head_dim})) { return false; }
+    }
+    for (const char* k : {"img_mlp.gate_layer.weight", "img_mlp.proj.weight"}) {
+      if (!shape(p + k, {F, H})) { return false; }
+    }
+    if (!shape(p + "img_mlp.out.weight", {H, F}) || !shape(p + "after_proj.bias", {H})) { return false; }
+    if (i == 0 && (!shape(p + "before_proj.weight", {H, H}) || !shape(p + "before_proj.bias", {H}))) { return false; }
+  }
+  if (ws.src().has("control_blocks.16.attn.to_q.weight")) {
+    if (err) { *err = "Union ControlNet requires exactly 16 control blocks"; }
+    return false;
+  }
+  return true;
+}
+
+bool
+MetalQwenImage21Transformer::load_controlnet(std::shared_ptr<WeightSet> ws, std::string* err)
+{
+  if (!ws || !validate_controlnet(*ws, _cfg, err)) { return false; }
+  _fn_control_add = _lib_elt.function("qwen_union_add_f16");
+  _control_in = load_qw_(*ws, "control_img_in", Retain::Cached);
+  _control_bias = to_elt_(*ws, "control_img_in.bias", Retain::Cached);
+  if (_control_in.empty() || _control_bias.empty() || !_fn_control_add.valid()) {
+    if (err) { *err = "Union ControlNet: input projection or Metal kernel did not load"; }
+    return false;
+  }
+  _control_ws = std::move(ws);
+  return true;
 }
 
 bool
@@ -1148,6 +1202,12 @@ MetalQwenImage21Transformer::forward(const Request& req, std::string* err)
   if (JT <= 0 || IMG <= 0 || NH * Hd != H) {
     return fail("qwen-image-2.1 forward: degenerate geometry");
   }
+  const bool control_on = req.control != nullptr && req.control_scale != 0.0f;
+  if (!std::isfinite(req.control_scale) || req.control_scale < 0.0f) { return fail("Union ControlNet: invalid strength"); }
+  if (control_on && (!_control_ws || req.control->byte_size() != (std::size_t)IMG * 129 * 2 ||
+                     req.kv_mode != KvMode::kOff || req.train != nullptr)) {
+    return fail("Union ControlNet: missing weights, invalid input, or unsupported cache/training request");
+  }
   const bool kv_fill = req.kv_mode == KvMode::kFill;
   const bool kv_use = req.kv_mode == KvMode::kCached;
   if ((kv_fill || kv_use) && req.kv == nullptr) {
@@ -1437,6 +1497,14 @@ MetalQwenImage21Transformer::forward(const Request& req, std::string* err)
                  {256, 1, 1});
   };
 
+  auto control_add = [&](const SharedBuffer& a, const SharedBuffer& b,
+                         const SharedBuffer& bias, const SharedBuffer& out, float scale, int rows) {
+    enc.set_function(_fn_control_add);
+    enc.set_buffer(0, a); enc.set_buffer(1, b); enc.set_buffer(2, bias); enc.set_buffer(3, out);
+    enc.set_constant(4, H); enc.set_constant(5, rows * H); enc.set_constant(6, scale);
+    enc.dispatch({(unsigned)(rows * H), 1, 1}, {256, 1, 1});
+  };
+
   // ---- runtime LoRA scratch -----------------------------------------
   // [rows, rank] per slot, rows the WIDEST adapted GEMM this forward
   // runs: the joint stream, the image rows, the modulation rows, and
@@ -1547,6 +1615,33 @@ MetalQwenImage21Transformer::forward(const Request& req, std::string* err)
   trace("mod", modb, (std::size_t)MOD_ROWS * 4 * H);
   trace("temb", temb, (std::size_t)MOD_ROWS * H);
 
+  SharedBuffer base_joint;
+  std::vector<SharedBuffer> control_skips;
+  if (control_on) {
+    base_joint = buf((std::size_t)ROWS * H);
+    SharedBuffer features = buf((std::size_t)lay.target_len * H);
+    SharedBuffer cj = buf((std::size_t)ROWS * H);
+    if (base_joint.empty() || features.empty() || cj.empty()) { return fail("Union ControlNet: allocation failed"); }
+    std::memset(cj.contents(), 0, cj.byte_size());
+    copy_rows(jh, 0, base_joint, 0, ROWS, H, H, H);
+    // Keep reference rows zero AFTER the biased input projection, as in ComfyUI.
+    lin(*req.control, (std::size_t)(IMG - lay.target_len) * 129,
+        _control_in, features, 0, lay.target_len, H, 129);
+    control_add(features, features, _control_bias, features, 0.0f, lay.target_len);
+    copy_rows(features, 0, cj, (std::size_t)lay.prefix_len * H,
+              lay.target_len, H, H, H);
+    auto before = load_qw_(*_control_ws, "control_blocks.0.before_proj", Retain::Cached);
+    auto bias = to_elt_(*_control_ws, "control_blocks.0.before_proj.bias", Retain::Cached);
+    if (before.empty() || bias.empty()) { return fail("Union ControlNet: merge projection did not load"); }
+    lin(cj, 0, before, tmp, 0, ROWS, H, H);
+    control_add(base_joint, tmp, bias, jh, 1.0f, ROWS);
+    enc.end();
+    std::string ge;
+    if (!stream.commit().wait_ok(&ge)) { return fail("Union ControlNet: " + ge); }
+    stream = mc->make_command_stream(); enc = stream.begin_compute();
+    control_skips.resize(16);
+  }
+
   // ---- blocks --------------------------------------------------------
   //
   // Freeing or reading a slot while its reader thread is still writing
@@ -1618,10 +1713,13 @@ MetalQwenImage21Transformer::forward(const Request& req, std::string* err)
   const int A_BK = nax ? 32 : 16;
   const float ascale = 1.0f / std::sqrt((float)Hd);
 
-  for (int L = 0; L < _cfg.n_layers; ++L) {
+  for (int pass = control_on ? -16 : 0; pass < _cfg.n_layers; ++pass) {
+    const bool control_pass = pass < 0;
+    const int L = control_pass ? pass + 16 : pass;
+    if (control_on && pass == 0) { copy_rows(base_joint, 0, jh, 0, ROWS, H, H, H); }
     // This block's adapters, per projection -- the same index a
     // streamed, promoted or held block is looked up by.
-    auto LB = [&](lora::Factors BlockLora::* w) { return lora_blk_(L, w); };
+    auto LB = [&](lora::Factors BlockLora::* w) { return control_pass ? lora::Stack{} : lora_blk_(L, w); };
     // COOPERATIVE STOP, checked every block rather than only on the
     // streamed tail, so a slow high-resolution step answers within
     // roughly one block on both paths. It returns EMPTY WITHOUT AN
@@ -1640,9 +1738,16 @@ MetalQwenImage21Transformer::forward(const Request& req, std::string* err)
     // an unfilled entry reads as empty, so this one test covers both.
     const bool held = L < (int)_blocks.size() &&
                       !_blocks[(std::size_t)L].qw.empty();
-    const bool streaming = _stream_blocks && !held;
+    const bool streaming = !control_pass && _stream_blocks && !held;
     const Block* b = nullptr;
-    if (!streaming) {
+    Block control_block;
+    if (control_pass) {
+      if (!load_block_(*_control_ws, L, control_block, Retain::Streamed,
+                       "control_blocks." + std::to_string(L) + ".")) {
+        return fail("Union ControlNet: control block did not load");
+      }
+      b = &control_block;
+    } else if (!streaming) {
       b = &_blocks[(std::size_t)L];
     } else {
       b = _slots.acquire(L);
@@ -1660,7 +1765,7 @@ MetalQwenImage21Transformer::forward(const Request& req, std::string* err)
     // tier learns whether the split pays on this box and geometry.
     AneFeedForward::Plan ane_plan = AneFeedForward::Plan::kGpu;
     const TrainKeep* keep = tap != nullptr ? tap->keep : nullptr;
-    if (keep == nullptr && _cfg.ane_ffn && ane_setup_(ROWS) &&
+    if (!control_pass && keep == nullptr && _cfg.ane_ffn && ane_setup_(ROWS) &&
         ane_eligible_(L, *b)) {
       ane_plan = _ane->plan_block();
     }
@@ -1670,7 +1775,7 @@ MetalQwenImage21Transformer::forward(const Request& req, std::string* err)
     // box and geometry where one pays and the other does not keeps the
     // one that does.
     AneFeedForward::Plan qkv_plan = AneFeedForward::Plan::kGpu;
-    if (_cfg.ane_qkv && ane_qkv_setup_(ROWS) && ane_qkv_eligible_(L, *b)) {
+    if (!control_pass && _cfg.ane_qkv && ane_qkv_setup_(ROWS) && ane_qkv_eligible_(L, *b)) {
       qkv_plan = _ane_qkv->plan_block();
     }
     const bool qkv_split = qkv_plan == AneFeedForward::Plan::kSplit;
@@ -1704,7 +1809,7 @@ MetalQwenImage21Transformer::forward(const Request& req, std::string* err)
     // The blocks before this one, credited when the buffer now open
     // retires -- the same checkpoint the progress report below rides.
     _flops.flush(stream);
-    if (_block_progress) {
+    if (!control_pass && _block_progress) {
       // `done` of `total`, so L -- the blocks finished BEFORE this one.
       // Every other DiT here reports L, and the helper's contract wants
       // a report that lags the truth and never leads it. L+1 read as
@@ -2179,6 +2284,24 @@ MetalQwenImage21Transformer::forward(const Request& req, std::string* err)
       gated(jh, (std::size_t)bd.start * H,
             modb, (std::size_t)bd.mod_row * 4 * H + 3 * H,
             tmp, (std::size_t)bd.start * H, bd.rows);
+    }
+    if (control_pass) {
+      auto after = load_qw_(*_control_ws, "control_blocks." + std::to_string(L) + ".after_proj", Retain::Streamed);
+      auto bias = to_elt_(*_control_ws, "control_blocks." + std::to_string(L) + ".after_proj.bias", Retain::Streamed);
+      auto& skip = control_skips[(std::size_t)L];
+      skip = buf((std::size_t)ROWS * H);
+      if (after.empty() || bias.empty() || skip.empty()) { return fail("Union ControlNet: skip allocation failed"); }
+      lin(jh, 0, after, skip, 0, ROWS, H, H);
+      control_add(skip, skip, bias, skip, 0.0f, ROWS);
+      enc.end();
+      std::string ge;
+      if (!stream.commit().wait_ok(&ge)) { return fail("Union ControlNet: " + ge); }
+      stream = mc->make_command_stream(); enc = stream.begin_compute();
+      continue;
+    }
+    const int control_skip = qi21::control_skip_for_layer(L);
+    if (control_on && control_skip >= 0) {
+      control_add(jh, control_skips[(std::size_t)control_skip], zero, jh, req.control_scale, ROWS);
     }
     // ---- the streaming boundary --------------------------------------
     //

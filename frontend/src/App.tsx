@@ -134,12 +134,21 @@ export function App() {
   const [splatSubmitting, setSplatSubmitting] = useState<ReadonlySet<string>>(new Set());
   const splatSubmittingRef = useRef(new Set<string>());
   useEffect(() => setPreviewMode("image"), [active, selected]);
-  const [view, setView] = useState<"studio" | "stage">("studio");
+  const [view, setView] = useState<"studio" | "stage" | "stage2" | "mannequin" | "mannequin2">("studio");
   const stageRef = useRef<StageEditorHandle>(null);
+  const mannequin2Ref = useRef<StageEditorHandle>(null);
+  const [mannequin2Opened, setMannequin2Opened] = useState(false);
+  const [mannequin2Busy, setMannequin2Busy] = useState(false);
+  const mannequinRef = useRef<StageEditorHandle>(null);
+  const [mannequinOpened, setMannequinOpened] = useState(false);
+  const [mannequinBusy, setMannequinBusy] = useState(false);
+  const stage2Ref = useRef<StageEditorHandle>(null);
+  const [stage2Opened, setStage2Opened] = useState(false);
+  const [stage2Busy, setStage2Busy] = useState(false);
   const [stageOpened, setStageOpened] = useState(false);
   const [stageBusy, setStageBusy] = useState(false);
   const [sessionBusy, setSessionBusy] = useState(false);
-  const controlsBusy = stageBusy || sessionBusy;
+  const controlsBusy = stageBusy || stage2Busy || mannequinBusy || mannequin2Busy || sessionBusy;
   const [dialog, setDialog] = useState<
     "gallery" | "new" | "duplicate" | "delete" | null
   >(null);
@@ -348,7 +357,12 @@ export function App() {
     const id = crypto.randomUUID();
     setSessionBusy(true);
     try {
-      if (dialog === 'duplicate') await stageRef.current?.duplicate(active, id);
+      if (dialog === 'duplicate') {
+        await stageRef.current?.duplicate(active, id);
+        await stage2Ref.current?.duplicate(active, id);
+        await mannequinRef.current?.duplicate(active, id);
+        await mannequin2Ref.current?.duplicate(active, id);
+      }
     } catch (err) {
       setDialogError(err instanceof Error ? err.message : String(err)); setSessionBusy(false); return;
     }
@@ -374,6 +388,9 @@ export function App() {
   function deleteSession() {
     if (controlsBusy) return;
     stageRef.current?.forget(active);
+    stage2Ref.current?.forget(active);
+    mannequinRef.current?.forget(active);
+    mannequin2Ref.current?.forget(active);
     setImages(prev => { const next = { ...prev }; delete next[active]; return next; });
     setTakes(prev => { const next = { ...prev }; delete next[active]; return next; });
     const remaining = sessions.filter((s) => s.id !== active);
@@ -577,7 +594,7 @@ export function App() {
     <div id="app">
       <header className="topbar">
         <div className="brand">
-          qwen image <span>{view === "stage" ? "stage" : "studio"}</span>
+          qwen image <span>{view === "mannequin2" ? "MakeHuman scene 2" : view === "mannequin" ? "MakeHuman scene" : view === "stage2" ? "stage 2" : view === "stage" ? "stage" : "studio"}</span>
         </div>
         <div className="row">
           <select
@@ -615,9 +632,24 @@ export function App() {
           <button
             className="btn stage-switch"
             disabled={controlsBusy}
-            onClick={() => { setStageOpened(true); setView(view === "studio" ? "stage" : "studio"); }}
+            onClick={() => { setStageOpened(true); setView(view === "stage" ? "studio" : "stage"); }}
           >
-            {view === "studio" ? "Stage scene" : "Back to studio"}
+            {view === "stage" ? "Back to studio" : "Stage scene"}
+          </button>
+          <button
+            className="btn stage-switch"
+            disabled={controlsBusy}
+            onClick={() => { setStage2Opened(true); setView(view === "stage2" ? "studio" : "stage2"); }}
+          >
+            {view === "stage2" ? "Back to studio" : "Stage scene 2"}
+          </button>
+          <button className="btn stage-switch" disabled={controlsBusy}
+            onClick={() => { setMannequinOpened(true); setView(view === "mannequin" ? "studio" : "mannequin"); }}>
+            {view === "mannequin" ? "Back to studio" : "MakeHuman scene"}
+          </button>
+          <button className="btn stage-switch" disabled={controlsBusy}
+            onClick={() => { setMannequin2Opened(true); setView(view === "mannequin2" ? "studio" : "mannequin2"); }}>
+            {view === "mannequin2" ? "Back to studio" : "MakeHuman scene 2"}
           </button>
           {view === "studio" && (
             <>
@@ -634,6 +666,9 @@ export function App() {
         </div>
       </header>
       {stageOpened && <StageEditor ref={stageRef} sessionId={active} visible={view === 'stage'} onCapture={receiveScene} onBusy={setStageBusy} />}
+      {stage2Opened && <StageEditor ref={stage2Ref} variant={2} sessionId={active} visible={view === 'stage2'} onCapture={receiveScene} onBusy={setStage2Busy} />}
+      {mannequinOpened && <StageEditor ref={mannequinRef} variant="mannequin" sessionId={active} visible={view === 'mannequin'} onCapture={receiveScene} onBusy={setMannequinBusy} />}
+      {mannequin2Opened && <StageEditor ref={mannequin2Ref} variant="mannequin-2" sessionId={active} visible={view === 'mannequin2'} onCapture={receiveScene} onBusy={setMannequin2Busy} />}
       {view === 'studio' && (
         <div className="layout">
           <aside className="panel parameters" aria-label="Parameters">

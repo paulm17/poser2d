@@ -1315,3 +1315,5 @@ editorBridge = initEditorBridge({
     } else { window.dispatchEvent(new Event('resize')); animate(); }
   },
 });
+
+window.sceneBuilderEditor = {three:THREE,get stage(){return stage;},get selected(){return activeMannequin;},createScratch:createPoseScratch};

@@ -1,0 +1,240 @@
+{
+  "id": "qwen-user-testing-6dagu517",
+  "stages": [
+    {
+      "config": {
+        "hf_dir": "/Volumes/Data/Users/paul/.cache/huggingface/hub/vpipe-prepared/Qwen-Image-2.1-Turbo-8bit"
+      },
+      "id": "model-select",
+      "iports": [],
+      "type": "model-select"
+    },
+    {
+      "config": {
+        "text": "Draw character from image2"
+      },
+      "id": "text-prompt",
+      "iports": [],
+      "type": "text-prompt"
+    },
+    {
+      "config": {
+        "use_kv_cache": true,
+        "vl_long_edge": 0,
+        "vl_max_pixels": 1048576,
+        "vl_min_pixels": 1024,
+        "vl_pixel_budget": 1048576,
+        "lora2": "/Volumes/Data/Users/paul/.cache/huggingface/hub/models--MIUProject--VNCCS_PoseStudio_QI2.1/snapshots/9857b8a256655da446772a3f1f2b033e33181a6d/VNCCS_QI2_PoseStudioV2.safetensors",
+        "lora2_scale": 1.0
+      },
+      "id": "model-config",
+      "iports": [],
+      "type": "qwen-image-21-model-config"
+    },
+    {
+      "config": {
+        "url": "/var/folders/6k/_60tx6rs14vfd0j79190lt700000gn/T/qwen-user-testing-6dagu517/inputs/reference.png"
+      },
+      "id": "load-ref-0",
+      "iports": [],
+      "type": "load-image"
+    },
+    {
+      "config": {
+        "algorithm": "bilinear",
+        "fit": "stretch",
+        "height": 1024,
+        "width": 1024
+      },
+      "id": "ref-resample-0",
+      "iports": [
+        {
+          "src": "load-ref-0",
+          "oport": 0
+        }
+      ],
+      "type": "image-resample"
+    },
+    {
+      "config": {
+        "url": "/var/folders/6k/_60tx6rs14vfd0j79190lt700000gn/T/qwen-user-testing-6dagu517/inputs/avatar.png"
+      },
+      "id": "load-ref-1",
+      "iports": [],
+      "type": "load-image"
+    },
+    {
+      "config": {
+        "algorithm": "bilinear",
+        "fit": "stretch",
+        "height": 1024,
+        "width": 1024
+      },
+      "id": "ref-resample-1",
+      "iports": [
+        {
+          "src": "load-ref-1",
+          "oport": 0
+        }
+      ],
+      "type": "image-resample"
+    },
+    {
+      "config": {},
+      "id": "ref-list",
+      "iports": [
+        {
+          "src": "ref-resample-0",
+          "oport": 0
+        },
+        {
+          "src": "ref-resample-1",
+          "oport": 0
+        }
+      ],
+      "type": "tensor-list"
+    },
+    {
+      "config": {
+        "unload_when_idle": "always"
+      },
+      "id": "vae-encode",
+      "iports": [
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": "model-select"
+        },
+        {
+          "oport": 0,
+          "src": "ref-list"
+        }
+      ],
+      "type": "vae-encode"
+    },
+    {
+      "config": {
+        "grounded_negative": false,
+        "unload_when_idle": "always"
+      },
+      "id": "diffusion-conditioner",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "text-prompt"
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": "model-select"
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": "model-config"
+        },
+        {
+          "oport": 0,
+          "src": "ref-list"
+        }
+      ],
+      "type": "diffusion-conditioner"
+    },
+    {
+      "config": {
+        "guidance_scale": 1.0,
+        "height": 1024,
+        "seed": 42,
+        "steps": 8,
+        "unload_when_idle": "always",
+        "width": 1024
+      },
+      "id": "generate-image",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "diffusion-conditioner"
+        },
+        {
+          "src": "",
+          "oport": 0
+        },
+        {
+          "oport": 0,
+          "src": "model-select"
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": "model-config"
+        },
+        {
+          "oport": 1,
+          "src": "vae-encode"
+        }
+      ],
+      "type": "generate-image"
+    },
+    {
+      "config": {
+        "unload_when_idle": "always"
+      },
+      "id": "vae-decode",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "generate-image"
+        },
+        {
+          "oport": 0,
+          "src": "model-select"
+        }
+      ],
+      "type": "vae-decode"
+    },
+    {
+      "config": {
+        "compression": 6,
+        "format": "png",
+        "path": "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/vpipe/1024-lying-pose.png"
+      },
+      "id": "save-image",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "vae-decode"
+        }
+      ],
+      "type": "save-image"
+    }
+  ],
+  "subpipelines": []
+}

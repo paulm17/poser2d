@@ -64,3 +64,16 @@ test('AnyAngle cached path is filled and custom selection is preserved', () => {
  const custom = {...defaults,anyangle_enabled:true,anyangle_lora:'/custom/angle.safetensors',anyangle_strength:0.8};
  assert.deepEqual(mergePaths(custom, installed), custom);
 });
+
+ test('upgrades bundled PoseStudio V1 paths to V2 while preserving custom adapters',()=>{
+ const next={...defaults,pose_lora:'/cache/new/VNCCS_QI2_PoseStudioV2.safetensors'};
+ for(const version of ['V1','V1.1']){
+  const old={...defaults,pose_lora:`/cache/old/VNCCS_QI2_PoseStudio${version}.safetensors`,pose_enabled:true,pose_strength:0.7};
+  const merged=mergePaths(old,next);
+  assert.equal(merged.pose_lora,next.pose_lora);
+  assert.equal(merged.pose_enabled,true);
+  assert.equal(merged.pose_strength,0.7);
+ }
+ const custom={...defaults,pose_lora:'/custom/pose.safetensors'};
+ assert.equal(mergePaths(custom,next).pose_lora,custom.pose_lora);
+});

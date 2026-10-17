@@ -5101,3 +5101,16 @@ kernel void swiglu_split_gate_first_f16(
   out[gid] = VPIPE_ELT(v * (g / (1.0f + exp(-g))));
 }
 
+
+// Union projections carry a broadcast bias; skips add over the joint stream.
+kernel void qwen_union_add_f16(
+    const device VPIPE_ELT* a [[buffer(0)]],
+    const device VPIPE_ELT* b [[buffer(1)]],
+    const device VPIPE_ELT* bias [[buffer(2)]],
+    device VPIPE_ELT* out [[buffer(3)]],
+    constant int& width [[buffer(4)]],
+    constant int& count [[buffer(5)]],
+    constant float& scale [[buffer(6)]],
+    uint i [[thread_position_in_grid]]) {
+  if ((int)i < count) { out[i] = VPIPE_ELT(float(a[i]) + scale * float(b[i]) + float(bias[i % width])); }
+}

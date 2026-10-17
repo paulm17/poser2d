@@ -1,0 +1,1129 @@
+{
+  "floorSafetyVersion": 0,
+  "maxIndependentSourceBoneErrorMetres": 0,
+  "maxIndependentSourceRotationErrorDegrees": 0,
+  "maxRootProjectionErrorMetres": 0,
+  "maxToeContactErrorMetres": 7.204028074064145e-7,
+  "maxBodyPenetrationMetres": 6.609247495507897e-7,
+  "renderedVertices": 13886,
+  "footWhere": {
+    "frame": 1,
+    "side": "l"
+  },
+  "maxFootClearanceErrorMetres": 8.296160740051128e-7,
+  "frames": 39,
+  "bones": 65,
+  "vertices": 19158,
+  "maxVertexMetres": 9.91333021387315e-7,
+  "maxBoneMetres": 5.930173578809525e-7,
+  "maxRotationDegrees": 0.0000542667018870354,
+  "vertexWhere": {
+    "frame": 32,
+    "vertex": 2325
+  },
+  "boneWhere": {
+    "frame": 2,
+    "bone": "index_04_leaf_r"
+  },
+  "thresholds": {
+    "metres": 0.0001,
+    "degrees": 0.01,
+    "footClearanceMetres": 0.0001,
+    "sourceContactToleranceMetres": 0.002
+  },
+  "pass": true,
+  "records": [
+    {
+      "frame": 0,
+      "maxVertexMetres": 7.387747467582784e-7,
+      "bodyMinimumMetres": 0.48691831219927706,
+      "groundPolicy": "root-clearance",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": 0.48691831219927706,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.543098509311676,
+          "expectedMetres": 0.5048718313271864,
+          "actualMetres": 0.5048715836218146,
+          "errorMetres": 2.477053717697686e-7,
+          "toeMinimumMetres": 0.5048715836218146,
+          "sourceToeMinimumMetres": 0.543098509311676,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.5237861275672913,
+          "expectedMetres": 0.48691877608692297,
+          "actualMetres": 0.48691831219927706,
+          "errorMetres": 4.638876459073238e-7,
+          "toeMinimumMetres": 0.48691831219927706,
+          "sourceToeMinimumMetres": 0.5237861275672913,
+          "toeContact": false
+        }
+      }
+    },
+    {
+      "frame": 1,
+      "maxVertexMetres": 6.987085374010634e-7,
+      "bodyMinimumMetres": 0.31403448643695964,
+      "groundPolicy": "root-clearance",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": 0.31403448643695964,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.36047452688217163,
+          "expectedMetres": 0.33510206972297135,
+          "actualMetres": 0.33510124010689735,
+          "errorMetres": 8.296160740051128e-7,
+          "toeMinimumMetres": 0.33510124010689735,
+          "sourceToeMinimumMetres": 0.36047452688217163,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.3378120958805084,
+          "expectedMetres": 0.31403476269493913,
+          "actualMetres": 0.31403448643695964,
+          "errorMetres": 2.7625797949237807e-7,
+          "toeMinimumMetres": 0.31403448643695964,
+          "sourceToeMinimumMetres": 0.3378120958805084,
+          "toeContact": false
+        }
+      }
+    },
+    {
+      "frame": 2,
+      "maxVertexMetres": 7.072251004051903e-7,
+      "bodyMinimumMetres": 0.08558007140075996,
+      "groundPolicy": "root-clearance",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": 0.08558007140075996,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.10679405182600021,
+          "expectedMetres": 0.09927721692438095,
+          "actualMetres": 0.09927720642307497,
+          "errorMetres": 1.0501305977572706e-8,
+          "toeMinimumMetres": 0.09927720642307497,
+          "sourceToeMinimumMetres": 0.10679405182600021,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.09206006675958633,
+          "expectedMetres": 0.08558030210011507,
+          "actualMetres": 0.08558007140075996,
+          "errorMetres": 2.3069935510544592e-7,
+          "toeMinimumMetres": 0.08558007140075996,
+          "sourceToeMinimumMetres": 0.09206006675958633,
+          "toeContact": false
+        }
+      }
+    },
+    {
+      "frame": 3,
+      "maxVertexMetres": 6.48929033191301e-7,
+      "bodyMinimumMetres": -4.846845704890856e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -4.846845704890856e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": -0.00014842268137726933,
+          "expectedMetres": 0,
+          "actualMetres": -4.846845704890856e-7,
+          "errorMetres": 4.846845704890856e-7,
+          "toeMinimumMetres": -4.846845704890856e-7,
+          "sourceToeMinimumMetres": -0.00014842268137726933,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.00044022081419825554,
+          "expectedMetres": 0,
+          "actualMetres": -1.3028818873599135e-7,
+          "errorMetres": 1.3028818873599135e-7,
+          "toeMinimumMetres": -1.3028818873599135e-7,
+          "sourceToeMinimumMetres": 0.00044022081419825554,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 4,
+      "maxVertexMetres": 6.713020966181524e-7,
+      "bodyMinimumMetres": -1.4343502947877784e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -1.4343502947877784e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.00018039286078419536,
+          "expectedMetres": 0,
+          "actualMetres": -1.4343502947877784e-7,
+          "errorMetres": 1.4343502947877784e-7,
+          "toeMinimumMetres": -1.4343502947877784e-7,
+          "sourceToeMinimumMetres": 0.00018039286078419536,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.0004663707222789526,
+          "expectedMetres": 0,
+          "actualMetres": -7.35039378790131e-8,
+          "errorMetres": 7.35039378790131e-8,
+          "toeMinimumMetres": -7.35039378790131e-8,
+          "sourceToeMinimumMetres": 0.0004663707222789526,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 5,
+      "maxVertexMetres": 5.952855553894044e-7,
+      "bodyMinimumMetres": -6.052675417603237e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -6.052675417603237e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0008696750155650079,
+          "expectedMetres": 0,
+          "actualMetres": -6.052675417603237e-7,
+          "errorMetres": 6.052675417603237e-7,
+          "toeMinimumMetres": -6.052675417603237e-7,
+          "sourceToeMinimumMetres": 0.0008696750155650079,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.0005066889571025968,
+          "expectedMetres": 0,
+          "actualMetres": -2.3322832571823215e-7,
+          "errorMetres": 2.3322832571823215e-7,
+          "toeMinimumMetres": -2.3322832571823215e-7,
+          "sourceToeMinimumMetres": 0.0005066889571025968,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 6,
+      "maxVertexMetres": 5.655766047968947e-7,
+      "bodyMinimumMetres": -7.61433440465975e-8,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -7.61433440465975e-8,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.001692664809525013,
+          "expectedMetres": 0,
+          "actualMetres": -7.61433440465975e-8,
+          "errorMetres": 7.61433440465975e-8,
+          "toeMinimumMetres": -7.61433440465975e-8,
+          "sourceToeMinimumMetres": 0.001692664809525013,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.0005554044037126005,
+          "expectedMetres": 0,
+          "actualMetres": 6.9716934638502925e-9,
+          "errorMetres": 6.9716934638502925e-9,
+          "toeMinimumMetres": 6.9716934638502925e-9,
+          "sourceToeMinimumMetres": 0.0005554044037126005,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 7,
+      "maxVertexMetres": 5.751615160185765e-7,
+      "bodyMinimumMetres": -8.110457031147711e-8,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -8.110457031147711e-8,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.002391620771959424,
+          "expectedMetres": 0.0022232835080133674,
+          "actualMetres": 0.0022229486117444977,
+          "errorMetres": 3.348962688697228e-7,
+          "toeMinimumMetres": 0.0022229486117444977,
+          "sourceToeMinimumMetres": 0.002391620771959424,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.000597038131672889,
+          "expectedMetres": 0,
+          "actualMetres": -8.110457031147711e-8,
+          "errorMetres": 8.110457031147711e-8,
+          "toeMinimumMetres": -8.110457031147711e-8,
+          "sourceToeMinimumMetres": 0.000597038131672889,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 8,
+      "maxVertexMetres": 5.924953377439628e-7,
+      "bodyMinimumMetres": -7.139544235847117e-8,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -7.139544235847117e-8,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.002220237161964178,
+          "expectedMetres": 0.002063962950961152,
+          "actualMetres": 0.0020635306323008897,
+          "errorMetres": 4.323186602625366e-7,
+          "toeMinimumMetres": 0.0020635306323008897,
+          "sourceToeMinimumMetres": 0.002220237161964178,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.0006158913602121174,
+          "expectedMetres": 0,
+          "actualMetres": -7.139544235847117e-8,
+          "errorMetres": 7.139544235847117e-8,
+          "toeMinimumMetres": -7.139544235847117e-8,
+          "sourceToeMinimumMetres": 0.0006158913602121174,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 9,
+      "maxVertexMetres": 6.657402803283306e-7,
+      "bodyMinimumMetres": -1.285537328688663e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -1.285537328688663e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0022321923170238733,
+          "expectedMetres": 0.0020750766272561554,
+          "actualMetres": 0.0020751519810970898,
+          "errorMetres": 7.535384093440567e-8,
+          "toeMinimumMetres": 0.0020751519810970898,
+          "sourceToeMinimumMetres": 0.0022321923170238733,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.0005754485609941185,
+          "expectedMetres": 0,
+          "actualMetres": -1.285537328688663e-7,
+          "errorMetres": 1.285537328688663e-7,
+          "toeMinimumMetres": -1.285537328688663e-7,
+          "sourceToeMinimumMetres": 0.0005754485609941185,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 10,
+      "maxVertexMetres": 7.154406858998428e-7,
+      "bodyMinimumMetres": -2.926767103499095e-8,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -2.926767103499095e-8,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.002201019087806344,
+          "expectedMetres": 0.0020460975653482463,
+          "actualMetres": 0.0020457867695638336,
+          "errorMetres": 3.10795784412652e-7,
+          "toeMinimumMetres": 0.0020457867695638336,
+          "sourceToeMinimumMetres": 0.002201019087806344,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.0005757853505201638,
+          "expectedMetres": 0,
+          "actualMetres": -2.926767103499095e-8,
+          "errorMetres": 2.926767103499095e-8,
+          "toeMinimumMetres": -2.926767103499095e-8,
+          "sourceToeMinimumMetres": 0.0005757853505201638,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 11,
+      "maxVertexMetres": 5.72280557538548e-7,
+      "bodyMinimumMetres": -6.839028800567637e-8,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -6.839028800567637e-8,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.002269832184538245,
+          "expectedMetres": 0.0021100671649156647,
+          "actualMetres": 0.0021098429549172536,
+          "errorMetres": 2.2420999841107903e-7,
+          "toeMinimumMetres": 0.0021098429549172536,
+          "sourceToeMinimumMetres": 0.002269832184538245,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.0005469222087413073,
+          "expectedMetres": 0,
+          "actualMetres": -6.839028800567637e-8,
+          "errorMetres": 6.839028800567637e-8,
+          "toeMinimumMetres": -6.839028800567637e-8,
+          "sourceToeMinimumMetres": 0.0005469222087413073,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 12,
+      "maxVertexMetres": 7.517804798447792e-7,
+      "bodyMinimumMetres": -2.755464192216034e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -2.755464192216034e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.002342080697417259,
+          "expectedMetres": 0.002177230374503781,
+          "actualMetres": 0.002176509696980765,
+          "errorMetres": 7.2067752301605e-7,
+          "toeMinimumMetres": 0.002176509696980765,
+          "sourceToeMinimumMetres": 0.002342080697417259,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.0004731478984467685,
+          "expectedMetres": 0,
+          "actualMetres": -2.755464192216034e-7,
+          "errorMetres": 2.755464192216034e-7,
+          "toeMinimumMetres": -2.755464192216034e-7,
+          "sourceToeMinimumMetres": 0.0004731478984467685,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 13,
+      "maxVertexMetres": 7.313436900484962e-7,
+      "bodyMinimumMetres": -4.9150073146847495e-8,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -4.9150073146847495e-8,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.002365552354604006,
+          "expectedMetres": 0.0021990499493046317,
+          "actualMetres": 0.0021985737405174587,
+          "errorMetres": 4.7620878717300266e-7,
+          "toeMinimumMetres": 0.0021985737405174587,
+          "sourceToeMinimumMetres": 0.002365552354604006,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.00047630065819248557,
+          "expectedMetres": 0,
+          "actualMetres": -4.9150073146847495e-8,
+          "errorMetres": 4.9150073146847495e-8,
+          "toeMinimumMetres": -4.9150073146847495e-8,
+          "sourceToeMinimumMetres": 0.00047630065819248557,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 14,
+      "maxVertexMetres": 8.229219502064154e-7,
+      "bodyMinimumMetres": -3.8367518411484836e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -3.8367518411484836e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0024038085248321295,
+          "expectedMetres": 0.002234613410429054,
+          "actualMetres": 0.002233937083385564,
+          "errorMetres": 6.763270434897474e-7,
+          "toeMinimumMetres": 0.002233937083385564,
+          "sourceToeMinimumMetres": 0.0024038085248321295,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.00041489439900033176,
+          "expectedMetres": 0,
+          "actualMetres": -3.8367518411484836e-7,
+          "errorMetres": 3.8367518411484836e-7,
+          "toeMinimumMetres": -3.8367518411484836e-7,
+          "sourceToeMinimumMetres": 0.00041489439900033176,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 15,
+      "maxVertexMetres": 9.388506336948448e-7,
+      "bodyMinimumMetres": -1.392069206955504e-8,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -1.392069206955504e-8,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0022830443922430277,
+          "expectedMetres": 0.0021223494146096343,
+          "actualMetres": 0.0021221529120059625,
+          "errorMetres": 1.965026036718394e-7,
+          "toeMinimumMetres": 0.0021221529120059625,
+          "sourceToeMinimumMetres": 0.0022830443922430277,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.00043988553807139397,
+          "expectedMetres": 0,
+          "actualMetres": -1.392069206955504e-8,
+          "errorMetres": 1.392069206955504e-8,
+          "toeMinimumMetres": -1.392069206955504e-8,
+          "sourceToeMinimumMetres": 0.00043988553807139397,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 16,
+      "maxVertexMetres": 5.670359192490315e-7,
+      "bodyMinimumMetres": -2.4405068442881483e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -2.4405068442881483e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.002172604901716113,
+          "expectedMetres": 0.002019683347814805,
+          "actualMetres": 0.002019019753113499,
+          "errorMetres": 6.635947013061347e-7,
+          "toeMinimumMetres": 0.002019019753113499,
+          "sourceToeMinimumMetres": 0.002172604901716113,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.0004206332378089428,
+          "expectedMetres": 0,
+          "actualMetres": -2.4405068442881483e-7,
+          "errorMetres": 2.4405068442881483e-7,
+          "toeMinimumMetres": -2.4405068442881483e-7,
+          "sourceToeMinimumMetres": 0.0004206332378089428,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 17,
+      "maxVertexMetres": 8.175033001516641e-7,
+      "bodyMinimumMetres": -1.3662416538037792e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -1.3662416538037792e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0020863369572907686,
+          "expectedMetres": 0.0019394874821659445,
+          "actualMetres": 0.0019386959475716434,
+          "errorMetres": 7.915345943011048e-7,
+          "toeMinimumMetres": 0.0019386959475716434,
+          "sourceToeMinimumMetres": 0.0020863369572907686,
+          "toeContact": false
+        },
+        "r": {
+          "sourceMetres": 0.0004178839735686779,
+          "expectedMetres": 0,
+          "actualMetres": -1.3662416538037792e-7,
+          "errorMetres": 1.3662416538037792e-7,
+          "toeMinimumMetres": -1.3662416538037792e-7,
+          "sourceToeMinimumMetres": 0.0004178839735686779,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 18,
+      "maxVertexMetres": 7.004396456637528e-7,
+      "bodyMinimumMetres": -5.061895979388553e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -5.061895979388553e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0019623383414000273,
+          "expectedMetres": 0,
+          "actualMetres": -5.061895979388553e-7,
+          "errorMetres": 5.061895979388553e-7,
+          "toeMinimumMetres": -5.061895979388553e-7,
+          "sourceToeMinimumMetres": 0.0019623383414000273,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.00044373003765940666,
+          "expectedMetres": 0,
+          "actualMetres": -1.0059407287710265e-7,
+          "errorMetres": 1.0059407287710265e-7,
+          "toeMinimumMetres": -1.0059407287710265e-7,
+          "sourceToeMinimumMetres": 0.00044373003765940666,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 19,
+      "maxVertexMetres": 8.095683244539422e-7,
+      "bodyMinimumMetres": 1.0343683759864164e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": 1.0343683759864164e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0018382137641310692,
+          "expectedMetres": 0,
+          "actualMetres": 1.5897446883558763e-7,
+          "errorMetres": 1.5897446883558763e-7,
+          "toeMinimumMetres": 1.5897446883558763e-7,
+          "sourceToeMinimumMetres": 0.0018382137641310692,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.0004414948634803295,
+          "expectedMetres": 0,
+          "actualMetres": 1.0343683759864164e-7,
+          "errorMetres": 1.0343683759864164e-7,
+          "toeMinimumMetres": 1.0343683759864164e-7,
+          "sourceToeMinimumMetres": 0.0004414948634803295,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 20,
+      "maxVertexMetres": 7.079752008097698e-7,
+      "bodyMinimumMetres": -2.0185226543359414e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -2.0185226543359414e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0017109039472416043,
+          "expectedMetres": 0,
+          "actualMetres": 8.159733234924804e-8,
+          "errorMetres": 8.159733234924804e-8,
+          "toeMinimumMetres": 8.159733234924804e-8,
+          "sourceToeMinimumMetres": 0.0017109039472416043,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.0004442962817847729,
+          "expectedMetres": 0,
+          "actualMetres": -2.0185226543359414e-7,
+          "errorMetres": 2.0185226543359414e-7,
+          "toeMinimumMetres": -2.0185226543359414e-7,
+          "sourceToeMinimumMetres": 0.0004442962817847729,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 21,
+      "maxVertexMetres": 8.195053554925981e-7,
+      "bodyMinimumMetres": -3.7966153016572024e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -3.7966153016572024e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0015803398564457893,
+          "expectedMetres": 0,
+          "actualMetres": -3.7966153016572024e-7,
+          "errorMetres": 3.7966153016572024e-7,
+          "toeMinimumMetres": -3.7966153016572024e-7,
+          "sourceToeMinimumMetres": 0.0015803398564457893,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.00044879643246531487,
+          "expectedMetres": 0,
+          "actualMetres": -3.089024025720172e-7,
+          "errorMetres": 3.089024025720172e-7,
+          "toeMinimumMetres": -3.089024025720172e-7,
+          "sourceToeMinimumMetres": 0.00044879643246531487,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 22,
+      "maxVertexMetres": 9.34741523612889e-7,
+      "bodyMinimumMetres": 2.1639323834546365e-8,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": 2.1639323834546365e-8,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0014471951872110367,
+          "expectedMetres": 0,
+          "actualMetres": 9.366491093149021e-8,
+          "errorMetres": 9.366491093149021e-8,
+          "toeMinimumMetres": 9.366491093149021e-8,
+          "sourceToeMinimumMetres": 0.0014471951872110367,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.00045323697850108147,
+          "expectedMetres": 0,
+          "actualMetres": 2.1639323834546365e-8,
+          "errorMetres": 2.1639323834546365e-8,
+          "toeMinimumMetres": 2.1639323834546365e-8,
+          "sourceToeMinimumMetres": 0.00045323697850108147,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 23,
+      "maxVertexMetres": 6.871643802825685e-7,
+      "bodyMinimumMetres": -2.4945725482679315e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -2.4945725482679315e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0013042985228821635,
+          "expectedMetres": 0,
+          "actualMetres": 1.1501487052339998e-7,
+          "errorMetres": 1.1501487052339998e-7,
+          "toeMinimumMetres": 1.1501487052339998e-7,
+          "sourceToeMinimumMetres": 0.0013042985228821635,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.00043928949162364006,
+          "expectedMetres": 0,
+          "actualMetres": -2.4945725482679315e-7,
+          "errorMetres": 2.4945725482679315e-7,
+          "toeMinimumMetres": -2.4945725482679315e-7,
+          "sourceToeMinimumMetres": 0.00043928949162364006,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 24,
+      "maxVertexMetres": 6.708142349868674e-7,
+      "bodyMinimumMetres": -3.954640805329396e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -3.954640805329396e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0011689901584759355,
+          "expectedMetres": 0,
+          "actualMetres": -2.943430665869329e-7,
+          "errorMetres": 2.943430665869329e-7,
+          "toeMinimumMetres": -2.943430665869329e-7,
+          "sourceToeMinimumMetres": 0.0011689901584759355,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.00044741807505488396,
+          "expectedMetres": 0,
+          "actualMetres": -3.954640805329396e-7,
+          "errorMetres": 3.954640805329396e-7,
+          "toeMinimumMetres": -3.954640805329396e-7,
+          "sourceToeMinimumMetres": 0.00044741807505488396,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 25,
+      "maxVertexMetres": 8.886327728472859e-7,
+      "bodyMinimumMetres": -4.799022770736461e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -4.799022770736461e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0010199208045378327,
+          "expectedMetres": 0,
+          "actualMetres": -4.799022770736461e-7,
+          "errorMetres": 4.799022770736461e-7,
+          "toeMinimumMetres": -4.799022770736461e-7,
+          "sourceToeMinimumMetres": 0.0010199208045378327,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.0004404815845191479,
+          "expectedMetres": 0,
+          "actualMetres": -4.125979495232107e-7,
+          "errorMetres": 4.125979495232107e-7,
+          "toeMinimumMetres": -4.125979495232107e-7,
+          "sourceToeMinimumMetres": 0.0004404815845191479,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 26,
+      "maxVertexMetres": 7.795928735953822e-7,
+      "bodyMinimumMetres": -2.925063108515785e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -2.925063108515785e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0008836823399178684,
+          "expectedMetres": 0,
+          "actualMetres": 5.903407342827682e-9,
+          "errorMetres": 5.903407342827682e-9,
+          "toeMinimumMetres": 5.903407342827682e-9,
+          "sourceToeMinimumMetres": 0.0008836823399178684,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.0004479247145354748,
+          "expectedMetres": 0,
+          "actualMetres": -2.925063108515785e-7,
+          "errorMetres": 2.925063108515785e-7,
+          "toeMinimumMetres": -2.925063108515785e-7,
+          "sourceToeMinimumMetres": 0.0004479247145354748,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 27,
+      "maxVertexMetres": 7.313516067479676e-7,
+      "bodyMinimumMetres": -9.252537722971577e-8,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -9.252537722971577e-8,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0007511674775741994,
+          "expectedMetres": 0,
+          "actualMetres": -9.252537722971577e-8,
+          "errorMetres": 9.252537722971577e-8,
+          "toeMinimumMetres": -9.252537722971577e-8,
+          "sourceToeMinimumMetres": 0.0007511674775741994,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.0004569324664771557,
+          "expectedMetres": 0,
+          "actualMetres": 5.633069389068823e-8,
+          "errorMetres": 5.633069389068823e-8,
+          "toeMinimumMetres": 5.633069389068823e-8,
+          "sourceToeMinimumMetres": 0.0004569324664771557,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 28,
+      "maxVertexMetres": 8.068688171169944e-7,
+      "bodyMinimumMetres": -5.615665215567139e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -5.615665215567139e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0006237575435079634,
+          "expectedMetres": 0,
+          "actualMetres": -2.7444928818627645e-7,
+          "errorMetres": 2.7444928818627645e-7,
+          "toeMinimumMetres": -2.7444928818627645e-7,
+          "sourceToeMinimumMetres": 0.0006237575435079634,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.0004441770724952221,
+          "expectedMetres": 0,
+          "actualMetres": -5.615665215567139e-7,
+          "errorMetres": 5.615665215567139e-7,
+          "toeMinimumMetres": -5.615665215567139e-7,
+          "sourceToeMinimumMetres": 0.0004441770724952221,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 29,
+      "maxVertexMetres": 8.22488408454478e-7,
+      "bodyMinimumMetres": 9.326683182708795e-9,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": 9.326683182708795e-9,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0005025504506193101,
+          "expectedMetres": 0,
+          "actualMetres": 9.326683182708795e-9,
+          "errorMetres": 9.326683182708795e-9,
+          "toeMinimumMetres": 9.326683182708795e-9,
+          "sourceToeMinimumMetres": 0.0005025504506193101,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.00045079318806529045,
+          "expectedMetres": 0,
+          "actualMetres": 3.8873432037060673e-7,
+          "errorMetres": 3.8873432037060673e-7,
+          "toeMinimumMetres": 3.8873432037060673e-7,
+          "sourceToeMinimumMetres": 0.00045079318806529045,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 30,
+      "maxVertexMetres": 6.576607296793893e-7,
+      "bodyMinimumMetres": -1.884121133676614e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -1.884121133676614e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.0003892742679454386,
+          "expectedMetres": 0,
+          "actualMetres": -1.884121133676614e-7,
+          "errorMetres": 1.884121133676614e-7,
+          "toeMinimumMetres": -1.884121133676614e-7,
+          "sourceToeMinimumMetres": 0.0003892742679454386,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.0004448029212653637,
+          "expectedMetres": 0,
+          "actualMetres": -1.15017203263304e-7,
+          "errorMetres": 1.15017203263304e-7,
+          "toeMinimumMetres": -1.15017203263304e-7,
+          "sourceToeMinimumMetres": 0.0004448029212653637,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 31,
+      "maxVertexMetres": 8.350053427899896e-7,
+      "bodyMinimumMetres": -6.45030554529899e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -6.45030554529899e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.00028490537079051137,
+          "expectedMetres": 0,
+          "actualMetres": -6.45030554529899e-7,
+          "errorMetres": 6.45030554529899e-7,
+          "toeMinimumMetres": -6.45030554529899e-7,
+          "sourceToeMinimumMetres": 0.00028490537079051137,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.0004491168074309826,
+          "expectedMetres": 0,
+          "actualMetres": -1.4015261894789743e-7,
+          "errorMetres": 1.4015261894789743e-7,
+          "toeMinimumMetres": -1.4015261894789743e-7,
+          "sourceToeMinimumMetres": 0.0004491168074309826,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 32,
+      "maxVertexMetres": 9.91333021387315e-7,
+      "bodyMinimumMetres": -2.409681285880233e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -2.409681285880233e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.00019037666788790375,
+          "expectedMetres": 0,
+          "actualMetres": -1.601716065214448e-7,
+          "errorMetres": 1.601716065214448e-7,
+          "toeMinimumMetres": -1.601716065214448e-7,
+          "sourceToeMinimumMetres": 0.00019037666788790375,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.000454749446362257,
+          "expectedMetres": 0,
+          "actualMetres": -2.409681285880233e-7,
+          "errorMetres": 2.409681285880233e-7,
+          "toeMinimumMetres": -2.409681285880233e-7,
+          "sourceToeMinimumMetres": 0.000454749446362257,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 33,
+      "maxVertexMetres": 9.121811062074991e-7,
+      "bodyMinimumMetres": -3.920877167037928e-8,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -3.920877167037928e-8,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.00010705091699492186,
+          "expectedMetres": 0,
+          "actualMetres": 3.5783040157853774e-7,
+          "errorMetres": 3.5783040157853774e-7,
+          "toeMinimumMetres": 3.5783040157853774e-7,
+          "sourceToeMinimumMetres": 0.00010705091699492186,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.00044963089749217033,
+          "expectedMetres": 0,
+          "actualMetres": -3.920877167037928e-8,
+          "errorMetres": 3.920877167037928e-8,
+          "toeMinimumMetres": -3.920877167037928e-8,
+          "sourceToeMinimumMetres": 0.00044963089749217033,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 34,
+      "maxVertexMetres": 7.472543345250305e-7,
+      "bodyMinimumMetres": -1.2052689016446572e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -1.2052689016446572e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": 0.00003607689359341748,
+          "expectedMetres": 0,
+          "actualMetres": -1.2052689016446572e-7,
+          "errorMetres": 1.2052689016446572e-7,
+          "toeMinimumMetres": -1.2052689016446572e-7,
+          "sourceToeMinimumMetres": 0.00003607689359341748,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.00045284954831004143,
+          "expectedMetres": 0,
+          "actualMetres": -5.664490052362248e-9,
+          "errorMetres": 5.664490052362248e-9,
+          "toeMinimumMetres": -5.664490052362248e-9,
+          "sourceToeMinimumMetres": 0.00045284954831004143,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 35,
+      "maxVertexMetres": 8.225280022404943e-7,
+      "bodyMinimumMetres": -6.609247495507897e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -6.609247495507897e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": -0.000021182158889132552,
+          "expectedMetres": 0,
+          "actualMetres": -6.609247495507897e-7,
+          "errorMetres": 6.609247495507897e-7,
+          "toeMinimumMetres": -6.609247495507897e-7,
+          "sourceToeMinimumMetres": -0.000021182158889132552,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.0004561576060950756,
+          "expectedMetres": 0,
+          "actualMetres": -2.3075967194551017e-7,
+          "errorMetres": 2.3075967194551017e-7,
+          "toeMinimumMetres": -2.3075967194551017e-7,
+          "sourceToeMinimumMetres": 0.0004561576060950756,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 36,
+      "maxVertexMetres": 8.73985542000179e-7,
+      "bodyMinimumMetres": -4.382378849740465e-8,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -4.382378849740465e-8,
+      "feet": {
+        "l": {
+          "sourceMetres": -0.00006380195554811507,
+          "expectedMetres": 0,
+          "actualMetres": -4.382378849740465e-8,
+          "errorMetres": 4.382378849740465e-8,
+          "toeMinimumMetres": -4.382378849740465e-8,
+          "sourceToeMinimumMetres": -0.00006380195554811507,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.00045904843136668205,
+          "expectedMetres": 0,
+          "actualMetres": 2.3436545262302266e-7,
+          "errorMetres": 2.3436545262302266e-7,
+          "toeMinimumMetres": 2.3436545262302266e-7,
+          "sourceToeMinimumMetres": 0.00045904843136668205,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 37,
+      "maxVertexMetres": 6.212135560276538e-7,
+      "bodyMinimumMetres": 2.50020682312016e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": 2.50020682312016e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": -0.00009007526386994869,
+          "expectedMetres": 0,
+          "actualMetres": 2.50020682312016e-7,
+          "errorMetres": 2.50020682312016e-7,
+          "toeMinimumMetres": 2.50020682312016e-7,
+          "sourceToeMinimumMetres": -0.00009007526386994869,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.0004594358615577221,
+          "expectedMetres": 0,
+          "actualMetres": 7.204028074064145e-7,
+          "errorMetres": 7.204028074064145e-7,
+          "toeMinimumMetres": 7.204028074064145e-7,
+          "sourceToeMinimumMetres": 0.0004594358615577221,
+          "toeContact": true
+        }
+      }
+    },
+    {
+      "frame": 38,
+      "maxVertexMetres": 6.464074496406185e-7,
+      "bodyMinimumMetres": -2.1328160842645771e-7,
+      "groundPolicy": "plane",
+      "rootFloorLiftMetres": 0,
+      "unprojectedMinimumMetres": -2.1328160842645771e-7,
+      "feet": {
+        "l": {
+          "sourceMetres": -0.00009933831461239606,
+          "expectedMetres": 0,
+          "actualMetres": -2.1328160842645771e-7,
+          "errorMetres": 2.1328160842645771e-7,
+          "toeMinimumMetres": -2.1328160842645771e-7,
+          "sourceToeMinimumMetres": -0.00009933831461239606,
+          "toeContact": true
+        },
+        "r": {
+          "sourceMetres": 0.00045982329174876213,
+          "expectedMetres": 0,
+          "actualMetres": 1.5128624124977064e-7,
+          "errorMetres": 1.5128624124977064e-7,
+          "toeMinimumMetres": 1.5128624124977064e-7,
+          "sourceToeMinimumMetres": 0.00045982329174876213,
+          "toeContact": true
+        }
+      }
+    }
+  ]
+}

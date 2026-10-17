@@ -1,0 +1,24 @@
+{
+  "references": [
+    "/Volumes/Data/Users/paul/development/src/github/theapp/artifacts/splat-scene/scene-corrected.png",
+    "/Volumes/Data/Users/paul/scratch/awakenJesus/books/manga/source images/thepleroma/jesus/1_tunic.png",
+    "/Volumes/Data/Users/paul/scratch/awakenJesus/books/manga/source images/thekenoma/yahweh/christian_yahweh_halo_no_bg.png"
+  ],
+  "fit": "contain",
+  "model": "/Volumes/Data/Users/paul/.cache/huggingface/hub/vpipe-prepared/Qwen-Image-2.1-Turbo-8bit",
+  "anyangle": "/Volumes/Data/Users/paul/.cache/huggingface/hub/models--lilylilith--QI_2.1_AnyAngle/snapshots/35b746e4121e1e9fc6a3e334fd8036ba1a9560d0/QI2.1_AnyAngle.safetensors",
+  "strength": 1.0,
+  "cfg": 3.0,
+  "width": 1024,
+  "height": 736,
+  "steps": 8,
+  "seed": 42,
+  "prompt": "Re-render the coarse 3D scene in <image1> as a coherent photorealistic image. Preserve exactly the camera angle, framing, character positions, relative sizes and body poses in image1. The man lying face down in the foreground on the left is the character from <image2>; retain his face, long brown hair, beard, cream tunic, belt, bag and sandals. The standing character behind him on the right is from <image3>; retain her face, long dark hair, pointed ears and flowing white dress. Keep the plain tan floor and dark background from image1. Repair reconstruction artifacts and anatomy, and add consistent lighting and natural contact shadows. Do not move, turn, add or remove characters.",
+  "command": [
+    "/Volumes/Data/Users/paul/development/src/github/theapp/vpipe/build/apps/vpipe/vpipe",
+    "--launch",
+    "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-anyangle-1024-aspect/pipeline.json",
+    "--config",
+    "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-anyangle-1024-aspect/config.json"
+  ]
+}

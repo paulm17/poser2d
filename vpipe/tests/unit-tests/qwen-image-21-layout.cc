@@ -1,3 +1,4 @@
+#include "generative-models/qwen-image/qwen-image21-control.h"
 // Qwen-Image-2.1's joint text/image sequence layout: qi21::build_layout.
 //
 // Pure integer arithmetic, so it needs no checkpoint and no GPU -- which
@@ -469,4 +470,32 @@ TEST(qwen_image21_layout, cfg_branches_keep_distinct_text_indices_and_prefixes)
     EXPECT_TRUE(pos.pos_h[p] == neg.pos_h[n]);
     EXPECT_TRUE(pos.pos_w[p] == neg.pos_w[n]);
   }
+}
+
+TEST(qwen_image_21_union, packs_control_and_zero_pads_references_mask_and_inpaint) {
+  std::vector<float> chw(64 * 2);
+  for (int c = 0; c < 64; ++c) { chw[c * 2] = 1.0f; chw[c * 2 + 1] = -2.0f; }
+  std::vector<std::uint16_t> packed;
+  EXPECT_TRUE(pack_control_context(chw, 2, 3, &packed));
+  EXPECT_TRUE(packed.size() == 5 * 129);
+  for (int i = 0; i < 3 * 129; ++i) { EXPECT_TRUE(packed[i] == 0); }
+  for (int i = 0; i < 2; ++i) {
+    for (int c = 0; c < 64; ++c) { EXPECT_TRUE(packed[(3 + i) * 129 + c] == (i == 0 ? 0x3f80 : 0xc000)); }
+    for (int c = 64; c < 129; ++c) { EXPECT_TRUE(packed[(3 + i) * 129 + c] == 0); }
+  }
+  EXPECT_TRUE(!pack_control_context({}, 2, 0, &packed));
+  EXPECT_TRUE(!pack_control_context(chw, 2, -1, &packed));
+  chw[0] = INFINITY;
+  EXPECT_TRUE(!pack_control_context(chw, 2, 0, &packed));
+}
+TEST(qwen_image_21_union, skips_attach_after_every_second_base_block) {
+  int seen = 0;
+  for (int layer = 0; layer < 32; ++layer) {
+    const int skip = control_skip_for_layer(layer);
+    if (layer % 2) { EXPECT_TRUE(skip == -1); }
+    else { EXPECT_TRUE(skip == seen); ++seen; }
+  }
+  EXPECT_TRUE(seen == 16);
+  EXPECT_TRUE(control_skip_for_layer(-1) == -1);
+  EXPECT_TRUE(control_skip_for_layer(32) == -1);
 }

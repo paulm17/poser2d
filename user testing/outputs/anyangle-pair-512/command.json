@@ -1,0 +1,20 @@
+[
+  "python3",
+  "user testing/image.py",
+  "--width",
+  "512",
+  "--height",
+  "384",
+  "--fit",
+  "contain",
+  "--output-dir",
+  "user testing/outputs/anyangle-pair-512/appearance-generation",
+  "--prompt",
+  "Create a clean finished photorealistic scene matching the composition and camera view of <image1>. Exactly two characters: the man from <image2> lies face down in the left foreground with his elbows bent and hands together in front of his head, his head on the left and feet extending to the right; the woman from <image3> stands behind him on the right with both upper arms away from her torso, both elbows bent, and both hands raised beside her shoulders. Preserve their positions, relative sizes, facing directions and poses from image1. Use image2 for the man's identity and cream tunic, belt, bag and sandals, and image3 for the woman's identity, pointed ears, long dark hair and flowing white dress. Keep the plain tan ground and dark background. Render natural anatomy, detailed faces, realistic fabric, consistent lighting and contact shadows. Preserve the raised hands of the standing woman. Do not add characters or text.",
+  "--reference",
+  "/Volumes/Data/Users/paul/development/src/github/theapp/artifacts/splat-scene/scene-corrected.png",
+  "--reference",
+  "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/vpipe/512-lying-pose.png",
+  "--reference",
+  "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/vpipe/512-standing-pose.png"
+]

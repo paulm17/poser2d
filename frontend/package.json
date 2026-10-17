@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc -b",
-    "test": "node --test scene-builder/tests/*.test.mjs tests/*.test.mjs"
+    "test": "node --test scene-builder/tests/*.test.mjs scene-builder-mannequin/tests/*.test.mjs tests/*.test.mjs"
   },
   "dependencies": {
     "react": "^19.0.0",

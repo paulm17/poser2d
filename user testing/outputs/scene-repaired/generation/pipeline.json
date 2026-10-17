@@ -1,0 +1,240 @@
+{
+  "id": "scene-edit",
+  "stages": [
+    {
+      "config": {
+        "hf_dir": "/Volumes/Data/Users/paul/.cache/huggingface/hub/vpipe-prepared/Qwen-Image-2.1-Turbo-8bit"
+      },
+      "id": "model-select",
+      "iports": [],
+      "type": "model-select"
+    },
+    {
+      "config": {
+        "text": "Change the camera angle from <image2> to <image1>."
+      },
+      "id": "text-prompt",
+      "iports": [],
+      "type": "text-prompt"
+    },
+    {
+      "config": {
+        "use_kv_cache": true,
+        "vl_long_edge": 0,
+        "vl_min_pixels": 1024,
+        "vl_pixel_budget": 196608,
+        "vl_max_pixels": 196608,
+        "lora3": "/Volumes/Data/Users/paul/.cache/huggingface/hub/models--lilylilith--QI_2.1_AnyAngle/snapshots/35b746e4121e1e9fc6a3e334fd8036ba1a9560d0/QI2.1_AnyAngle.safetensors",
+        "lora3_scale": 1.0
+      },
+      "id": "model-config",
+      "iports": [],
+      "type": "qwen-image-21-model-config"
+    },
+    {
+      "config": {
+        "url": "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-repaired/generation/reference-1.png"
+      },
+      "id": "load-ref-0",
+      "iports": [],
+      "type": "load-image"
+    },
+    {
+      "config": {
+        "algorithm": "bilinear",
+        "fit": "stretch",
+        "height": 384,
+        "width": 512
+      },
+      "id": "ref-resample-0",
+      "iports": [
+        {
+          "src": "load-ref-0",
+          "oport": 0
+        }
+      ],
+      "type": "image-resample"
+    },
+    {
+      "config": {
+        "url": "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-repaired/generation/reference-2.png"
+      },
+      "id": "load-ref-1",
+      "iports": [],
+      "type": "load-image"
+    },
+    {
+      "config": {
+        "algorithm": "bilinear",
+        "fit": "stretch",
+        "height": 384,
+        "width": 512
+      },
+      "id": "ref-resample-1",
+      "iports": [
+        {
+          "src": "load-ref-1",
+          "oport": 0
+        }
+      ],
+      "type": "image-resample"
+    },
+    {
+      "config": {},
+      "id": "ref-list",
+      "iports": [
+        {
+          "src": "ref-resample-0",
+          "oport": 0
+        },
+        {
+          "src": "ref-resample-1",
+          "oport": 0
+        }
+      ],
+      "type": "tensor-list"
+    },
+    {
+      "config": {
+        "unload_when_idle": "always"
+      },
+      "id": "vae-encode",
+      "iports": [
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": "model-select"
+        },
+        {
+          "oport": 0,
+          "src": "ref-list"
+        }
+      ],
+      "type": "vae-encode"
+    },
+    {
+      "config": {
+        "grounded_negative": true,
+        "unload_when_idle": "always"
+      },
+      "id": "diffusion-conditioner",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "text-prompt"
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": "model-select"
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": "model-config"
+        },
+        {
+          "oport": 0,
+          "src": "ref-list"
+        }
+      ],
+      "type": "diffusion-conditioner"
+    },
+    {
+      "config": {
+        "guidance_scale": 3.0,
+        "height": 384,
+        "seed": 42,
+        "steps": 8,
+        "unload_when_idle": "always",
+        "width": 512
+      },
+      "id": "generate-image",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "diffusion-conditioner"
+        },
+        {
+          "src": "diffusion-conditioner",
+          "oport": 1
+        },
+        {
+          "oport": 0,
+          "src": "model-select"
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": ""
+        },
+        {
+          "oport": 0,
+          "src": "model-config"
+        },
+        {
+          "oport": 1,
+          "src": "vae-encode"
+        }
+      ],
+      "type": "generate-image"
+    },
+    {
+      "config": {
+        "unload_when_idle": "always"
+      },
+      "id": "vae-decode",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "generate-image"
+        },
+        {
+          "oport": 0,
+          "src": "model-select"
+        }
+      ],
+      "type": "vae-decode"
+    },
+    {
+      "config": {
+        "compression": 6,
+        "format": "png",
+        "path": "/Volumes/Data/Users/paul/development/src/github/theapp/user testing/outputs/scene-repaired/generation/output.png"
+      },
+      "id": "save-image",
+      "iports": [
+        {
+          "oport": 0,
+          "src": "vae-decode"
+        }
+      ],
+      "type": "save-image"
+    }
+  ],
+  "subpipelines": []
+}

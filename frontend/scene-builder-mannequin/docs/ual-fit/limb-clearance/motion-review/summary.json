@@ -1,0 +1,1142 @@
+{
+  "scope": "MakeHuman only",
+  "baseline": "Fitted MakeHuman after floor/foot solve, before limb-clearance corrections. Source angles are independently evaluated original UAL bone motion.",
+  "clips": 14,
+  "checkedFrames": 698,
+  "reviews": [
+    {
+      "id": "ual1-Death02",
+      "action": "Death02",
+      "fps": 30,
+      "checkedFrames": 75,
+      "worldFlag": {
+        "id": "ual1-Death02",
+        "maxCorrectionStepDegrees": 11.845120646352955,
+        "where": {
+          "frame": 30,
+          "bone": "lowerarm_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 2.372200512043724e-05,
+        "sourceClosureDegrees": 86.81896897287331
+      },
+      "peakLocalCorrection": {
+        "bone": "upperarm_r",
+        "finalStepChangeDegrees": 18.505783505206434,
+        "baselineStepChangeDegrees": 4.113925040313045,
+        "sourceStepChangeDegrees": 4.113955100285591,
+        "correctionStepDegrees": 11.845106024136275,
+        "finalStepDegrees": 25.071077602195523,
+        "baselineStepDegrees": 15.894699450488437,
+        "sourceStepDegrees": 15.894695664746209,
+        "frame": 30
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 30,
+        "metres": 0.13133616006103277,
+        "vertex": 3004,
+        "joints": [
+          {
+            "bone": "upperarm_r",
+            "finalStepChangeDegrees": 18.505783505206434,
+            "baselineStepChangeDegrees": 4.113925040313045,
+            "sourceStepChangeDegrees": 4.113955100285591,
+            "correctionStepDegrees": 11.845106024136275,
+            "finalStepDegrees": 25.071077602195523,
+            "baselineStepDegrees": 15.894699450488437,
+            "sourceStepDegrees": 15.894695664746209
+          },
+          {
+            "bone": "thumb_04_leaf_l",
+            "finalStepChangeDegrees": 0.0001417984120020718,
+            "baselineStepChangeDegrees": 0.00040465988793363995,
+            "sourceStepChangeDegrees": 1.7075472925031877e-06,
+            "correctionStepDegrees": 0.00016740931596531385,
+            "finalStepDegrees": 5.19610877694167e-05,
+            "baselineStepDegrees": 0.000213416089057497,
+            "sourceStepDegrees": 1.7075472925031877e-06
+          },
+          {
+            "bone": "index_03_r",
+            "finalStepChangeDegrees": 0.0002972702032713473,
+            "baselineStepChangeDegrees": 0.00037671837006507267,
+            "sourceStepChangeDegrees": 7.056944046454302e-05,
+            "correctionStepDegrees": 0.00010457943059351117,
+            "finalStepDegrees": 0.0001866779542991963,
+            "baselineStepDegrees": 0.0002826390544185752,
+            "sourceStepDegrees": 2.6453208906905703e-05
+          },
+          {
+            "bone": "thumb_02_r",
+            "finalStepChangeDegrees": 0.000416417538527197,
+            "baselineStepChangeDegrees": 0.00033325181711958154,
+            "sourceStepChangeDegrees": 4.080287782440209e-05,
+            "correctionStepDegrees": 8.637894267672958e-05,
+            "finalStepDegrees": 0.00016478494913944546,
+            "baselineStepDegrees": 0.00011109560415120069,
+            "sourceStepDegrees": 3.942179047202134e-05
+          }
+        ]
+      },
+      "clipSHA256": "5663ff4a6145e2df9e718ebfc008f8ff837b2ac61fc35661b48151210f836432",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "29\u201330",
+        "region": "Right shoulder",
+        "finding": "The shoulder correction adds a backward arm kick during the fall. The source is moving quickly, but the change in its rotation step is 4.1\u00b0 versus 18.5\u00b0 in the export."
+      }
+    },
+    {
+      "id": "ual1-Idle_Tired_Loop",
+      "action": "Idle_Tired_Loop",
+      "fps": 30,
+      "checkedFrames": 70,
+      "worldFlag": {
+        "id": "ual1-Idle_Tired_Loop",
+        "maxCorrectionStepDegrees": 9.842173432582054,
+        "where": {
+          "frame": 18,
+          "bone": "thumb_04_leaf_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 0.3118855226835999,
+        "sourceClosureDegrees": 0.00031159346200072634
+      },
+      "peakLocalCorrection": {
+        "bone": "upperarm_l",
+        "finalStepChangeDegrees": 9.807041174659808,
+        "baselineStepChangeDegrees": 0.029302894689908487,
+        "sourceStepChangeDegrees": 0.029276311026595753,
+        "correctionStepDegrees": 9.842723062547178,
+        "finalStepDegrees": 10.281384731352718,
+        "baselineStepDegrees": 0.5721836190256312,
+        "sourceStepDegrees": 0.5721787859656134,
+        "frame": 18
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 18,
+        "metres": 0.11092907978103184,
+        "vertex": 9656,
+        "joints": [
+          {
+            "bone": "upperarm_l",
+            "finalStepChangeDegrees": 9.807041174659808,
+            "baselineStepChangeDegrees": 0.029302894689908487,
+            "sourceStepChangeDegrees": 0.029276311026595753,
+            "correctionStepDegrees": 9.842723062547178,
+            "finalStepDegrees": 10.281384731352718,
+            "baselineStepDegrees": 0.5721836190256312,
+            "sourceStepDegrees": 0.5721787859656134
+          },
+          {
+            "bone": "pinky_01_l",
+            "finalStepChangeDegrees": 0.026731554594712943,
+            "baselineStepChangeDegrees": 0.02701477427079256,
+            "sourceStepChangeDegrees": 0.026370384534188836,
+            "correctionStepDegrees": 0.00013283796091528505,
+            "finalStepDegrees": 0.25672280714561896,
+            "baselineStepDegrees": 0.25685336465403813,
+            "sourceStepDegrees": 0.25647126839579737
+          },
+          {
+            "bone": "thumb_04_leaf_l",
+            "finalStepChangeDegrees": 0.00030545057288965436,
+            "baselineStepChangeDegrees": 0.0005429221735728021,
+            "sourceStepChangeDegrees": 2.4148365394514667e-06,
+            "correctionStepDegrees": 0.00012602346851943398,
+            "finalStepDegrees": 0.00014813403333695742,
+            "baselineStepDegrees": 0.00026050031680655293,
+            "sourceStepDegrees": 2.4148365394514667e-06
+          },
+          {
+            "bone": "thumb_01_l",
+            "finalStepChangeDegrees": 0.00013542475654802218,
+            "baselineStepChangeDegrees": 0.00016466104400951587,
+            "sourceStepChangeDegrees": 3.235340282647963e-05,
+            "correctionStepDegrees": 0.00010544018116516784,
+            "finalStepDegrees": 4.7259282698739895e-05,
+            "baselineStepDegrees": 0.00010406236469678177,
+            "sourceStepDegrees": 2.450791418631552e-05
+          }
+        ]
+      },
+      "clipSHA256": "9452c8b59e9065d374b98f0a6dc5f798d34d739778572233ef82361d44ff90b3",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "17\u201318",
+        "region": "Left shoulder",
+        "finding": "The original shoulder moves only 0.57\u00b0; the export moves 10.28\u00b0. The hand shifts away from the thigh abruptly."
+      }
+    },
+    {
+      "id": "ual1-Pistol_Reload",
+      "action": "Pistol_Reload",
+      "fps": 30,
+      "checkedFrames": 51,
+      "worldFlag": {
+        "id": "ual1-Pistol_Reload",
+        "maxCorrectionStepDegrees": 12.109016572242592,
+        "where": {
+          "frame": 43,
+          "bone": "pinky_02_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 4.7521480840978025,
+        "sourceClosureDegrees": 0.007993311396949147
+      },
+      "peakLocalCorrection": {
+        "bone": "upperarm_l",
+        "finalStepChangeDegrees": 11.29524302768699,
+        "baselineStepChangeDegrees": 0.7512604349364007,
+        "sourceStepChangeDegrees": 0.7513534145320693,
+        "correctionStepDegrees": 12.124384764941706,
+        "finalStepDegrees": 12.14417212222893,
+        "baselineStepDegrees": 0.03893811443030117,
+        "sourceStepDegrees": 0.03889302103779909,
+        "frame": 43
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 43,
+        "metres": 0.1205880817238887,
+        "vertex": 8943,
+        "joints": [
+          {
+            "bone": "upperarm_l",
+            "finalStepChangeDegrees": 11.29524302768699,
+            "baselineStepChangeDegrees": 0.7512604349364007,
+            "sourceStepChangeDegrees": 0.7513534145320693,
+            "correctionStepDegrees": 12.124384764941706,
+            "finalStepDegrees": 12.14417212222893,
+            "baselineStepDegrees": 0.03893811443030117,
+            "sourceStepDegrees": 0.03889302103779909
+          },
+          {
+            "bone": "pinky_02_l",
+            "finalStepChangeDegrees": 0.00029891345723980146,
+            "baselineStepChangeDegrees": 0.0006704923133272688,
+            "sourceStepChangeDegrees": 0.00019285459729357352,
+            "correctionStepDegrees": 0.0005695866913895106,
+            "finalStepDegrees": 5.538352714890994e-05,
+            "baselineStepDegrees": 0.0005147086856083008,
+            "sourceStepDegrees": 0.00010758903053683803
+          },
+          {
+            "bone": "pinky_03_l",
+            "finalStepChangeDegrees": 0.00012598875927796242,
+            "baselineStepChangeDegrees": 0.0005285293325301461,
+            "sourceStepChangeDegrees": 0.00010741273276956931,
+            "correctionStepDegrees": 0.0005213726600879411,
+            "finalStepDegrees": 0.0001401853689810464,
+            "baselineStepDegrees": 0.00039198532410404137,
+            "sourceStepDegrees": 0.0001216679869476709
+          },
+          {
+            "bone": "thumb_04_leaf_l",
+            "finalStepChangeDegrees": 0.00031736501724038626,
+            "baselineStepChangeDegrees": 0.0010131843770235691,
+            "sourceStepChangeDegrees": 5.663293681020316e-06,
+            "correctionStepDegrees": 0.0003998724318412109,
+            "finalStepDegrees": 0.00014738418260861136,
+            "baselineStepDegrees": 0.00040654689363521165,
+            "sourceStepDegrees": 4.182619578303746e-06
+          }
+        ]
+      },
+      "clipSHA256": "d76300aea31d4f1f5231031a6a07c13c06b24623a3dc80fdeb9564a1f2b2a134",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "42\u201343",
+        "region": "Left shoulder",
+        "finding": "Original movement is 0.04\u00b0; exported movement is 12.14\u00b0. The arm changes position near the end of the reload. The correction also leaves a 4.75\u00b0 difference between the matching source start/end poses."
+      }
+    },
+    {
+      "id": "ual1-Roll",
+      "action": "Roll",
+      "fps": 30,
+      "checkedFrames": 45,
+      "worldFlag": {
+        "id": "ual1-Roll",
+        "maxCorrectionStepDegrees": 26.00016901630455,
+        "where": {
+          "frame": 16,
+          "bone": "pinky_02_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 9.000010114737258,
+        "sourceClosureDegrees": 120.08103925105424
+      },
+      "peakLocalCorrection": {
+        "bone": "clavicle_r",
+        "finalStepChangeDegrees": 26.000008668231803,
+        "baselineStepChangeDegrees": 0.0001372319969499752,
+        "sourceStepChangeDegrees": 2.252409575471313e-05,
+        "correctionStepDegrees": 25.999982800080847,
+        "finalStepDegrees": 26.000003304480874,
+        "baselineStepDegrees": 9.405470574146722e-05,
+        "sourceStepDegrees": 1.5926940848252767e-05,
+        "frame": 16
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 23,
+        "metres": 0.18289401084045365,
+        "vertex": 10075,
+        "joints": [
+          {
+            "bone": "clavicle_l",
+            "finalStepChangeDegrees": 26.37671584814002,
+            "baselineStepChangeDegrees": 5.838213816675311e-05,
+            "sourceStepChangeDegrees": 1.790890709046331e-05,
+            "correctionStepDegrees": 24.527063320964466,
+            "finalStepDegrees": 24.527074176992055,
+            "baselineStepDegrees": 5.1876849257762566e-05,
+            "sourceStepDegrees": 6.389056940260397e-06
+          },
+          {
+            "bone": "clavicle_r",
+            "finalStepChangeDegrees": 6.625804946396948,
+            "baselineStepChangeDegrees": 5.902781309333222e-05,
+            "sourceStepChangeDegrees": 1.870524340221738e-05,
+            "correctionStepDegrees": 6.954304887557888,
+            "finalStepDegrees": 6.9543032467999355,
+            "baselineStepDegrees": 5.0423267281580754e-05,
+            "sourceStepDegrees": 5.663293681020316e-06
+          },
+          {
+            "bone": "thumb_04_leaf_l",
+            "finalStepChangeDegrees": 0.00046797077360220433,
+            "baselineStepChangeDegrees": 0.00031945741059262667,
+            "sourceStepChangeDegrees": 4.829673078902933e-06,
+            "correctionStepDegrees": 0.00020086011697609325,
+            "finalStepDegrees": 0.00022814774463609898,
+            "baselineStepDegrees": 0.00014239347343247572,
+            "sourceStepDegrees": 3.4150945850063755e-06
+          },
+          {
+            "bone": "index_03_l",
+            "finalStepChangeDegrees": 0.0006254939419292451,
+            "baselineStepChangeDegrees": 0.0006934155923615882,
+            "sourceStepChangeDegrees": 0.0006504298452141437,
+            "correctionStepDegrees": 0.0001275527541028997,
+            "finalStepDegrees": 0.0007002609600915252,
+            "baselineStepDegrees": 0.0007478179925027983,
+            "sourceStepDegrees": 0.0006711203950577573
+          }
+        ]
+      },
+      "clipSHA256": "64dd4b48dbf3edceb233f1808bcb7b29547e4714bf6a49f5f9af3f8c16775b5b",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "15\u201316; 22\u201323",
+        "region": "Collarbones / arms",
+        "finding": "The right collarbone adds 26\u00b0 where the source barely moves. A later change in the other arm produces the largest visible correction-displacement change in this set: 183 mm."
+      }
+    },
+    {
+      "id": "ual1-Sitting_Exit",
+      "action": "Sitting_Exit",
+      "fps": 30,
+      "checkedFrames": 32,
+      "worldFlag": {
+        "id": "ual1-Sitting_Exit",
+        "maxCorrectionStepDegrees": 12.99991901909507,
+        "where": {
+          "frame": 19,
+          "bone": "ring_01_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 20.00000080503478,
+        "sourceClosureDegrees": 89.9973862732472
+      },
+      "peakLocalCorrection": {
+        "bone": "clavicle_l",
+        "finalStepChangeDegrees": 10.005153865411051,
+        "baselineStepChangeDegrees": 8.663173497218997e-05,
+        "sourceStepChangeDegrees": 2.0561592220437876e-05,
+        "correctionStepDegrees": 12.999913838187352,
+        "finalStepDegrees": 12.999907281501594,
+        "baselineStepDegrees": 1.2547858734911242e-05,
+        "sourceStepDegrees": 4.517745487845101e-06,
+        "frame": 19
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 19,
+        "metres": 0.10936289661678847,
+        "vertex": 10569,
+        "joints": [
+          {
+            "bone": "clavicle_l",
+            "finalStepChangeDegrees": 10.005153865411051,
+            "baselineStepChangeDegrees": 8.663173497218997e-05,
+            "sourceStepChangeDegrees": 2.0561592220437876e-05,
+            "correctionStepDegrees": 12.999913838187352,
+            "finalStepDegrees": 12.999907281501594,
+            "baselineStepDegrees": 1.2547858734911242e-05,
+            "sourceStepDegrees": 4.517745487845101e-06
+          },
+          {
+            "bone": "foot_r",
+            "finalStepChangeDegrees": 1.4169294729617912,
+            "baselineStepChangeDegrees": 1.4207293197993538,
+            "sourceStepChangeDegrees": 1.3275769810764215,
+            "correctionStepDegrees": 3.0616240058282407,
+            "finalStepDegrees": 1.3245366429159915,
+            "baselineStepDegrees": 1.8051021950727473,
+            "sourceStepDegrees": 1.7144886556825165
+          },
+          {
+            "bone": "foot_l",
+            "finalStepChangeDegrees": 0.7139584019957896,
+            "baselineStepChangeDegrees": 0.6549960237764701,
+            "sourceStepChangeDegrees": 0.6063308590892458,
+            "correctionStepDegrees": 3.0601119721604997,
+            "finalStepDegrees": 3.1309089676198174,
+            "baselineStepDegrees": 0.3694318245078389,
+            "sourceStepDegrees": 0.2558019955671083
+          },
+          {
+            "bone": "thigh_l",
+            "finalStepChangeDegrees": 0.1832059650352036,
+            "baselineStepChangeDegrees": 0.13077755723380716,
+            "sourceStepChangeDegrees": 0.21160355492588706,
+            "correctionStepDegrees": 3.0459845734570257,
+            "finalStepDegrees": 5.636969247672017,
+            "baselineStepDegrees": 4.558356863185612,
+            "sourceStepDegrees": 4.496752469789481
+          }
+        ]
+      },
+      "clipSHA256": "59f035ecb7a04304096f5ada5a9b03e8900aaaf9ea244b70bdcaa2de7b779886",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "18\u201319",
+        "region": "Left collarbone",
+        "finding": "A 13\u00b0 collarbone change is introduced while the original collarbone is effectively still. The arm kicks sideways as the figure rises."
+      }
+    },
+    {
+      "id": "ual2-JogToFlip",
+      "action": "JogToFlip",
+      "fps": 30,
+      "checkedFrames": 37,
+      "worldFlag": {
+        "id": "ual2-JogToFlip",
+        "maxCorrectionStepDegrees": 24.000067281577586,
+        "where": {
+          "frame": 13,
+          "bone": "middle_04_leaf_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 1.01019860158646e-05,
+        "sourceClosureDegrees": 0.34213770413364497
+      },
+      "peakLocalCorrection": {
+        "bone": "clavicle_l",
+        "finalStepChangeDegrees": 19.999938935274823,
+        "baselineStepChangeDegrees": 0.00016106253715975378,
+        "sourceStepChangeDegrees": 1.024528375501913e-05,
+        "correctionStepDegrees": 23.999970146886227,
+        "finalStepDegrees": 23.99998421520177,
+        "baselineStepDegrees": 9.944905544453616e-05,
+        "sourceStepDegrees": 1.4080795695456205e-05,
+        "frame": 22
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 12,
+        "metres": 0.1438041852398905,
+        "vertex": 3121,
+        "joints": [
+          {
+            "bone": "clavicle_r",
+            "finalStepChangeDegrees": 22.999881897786405,
+            "baselineStepChangeDegrees": 9.909660641345485e-05,
+            "sourceStepChangeDegrees": 2.0773209379101157e-05,
+            "correctionStepDegrees": 22.999942619118304,
+            "finalStepDegrees": 22.999942102930866,
+            "baselineStepDegrees": 2.252409575471313e-05,
+            "sourceStepDegrees": 1.85487114168054e-05
+          },
+          {
+            "bone": "thumb_04_leaf_r",
+            "finalStepChangeDegrees": 0.0008161254393650372,
+            "baselineStepChangeDegrees": 0.0003331380568951008,
+            "sourceStepChangeDegrees": 9.507220963046143e-06,
+            "correctionStepDegrees": 0.0006101250704932446,
+            "finalStepDegrees": 0.00046245853588488357,
+            "baselineStepDegrees": 0.00024663273065128876,
+            "sourceStepDegrees": 3.4150945850063755e-06
+          },
+          {
+            "bone": "thumb_04_leaf_l",
+            "finalStepChangeDegrees": 0.000453176102805117,
+            "baselineStepChangeDegrees": 0.0001960707490031313,
+            "sourceStepChangeDegrees": 5.915117333884393e-06,
+            "correctionStepDegrees": 0.0004461275711629807,
+            "finalStepDegrees": 0.00030288635406548774,
+            "baselineStepDegrees": 0.00019377464556415798,
+            "sourceStepDegrees": 3.4150945850063755e-06
+          },
+          {
+            "bone": "thumb_03_l",
+            "finalStepChangeDegrees": 43.409496631748766,
+            "baselineStepChangeDegrees": 43.40925637251487,
+            "sourceStepChangeDegrees": 43.40964666901725,
+            "correctionStepDegrees": 0.00043272765769560234,
+            "finalStepDegrees": 0.00021981645674217274,
+            "baselineStepDegrees": 0.0002944615673258386,
+            "sourceStepDegrees": 0.00014080795695457082
+          }
+        ]
+      },
+      "clipSHA256": "b19910bef308b301c95e6b5ecae6901a25a1696700557b8f793caa25abfe2e10",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "11\u201313; 21\u201322",
+        "region": "Collarbones / arms",
+        "finding": "The left collarbone correction switches on around frame 13 and off at 22. Its largest change is 24\u00b0 while the original collarbone is effectively still."
+      }
+    },
+    {
+      "id": "ual2-KipUp",
+      "action": "KipUp",
+      "fps": 30,
+      "checkedFrames": 36,
+      "worldFlag": {
+        "id": "ual2-KipUp",
+        "maxCorrectionStepDegrees": 11.00000939706979,
+        "where": {
+          "frame": 11,
+          "bone": "thigh_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 1.546249837520016e-05,
+        "sourceClosureDegrees": 65.70910646328694
+      },
+      "peakLocalCorrection": {
+        "bone": "foot_l",
+        "finalStepChangeDegrees": 66.62279692034433,
+        "baselineStepChangeDegrees": 65.99313036921872,
+        "sourceStepChangeDegrees": 27.226525406113396,
+        "correctionStepDegrees": 13.699001839855825,
+        "finalStepDegrees": 68.93373533274082,
+        "baselineStepDegrees": 69.139575966224,
+        "sourceStepDegrees": 41.07660524269922,
+        "frame": 12
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 12,
+        "metres": 0.09924290546839422,
+        "vertex": 11255,
+        "joints": [
+          {
+            "bone": "foot_l",
+            "finalStepChangeDegrees": 66.62279692034433,
+            "baselineStepChangeDegrees": 65.99313036921872,
+            "sourceStepChangeDegrees": 27.226525406113396,
+            "correctionStepDegrees": 13.699001839855825,
+            "finalStepDegrees": 68.93373533274082,
+            "baselineStepDegrees": 69.139575966224,
+            "sourceStepDegrees": 41.07660524269922
+          },
+          {
+            "bone": "foot_r",
+            "finalStepChangeDegrees": 52.1582165875195,
+            "baselineStepChangeDegrees": 49.30883680778433,
+            "sourceStepChangeDegrees": 22.616733283324383,
+            "correctionStepDegrees": 12.36144247299238,
+            "finalStepDegrees": 49.223504442208714,
+            "baselineStepDegrees": 50.3381687414377,
+            "sourceStepDegrees": 31.541597022418884
+          },
+          {
+            "bone": "thigh_r",
+            "finalStepChangeDegrees": 38.8140948334593,
+            "baselineStepChangeDegrees": 37.31446313848583,
+            "sourceStepChangeDegrees": 3.6633490221742853,
+            "correctionStepDegrees": 3.251627045199688,
+            "finalStepDegrees": 71.21551899257535,
+            "baselineStepDegrees": 71.26818505365735,
+            "sourceStepDegrees": 40.41430710564687
+          },
+          {
+            "bone": "thigh_l",
+            "finalStepChangeDegrees": 24.649727311230233,
+            "baselineStepChangeDegrees": 20.866071080470803,
+            "sourceStepChangeDegrees": 18.571312635784338,
+            "correctionStepDegrees": 3.2400338174891554,
+            "finalStepDegrees": 69.37326588735574,
+            "baselineStepDegrees": 67.82304094811425,
+            "sourceStepDegrees": 35.70543924053258
+          }
+        ]
+      },
+      "clipSHA256": "05187a74826b32709ba9462707632ed2d8c9cce01e8cb7b2d928772e4b7d1d97",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "10\u201314",
+        "region": "Knees / compensating ankles",
+        "finding": "The knee path changes abruptly. A fast ankle turn already exists before limb clearance: 69.14\u00b0 in the fitted baseline versus 41.08\u00b0 in the source at frame 12. Limb clearance adds a further discontinuity around frame 11. Both the earlier foot solve and clearance need attention."
+      }
+    },
+    {
+      "id": "ual2-LiftAir_Fall",
+      "action": "LiftAir_Fall",
+      "fps": 30,
+      "checkedFrames": 29,
+      "worldFlag": {
+        "id": "ual2-LiftAir_Fall",
+        "maxCorrectionStepDegrees": 26.17805995415144,
+        "where": {
+          "frame": 14,
+          "bone": "calf_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 3.397976208612202e-05,
+        "sourceClosureDegrees": 94.50156763835972
+      },
+      "peakLocalCorrection": {
+        "bone": "foot_l",
+        "finalStepChangeDegrees": 43.76457125570974,
+        "baselineStepChangeDegrees": 18.672947550601076,
+        "sourceStepChangeDegrees": 5.64570760085574,
+        "correctionStepDegrees": 26.19927428726034,
+        "finalStepDegrees": 25.723764478717452,
+        "baselineStepDegrees": 16.00323613818462,
+        "sourceStepDegrees": 10.293445981101586,
+        "frame": 15
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 15,
+        "metres": 0.1351237094397881,
+        "vertex": 11259,
+        "joints": [
+          {
+            "bone": "foot_l",
+            "finalStepChangeDegrees": 43.76457125570974,
+            "baselineStepChangeDegrees": 18.672947550601076,
+            "sourceStepChangeDegrees": 5.64570760085574,
+            "correctionStepDegrees": 26.19927428726034,
+            "finalStepDegrees": 25.723764478717452,
+            "baselineStepDegrees": 16.00323613818462,
+            "sourceStepDegrees": 10.293445981101586
+          },
+          {
+            "bone": "thigh_l",
+            "finalStepChangeDegrees": 48.59873549831948,
+            "baselineStepChangeDegrees": 44.00686045213907,
+            "sourceStepChangeDegrees": 25.69653368682011,
+            "correctionStepDegrees": 20.002460625662128,
+            "finalStepDegrees": 28.26134613713485,
+            "baselineStepDegrees": 26.261187161781432,
+            "sourceStepDegrees": 7.204969450224345
+          },
+          {
+            "bone": "thigh_r",
+            "finalStepChangeDegrees": 102.82011460253023,
+            "baselineStepChangeDegrees": 82.47172753744208,
+            "sourceStepChangeDegrees": 45.99178784155455,
+            "correctionStepDegrees": 20.000005650868957,
+            "finalStepDegrees": 21.241466589053893,
+            "baselineStepDegrees": 1.9522953070024482,
+            "sourceStepDegrees": 6.798580808206683
+          },
+          {
+            "bone": "foot_r",
+            "finalStepChangeDegrees": 65.97958491069068,
+            "baselineStepChangeDegrees": 51.961724110918475,
+            "sourceStepChangeDegrees": 18.278736681042954,
+            "correctionStepDegrees": 20.000004516576993,
+            "finalStepDegrees": 23.61270914181105,
+            "baselineStepDegrees": 5.1694492914508965,
+            "sourceStepDegrees": 13.822431694457395
+          }
+        ]
+      },
+      "clipSHA256": "a9fb7617e5f81da52b0d39cdacd789b2436d7f8af68a83736d821b45ba74a431",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "13\u201316",
+        "region": "Knees / compensating ankles",
+        "finding": "The knee direction changes sharply and requires a rapid ankle counter-rotation. At frame 15 the ankle rotation-step change is 43.76\u00b0, compared with 18.67\u00b0 before limb clearance and 5.65\u00b0 in the source."
+      }
+    },
+    {
+      "id": "ual2-LiftAir_Fall_Impact",
+      "action": "LiftAir_Fall_Impact",
+      "fps": 30,
+      "checkedFrames": 21,
+      "worldFlag": {
+        "id": "ual2-LiftAir_Fall_Impact",
+        "maxCorrectionStepDegrees": 30.118374629252557,
+        "where": {
+          "frame": 8,
+          "bone": "thigh_l"
+        },
+        "endpointCorrectionDifferenceDegrees": 2.996733336300671e-05,
+        "sourceClosureDegrees": 131.33313120385094
+      },
+      "peakLocalCorrection": {
+        "bone": "thigh_l",
+        "finalStepChangeDegrees": 8.814748688697717,
+        "baselineStepChangeDegrees": 7.752875252169934,
+        "sourceStepChangeDegrees": 21.253902322315533,
+        "correctionStepDegrees": 30.045237279683917,
+        "finalStepDegrees": 33.822141367910284,
+        "baselineStepDegrees": 32.40392822920493,
+        "sourceStepDegrees": 28.329763505662303,
+        "frame": 8
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 7,
+        "metres": 0.13600842303641325,
+        "vertex": 11259,
+        "joints": [
+          {
+            "bone": "foot_l",
+            "finalStepChangeDegrees": 45.17759123054769,
+            "baselineStepChangeDegrees": 21.6533468789913,
+            "sourceStepChangeDegrees": 3.9172684747294526,
+            "correctionStepDegrees": 26.32210972861058,
+            "finalStepDegrees": 26.372316629344294,
+            "baselineStepDegrees": 16.238956387316414,
+            "sourceStepDegrees": 10.490037183837856
+          },
+          {
+            "bone": "thigh_l",
+            "finalStepChangeDegrees": 42.870591753458186,
+            "baselineStepChangeDegrees": 32.03825718650917,
+            "sourceStepChangeDegrees": 15.239305785820166,
+            "correctionStepDegrees": 20.002557289460725,
+            "finalStepDegrees": 28.423316535243053,
+            "baselineStepDegrees": 26.476184328857286,
+            "sourceStepDegrees": 7.210403442608744
+          },
+          {
+            "bone": "foot_r",
+            "finalStepChangeDegrees": 68.56097639093713,
+            "baselineStepChangeDegrees": 52.0140132399945,
+            "sourceStepChangeDegrees": 10.907827519114521,
+            "correctionStepDegrees": 20.000034526158032,
+            "finalStepDegrees": 23.448717621622457,
+            "baselineStepDegrees": 4.579914347969551,
+            "sourceStepDegrees": 12.91310445428787
+          },
+          {
+            "bone": "thigh_r",
+            "finalStepChangeDegrees": 84.47357731666783,
+            "baselineStepChangeDegrees": 64.53473873490877,
+            "sourceStepChangeDegrees": 25.60823205147656,
+            "correctionStepDegrees": 20.000000164040415,
+            "finalStepDegrees": 21.242751719947034,
+            "baselineStepDegrees": 1.9460789529325722,
+            "sourceStepDegrees": 6.799005902320447
+          }
+        ]
+      },
+      "clipSHA256": "dd284cc447dda66633d57b1ec51e4aeba18b437fa60bc58f05cc9d141ba54062",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "6\u20138",
+        "region": "Knees / compensating ankles / pelvis",
+        "finding": "The selected leg solution changes from large knee swivels to another solution and then a 20 mm pelvis lift. At frame 7 the left ankle rotation-step change rises from 21.65\u00b0 in the fitted baseline to 45.18\u00b0; the source is 3.92\u00b0."
+      }
+    },
+    {
+      "id": "ual2-Sword_Regular_C",
+      "action": "Sword_Regular_C",
+      "fps": 30,
+      "checkedFrames": 61,
+      "worldFlag": {
+        "id": "ual2-Sword_Regular_C",
+        "maxCorrectionStepDegrees": 8.989628559845565,
+        "where": {
+          "frame": 12,
+          "bone": "calf_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 1.601821346280157e-05,
+        "sourceClosureDegrees": 109.2632134193884
+      },
+      "peakLocalCorrection": {
+        "bone": "calf_r",
+        "finalStepChangeDegrees": 4.642070501658256,
+        "baselineStepChangeDegrees": 10.349961363389243,
+        "sourceStepChangeDegrees": 10.585309751781983,
+        "correctionStepDegrees": 13.377109896460214,
+        "finalStepDegrees": 4.6072558814475855,
+        "baselineStepDegrees": 9.57671603568556,
+        "sourceStepDegrees": 9.828039321544974,
+        "frame": 15
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 12,
+        "metres": 0.060903182911089246,
+        "vertex": 11444,
+        "joints": [
+          {
+            "bone": "calf_r",
+            "finalStepChangeDegrees": 18.675248256245418,
+            "baselineStepChangeDegrees": 8.580913991148448,
+            "sourceStepChangeDegrees": 1.0219427480738217,
+            "correctionStepDegrees": 11.071436488913903,
+            "finalStepDegrees": 16.73584076436729,
+            "baselineStepDegrees": 15.90701501021945,
+            "sourceStepDegrees": 10.48919426806224
+          },
+          {
+            "bone": "calf_l",
+            "finalStepChangeDegrees": 11.645816812727682,
+            "baselineStepChangeDegrees": 2.7088773810924125,
+            "sourceStepChangeDegrees": 1.9822592607578677,
+            "correctionStepDegrees": 9.104371214309827,
+            "finalStepDegrees": 7.138438849870225,
+            "baselineStepDegrees": 2.2105461222338487,
+            "sourceStepDegrees": 4.928845254592588
+          },
+          {
+            "bone": "foot_r",
+            "finalStepChangeDegrees": 11.189219876254741,
+            "baselineStepChangeDegrees": 5.071636725348466,
+            "sourceStepChangeDegrees": 4.661488198401036,
+            "correctionStepDegrees": 8.989614286445306,
+            "finalStepDegrees": 8.063499555140673,
+            "baselineStepDegrees": 2.856308646397012,
+            "sourceStepDegrees": 3.970928209235711
+          },
+          {
+            "bone": "foot_l",
+            "finalStepChangeDegrees": 6.548957007804329,
+            "baselineStepChangeDegrees": 3.3468111217647474,
+            "sourceStepChangeDegrees": 3.521303495911985,
+            "correctionStepDegrees": 6.309620594890827,
+            "finalStepDegrees": 3.8591039551604664,
+            "baselineStepDegrees": 2.4736708653094315,
+            "sourceStepDegrees": 5.865876685165766
+          }
+        ]
+      },
+      "clipSHA256": "3d7f2bce70349d73c2981771a9dc6ff2a7b282810fa38404e970fb1dd7779529",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "11\u201312; 14\u201315",
+        "region": "Knees / calves",
+        "finding": "The largest correction-angle warning alone is misleading: the calf turns less than in the source at frame 15. However, the full-frame review finds a separate frame-12 discontinuity: calf rotation-step change is 18.68\u00b0 versus 8.58\u00b0 before clearance and 1.02\u00b0 in the source."
+      }
+    },
+    {
+      "id": "ual2-Sword_Regular_Combo",
+      "action": "Sword_Regular_Combo",
+      "fps": 30,
+      "checkedFrames": 91,
+      "worldFlag": {
+        "id": "ual2-Sword_Regular_Combo",
+        "maxCorrectionStepDegrees": 8.233888204420316,
+        "where": {
+          "frame": 42,
+          "bone": "calf_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 1.0933637455190003e-05,
+        "sourceClosureDegrees": 19.618839639725174
+      },
+      "peakLocalCorrection": {
+        "bone": "calf_r",
+        "finalStepChangeDegrees": 14.945855948163256,
+        "baselineStepChangeDegrees": 5.245525449716987,
+        "sourceStepChangeDegrees": 4.816140502766267,
+        "correctionStepDegrees": 13.747830426513872,
+        "finalStepDegrees": 7.709549889176595,
+        "baselineStepDegrees": 7.919199431983697,
+        "sourceStepDegrees": 8.876720525379367,
+        "frame": 42
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 42,
+        "metres": 0.06088351999787932,
+        "vertex": 11444,
+        "joints": [
+          {
+            "bone": "calf_r",
+            "finalStepChangeDegrees": 14.945855948163256,
+            "baselineStepChangeDegrees": 5.245525449716987,
+            "sourceStepChangeDegrees": 4.816140502766267,
+            "correctionStepDegrees": 13.747830426513872,
+            "finalStepDegrees": 7.709549889176595,
+            "baselineStepDegrees": 7.919199431983697,
+            "sourceStepDegrees": 8.876720525379367
+          },
+          {
+            "bone": "calf_l",
+            "finalStepChangeDegrees": 7.57558384665223,
+            "baselineStepChangeDegrees": 14.669590633777815,
+            "sourceStepChangeDegrees": 13.016668311680183,
+            "correctionStepDegrees": 9.083277784614154,
+            "finalStepDegrees": 5.886210793620264,
+            "baselineStepDegrees": 14.497638254447116,
+            "sourceStepDegrees": 9.362782311124874
+          },
+          {
+            "bone": "foot_r",
+            "finalStepChangeDegrees": 16.301353354814626,
+            "baselineStepChangeDegrees": 15.095869909024646,
+            "sourceStepChangeDegrees": 15.646450877381698,
+            "correctionStepDegrees": 8.233907697548656,
+            "finalStepDegrees": 14.302216217352145,
+            "baselineStepDegrees": 15.970404080885192,
+            "sourceStepDegrees": 13.98130105219638
+          },
+          {
+            "bone": "thigh_r",
+            "finalStepChangeDegrees": 10.684080046533724,
+            "baselineStepChangeDegrees": 7.5000728560832295,
+            "sourceStepChangeDegrees": 6.740257386745375,
+            "correctionStepDegrees": 7.240405759472245,
+            "finalStepDegrees": 6.916555051715256,
+            "baselineStepDegrees": 11.524448203914371,
+            "sourceStepDegrees": 12.108104240887547
+          }
+        ]
+      },
+      "clipSHA256": "cb5d8a0f5f5accc1a81b1451dbbc08845b5e76204b323acf534b40af0e6f6df1",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "38\u201342",
+        "region": "Knees / calves",
+        "finding": "Several changes occur during the leg crossing. Although the calf turns slightly less at frame 42, its rotation-step change is 14.95\u00b0 versus 5.25\u00b0 before clearance and 4.82\u00b0 in the source."
+      }
+    },
+    {
+      "id": "ual2-Zombie_Run_R_Loop",
+      "action": "Zombie_Run_R_Loop",
+      "fps": 30,
+      "checkedFrames": 23,
+      "worldFlag": {
+        "id": "ual2-Zombie_Run_R_Loop",
+        "maxCorrectionStepDegrees": 20.000006695330825,
+        "where": {
+          "frame": 22,
+          "bone": "calf_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 3.23984319405831e-05,
+        "sourceClosureDegrees": 0.00030826313011817033
+      },
+      "peakLocalCorrection": {
+        "bone": "foot_r",
+        "finalStepChangeDegrees": 48.698490618294066,
+        "baselineStepChangeDegrees": 29.471688931682333,
+        "sourceStepChangeDegrees": 12.522507470726735,
+        "correctionStepDegrees": 20.000039460788752,
+        "finalStepDegrees": 35.445886035937356,
+        "baselineStepDegrees": 29.71414873992903,
+        "sourceStepDegrees": 13.608672808502341,
+        "frame": 22
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 21,
+        "metres": 0.06152493777268354,
+        "vertex": 4618,
+        "joints": [
+          {
+            "bone": "foot_r",
+            "finalStepChangeDegrees": 26.098282621200482,
+            "baselineStepChangeDegrees": 16.271728350107846,
+            "sourceStepChangeDegrees": 4.842260124754727,
+            "correctionStepDegrees": 20.000016307803023,
+            "finalStepDegrees": 19.707607088420104,
+            "baselineStepDegrees": 1.179517388284507,
+            "sourceStepDegrees": 2.5677208982793385
+          },
+          {
+            "bone": "thigh_r",
+            "finalStepChangeDegrees": 29.015842064466373,
+            "baselineStepChangeDegrees": 23.51617860334075,
+            "sourceStepChangeDegrees": 12.758669602731743,
+            "correctionStepDegrees": 20.00000367995755,
+            "finalStepDegrees": 20.261325018038846,
+            "baselineStepDegrees": 3.6599417558068223,
+            "sourceStepDegrees": 2.354948456109526
+          },
+          {
+            "bone": "foot_l",
+            "finalStepChangeDegrees": 4.499872680503051,
+            "baselineStepChangeDegrees": 3.3399899941058764,
+            "sourceStepChangeDegrees": 3.3228735483812653,
+            "correctionStepDegrees": 10.376791138628992,
+            "finalStepDegrees": 19.4487328708192,
+            "baselineStepDegrees": 9.704731680981466,
+            "sourceStepDegrees": 9.765426746390586
+          },
+          {
+            "bone": "thigh_l",
+            "finalStepChangeDegrees": 0.9142288316448615,
+            "baselineStepChangeDegrees": 0.27320261900250625,
+            "sourceStepChangeDegrees": 0.29335996131007336,
+            "correctionStepDegrees": 10.032775922562527,
+            "finalStepDegrees": 12.586333280932324,
+            "baselineStepDegrees": 7.217211962345542,
+            "sourceStepDegrees": 7.588519330258027
+          }
+        ]
+      },
+      "clipSHA256": "68969d37a0d3a9266efb8a64f520543c19d328dceb0ab0ab26c910cd335027fe",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "20\u201322",
+        "region": "Knees / compensating ankles",
+        "finding": "The knee-pole choices jump near the final frame, including a 20\u00b0 ankle counter-rotation change. The right thigh rotation-step change reaches 52.94\u00b0, versus 30.40\u00b0 before clearance and 14.16\u00b0 in the source. The loop endpoints match; that does not remove this internal discontinuity."
+      }
+    },
+    {
+      "id": "ual2-Zombie_Spawn",
+      "action": "Zombie_Spawn",
+      "fps": 30,
+      "checkedFrames": 86,
+      "worldFlag": {
+        "id": "ual2-Zombie_Spawn",
+        "maxCorrectionStepDegrees": 11.499198703357154,
+        "where": {
+          "frame": 69,
+          "bone": "lowerarm_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 2.9999823826869423,
+        "sourceClosureDegrees": 138.8920865047472
+      },
+      "peakLocalCorrection": {
+        "bone": "clavicle_r",
+        "finalStepChangeDegrees": 10.131981841165194,
+        "baselineStepChangeDegrees": 0.007349410700649908,
+        "sourceStepChangeDegrees": 0.0074916996554514025,
+        "correctionStepDegrees": 11.49918183648121,
+        "finalStepDegrees": 11.334785229681465,
+        "baselineStepDegrees": 0.1656922938118896,
+        "sourceStepDegrees": 0.1656157248770142,
+        "frame": 69
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 69,
+        "metres": 0.11036228283275737,
+        "vertex": 2423,
+        "joints": [
+          {
+            "bone": "clavicle_r",
+            "finalStepChangeDegrees": 10.131981841165194,
+            "baselineStepChangeDegrees": 0.007349410700649908,
+            "sourceStepChangeDegrees": 0.0074916996554514025,
+            "correctionStepDegrees": 11.49918183648121,
+            "finalStepDegrees": 11.334785229681465,
+            "baselineStepDegrees": 0.1656922938118896,
+            "sourceStepDegrees": 0.1656157248770142
+          },
+          {
+            "bone": "clavicle_l",
+            "finalStepChangeDegrees": 0.3237087974068531,
+            "baselineStepChangeDegrees": 0.003092499203716206,
+            "sourceStepChangeDegrees": 0.0030702991874893494,
+            "correctionStepDegrees": 2.2888587891734167,
+            "finalStepDegrees": 2.2464215762477844,
+            "baselineStepDegrees": 0.0679025299042117,
+            "sourceStepDegrees": 0.06789269723389663
+          },
+          {
+            "bone": "pinky_01_l",
+            "finalStepChangeDegrees": 0.03678965453943164,
+            "baselineStepChangeDegrees": 0.03665189112241645,
+            "sourceStepChangeDegrees": 0.03674715981869251,
+            "correctionStepDegrees": 0.0005613417262451565,
+            "finalStepDegrees": 0.34019687412071525,
+            "baselineStepDegrees": 0.33995384376053667,
+            "sourceStepDegrees": 0.3401754862421747
+          },
+          {
+            "bone": "pinky_02_l",
+            "finalStepChangeDegrees": 0.029956797008078517,
+            "baselineStepChangeDegrees": 0.03033920314396101,
+            "sourceStepChangeDegrees": 0.03014923708658589,
+            "correctionStepDegrees": 0.0004959976670048681,
+            "finalStepDegrees": 0.16173588775313072,
+            "baselineStepDegrees": 0.16202774685842877,
+            "sourceStepDegrees": 0.16207762450607188
+          }
+        ]
+      },
+      "clipSHA256": "e9c925556675980569eb51a407643aabe2bc277846f5ba12fb34464548bba990",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "68\u201369",
+        "region": "Right collarbone",
+        "finding": "Original collarbone movement is 0.17\u00b0; exported movement is 11.33\u00b0. The right arm moves abruptly as it clears the bent leg."
+      }
+    },
+    {
+      "id": "ual2-Zombie_Walk_Fwd_R_Loop",
+      "action": "Zombie_Walk_Fwd_R_Loop",
+      "fps": 30,
+      "checkedFrames": 41,
+      "worldFlag": {
+        "id": "ual2-Zombie_Walk_Fwd_R_Loop",
+        "maxCorrectionStepDegrees": 9.177852322904082,
+        "where": {
+          "frame": 14,
+          "bone": "ring_01_r"
+        },
+        "endpointCorrectionDifferenceDegrees": 1.7827317112193638e-05,
+        "sourceClosureDegrees": 0.00024199626264054694
+      },
+      "peakLocalCorrection": {
+        "bone": "upperarm_r",
+        "finalStepChangeDegrees": 10.486700347413292,
+        "baselineStepChangeDegrees": 0.3034330260096655,
+        "sourceStepChangeDegrees": 0.3034379468764005,
+        "correctionStepDegrees": 9.088148557543626,
+        "finalStepDegrees": 10.434880551418548,
+        "baselineStepDegrees": 1.577222673185658,
+        "sourceStepDegrees": 1.5772250564294212,
+        "frame": 14
+      },
+      "worstVisibleCorrectionStep": {
+        "frame": 14,
+        "metres": 0.09271596471453113,
+        "vertex": 2320,
+        "joints": [
+          {
+            "bone": "upperarm_r",
+            "finalStepChangeDegrees": 10.486700347413292,
+            "baselineStepChangeDegrees": 0.3034330260096655,
+            "sourceStepChangeDegrees": 0.3034379468764005,
+            "correctionStepDegrees": 9.088148557543626,
+            "finalStepDegrees": 10.434880551418548,
+            "baselineStepDegrees": 1.577222673185658,
+            "sourceStepDegrees": 1.5772250564294212
+          },
+          {
+            "bone": "pinky_04_leaf_r",
+            "finalStepChangeDegrees": 6.659434440762526e-05,
+            "baselineStepChangeDegrees": 0.00016282696814882882,
+            "sourceStepChangeDegrees": 2.4148365394514667e-06,
+            "correctionStepDegrees": 0.0001635684142195522,
+            "finalStepDegrees": 8.079784685241596e-05,
+            "baselineStepDegrees": 0.00023440090741425572,
+            "sourceStepDegrees": 0
+          },
+          {
+            "bone": "ring_02_r",
+            "finalStepChangeDegrees": 0.0002759947941158725,
+            "baselineStepChangeDegrees": 0.0003082300234661754,
+            "sourceStepChangeDegrees": 0.00019033600058839445,
+            "correctionStepDegrees": 0.0001567040999532958,
+            "finalStepDegrees": 0.0001946753692541802,
+            "baselineStepDegrees": 0.00026129379437270597,
+            "sourceStepDegrees": 4.710478969721382e-05
+          },
+          {
+            "bone": "thumb_04_leaf_r",
+            "finalStepChangeDegrees": 0.00017415308237100417,
+            "baselineStepChangeDegrees": 0.0002223223951877441,
+            "sourceStepChangeDegrees": 3.4150945850063755e-06,
+            "correctionStepDegrees": 0.00015119268238939824,
+            "finalStepDegrees": 9.746490881075247e-05,
+            "baselineStepDegrees": 0.00019165649556379997,
+            "sourceStepDegrees": 3.4150945850063755e-06
+          }
+        ]
+      },
+      "clipSHA256": "a36f0e513251dd3ea2c1f58459548902e278b9b05aafbcdb3f555067e696ad29",
+      "priorAppEvidenceMatches": true,
+      "review": {
+        "frames": "13\u201314",
+        "region": "Right shoulder",
+        "finding": "Original movement is 1.58\u00b0; exported movement is 10.43\u00b0. The correction adds a sideways arm kick."
+      }
+    }
+  ]
+}

@@ -18,9 +18,9 @@ repo=HUB/"models--lilylilith--QI_2.1_AnyAngle"
 revision=(repo/"refs/main").read_text().strip()
 ADAPTER=repo/"snapshots"/revision/"QI2.1_AnyAngle.safetensors"
 pose_repo=HUB/"models--MIUProject--VNCCS_PoseStudio_QI2.1"
-pose_candidates=sorted((pose_repo/"snapshots").glob("*/VNCCS_QI2_PoseStudioV1.1.safetensors"))
+pose_candidates=sorted((pose_repo/"snapshots").glob("*/VNCCS_QI2_PoseStudioV2.safetensors"))
 if len(pose_candidates)!=1:
- raise SystemExit("Expected one cached PoseStudio V1.1 adapter for the stacking test")
+ raise SystemExit("Expected one cached PoseStudio V2 adapter for the stacking test")
 POSE_ADAPTER=pose_candidates[0]
 def port(src, output=0):return {"src":src,"oport":output}
 def stage(name, kind, inputs, config):return {"id":name,"type":kind,"iports":inputs,"config":config}

@@ -46,6 +46,7 @@ export function mergePaths(previous: EnginePaths, defaults: EnginePaths): Engine
     if (!previous[key] || (legacy && key !== "pose_lora")) merged[key] = defaults[key];
   }
   merged.vision = "";
+  if (/VNCCS_QI2_PoseStudioV1(?:\.1)?\.safetensors$/.test(previous.pose_lora) && defaults.pose_lora) merged.pose_lora = defaults.pose_lora;
   return merged;
 }
 

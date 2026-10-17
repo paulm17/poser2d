@@ -1,0 +1,110 @@
+{
+  "source": "standing-experiment-project.json",
+  "mannequinIndex": 0,
+  "geometry": "Original mannequin-js Male; no VNCCS retargeting",
+  "jointCount": 47,
+  "meshCount": 57,
+  "vertexCount": 16846,
+  "verification": {
+    "maxWorldCoordinateDisplacement": 0,
+    "unchangedJoints": true,
+    "unchangedTopology": true,
+    "identicalSilhouette": true
+  },
+  "texture": {
+    "file": "upstream/web/pose_studio/textures/skin_dummy.png",
+    "width": 2048,
+    "height": 2048,
+    "uniqueColors": 1,
+    "rgba": [
+      213,
+      213,
+      213,
+      255
+    ],
+    "colorSpace": ""
+  },
+  "render": {
+    "threeRevision": "160",
+    "outputColorSpace": "srgb",
+    "toneMapping": 0,
+    "exposure": 1,
+    "pixelRatio": 1,
+    "background": "#000000",
+    "lights": [
+      {
+        "type": "AmbientLight",
+        "intensity": 0.5,
+        "color": "ffffff"
+      }
+    ],
+    "material": {
+      "type": "MeshPhongMaterial",
+      "color": "ffffff",
+      "specular": "111111",
+      "shininess": 5,
+      "side": 2,
+      "rimShader": "(shader) => {\n            shader.fragmentShader = shader.fragmentShader.replace(\n                '#include <dithering_fragment>',\n                `\n                #include <dithering_fragment>\n                float rim = 1.0 - abs(vNormal.z);\n                gl_FragColor.rgb *= (1.0 - pow(rim, 3.0) * 0.4);\n                `\n            );\n        }"
+    },
+    "camera": {
+      "position": [
+        1.781255140324226,
+        0.270264556462463,
+        3.5064728937350673
+      ],
+      "quaternion": [
+        -0.012428355819108866,
+        0.2406403620362181,
+        0.003081578519843538,
+        0.9705298841378032
+      ],
+      "fov": 30,
+      "fitMargin": 1.1
+    }
+  },
+  "control": {
+    "width": 1024,
+    "height": 1024,
+    "nonblackPixels": 104668,
+    "meanNonblackRGB": [
+      99.07154048993006,
+      90.83794473955746,
+      80.37901746474567
+    ],
+    "minNonblackRGB": [
+      12,
+      12,
+      12
+    ],
+    "maxNonblackRGB": [
+      111,
+      102,
+      92
+    ]
+  },
+  "experimental": {
+    "width": 1024,
+    "height": 1024,
+    "nonblackPixels": 104469,
+    "meanNonblackRGB": [
+      97.26136940144923,
+      97.26136940144923,
+      97.26136940144923
+    ],
+    "minNonblackRGB": [
+      10,
+      10,
+      10
+    ],
+    "maxNonblackRGB": [
+      102,
+      102,
+      102
+    ]
+  },
+  "limitations": [
+    "Original material control uses the same VNCCS ambient lighting as the experimental export.",
+    "Exact saved viewing direction; framing fitted mathematically rather than reproducing editor crop.",
+    "No LoRA inference performed."
+  ]
+}

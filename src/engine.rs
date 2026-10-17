@@ -1430,7 +1430,7 @@ fn cached_paths_in(hub: &std::path::Path, cli: String) -> Paths {
         let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
         entries.sort_by_key(|e| e.path());
         for entry in entries {
-            let path = entry.path().join("VNCCS_QI2_PoseStudioV1.1.safetensors");
+            let path = entry.path().join("VNCCS_QI2_PoseStudioV2.safetensors");
             if path.is_file() {
                 pose = path.to_string_lossy().into_owned();
             }
@@ -2217,6 +2217,17 @@ mod tests {
         assert!(paths.model.ends_with("Turbo-4bit"));
         assert!(paths.model8.ends_with("Turbo-8bit"));
         assert!(!serde_json::to_string(&paths).unwrap().contains("gguf"));
+    }
+    #[test]
+    fn defaults_select_posestudio_v2_from_cache() {
+        let root = std::env::temp_dir().join(format!("pose-v2-{}", Uuid::new_v4()));
+        let snapshot = root.join("models--MIUProject--VNCCS_PoseStudio_QI2.1/snapshots/revision");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        std::fs::write(snapshot.join("VNCCS_QI2_PoseStudioV1.1.safetensors"), []).unwrap();
+        let v2 = snapshot.join("VNCCS_QI2_PoseStudioV2.safetensors");
+        std::fs::write(&v2, []).unwrap();
+        assert_eq!(cached_paths_in(&root, "vpipe".into()).pose_lora, v2.to_string_lossy());
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
     async fn queue_cancellation_failure_and_enhancement_recovery() {
